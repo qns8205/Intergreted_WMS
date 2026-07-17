@@ -1,107 +1,55 @@
 export interface InventoryItem {
   rowIndex: number;
   location: string;
-  spec: string;
+  photo: string;
   name: string;
   link: string;
   stock: number | string | null;
   updatedAt: string;
   manager: string;
   note: string;
-  photo: string;
+  spec: string; // Column I - 규격 및 추가 정보
 }
 
 export interface DefectLog {
   rowIndex?: number;
+  timestamp: string;
+  location: string;
   name: string;
   qty: number | string | null;
-  timestamp: string;
   defectType: string;
+  manager: string;
   note: string;
   actionTaken: string;
   photo?: string;
+  itemCategory?: string;
 }
 
 export interface RentLog {
   rowIndex?: number;
   timestamp: string;
-  type: "대여" | "반납";
   location: string;
   name: string;
+  type: "대여" | "반납" | "소모";
   qty: number | string;
   user: string;
   note: string;
 }
 
-export interface ScenarioObjectItem {
+export interface WmsUser {
+  id: string;
+  password?: string;
+  name?: string;
+}
+
+export interface Rack {
   id: string;
   name: string;
-  sector: string;
-  rootSlot: string;
-  category: string;
-  subcategory: string;
-  image: string;
-  stock: number;
-  rented: number;
-}
-
-export interface ScenarioDefinitionItem {
-  id: string;
-  name: string;
-  quantity: number;
-  rootSlot?: string;
-  category?: string;
-  subcategory?: string;
-  image?: string;
-  stock?: number;
-  rented?: number;
-}
-
-export interface ScenarioDefinition {
-  sid: string;
-  found: boolean;
-  syncNeeded: boolean;
-  blocked: boolean;
-  blockReason: string;
-  highLevelEn: string;
-  highLevelKo: string;
-  items: ScenarioDefinitionItem[];
-}
-
-export interface CartItem {
-  id: string;
-  name: string;
-  quantity: number;
-}
-
-export interface SidCartEntry {
-  sid: string;
-  loading: boolean;
-  scenario: ScenarioDefinition | null;
-}
-
-export interface UnreturnedItem {
-  sheetType: "scenario" | "general";
-  rowIndex: number;
-  borrowerName: string;
-  scenarioId?: string;
-  itemLabel: string;
-  itemKind?: string;
-  location: string;
-  quantity: number;
-  borrowDate: string;
-  borrowPurpose?: string;
-  email?: string;
-  batchId?: string;
-  generalOption?: string;
-  image?: string;
-  stock?: number;
-  rented?: number;
-}
-
-export type Affiliation = "cfgw" | "configds" | "other";
-
-export interface ToastMsg {
-  msg: string;
-  type: "ok" | "error" | "warn" | "info";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  color: string;
+  shelves: string[];
 }
