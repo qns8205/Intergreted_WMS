@@ -15,13 +15,17 @@ import { callGas } from "../api";
 interface Props {
   scriptUrl: string;
   showToast: (msg: string, type: "ok" | "error" | "warn" | "info") => void;
+  /** 지정하면 내부 메뉴 화면을 건너뛰고 바로 이 모드로 진입 (외부 상위 네비게이션에서 사용) */
+  startMode?: "borrow" | "return";
+  /** startMode가 지정된 경우, "← 메뉴로" 클릭 시 내부 메뉴 대신 이 콜백 호출 */
+  onExitToMenu?: () => void;
 }
 
 type ScenarioMode = "menu" | "borrow" | "return" | "mylookup" | "sidlookup";
 type BorrowType = "scenario" | "general";
 
-export default function ScenarioTab({ scriptUrl, showToast }: Props) {
-  const [mode, setMode] = useState<ScenarioMode>("menu");
+export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToMenu }: Props) {
+  const [mode, setMode] = useState<ScenarioMode>(startMode || "menu");
   const [appVersion, setAppVersion] = useState("");
 
   const [borrowerName, setBorrowerName] = useState("");
@@ -441,7 +445,7 @@ export default function ScenarioTab({ scriptUrl, showToast }: Props) {
   function SubHeader({ title }: { title: string }) {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <button onClick={() => setMode("menu")} style={{ ...secondaryBtnStyle, padding: "8px 12px" }}>
+        <button onClick={() => (startMode && onExitToMenu ? onExitToMenu() : setMode("menu"))} style={{ ...secondaryBtnStyle, padding: "8px 12px" }}>
           ← 메뉴로
         </button>
         <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: 0 }}>{title}</h3>

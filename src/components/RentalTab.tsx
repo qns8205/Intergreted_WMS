@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Check, Minus, Package, Plus, Search, Undo2 } from "lucide-react";
 import { InventoryItem, RentLog } from "../types";
-import { C, cardStyle, fuzzy, inputStyle, labelStyle, pillBtn, pillGroupStyle, primaryBtn, qtyBtnStyle, Spinner } from "../ui";
+import { C, cardStyle, fuzzy, inputStyle, labelStyle, pillBtn, pillGroupStyle, primaryBtn, qtyBtnStyle, secondaryBtnStyle, Spinner } from "../ui";
 import { callGas } from "../api";
 
 interface Props {
@@ -10,12 +10,15 @@ interface Props {
   rentLogs: RentLog[];
   onRefresh: () => Promise<void>;
   showToast: (msg: string, type: "ok" | "error" | "warn" | "info") => void;
+  initialType?: "대여" | "반납";
+  onBack: () => void;
+  title: string;
 }
 
-export default function RentalTab({ scriptUrl, inventory, rentLogs, onRefresh, showToast }: Props) {
+export default function RentalTab({ scriptUrl, inventory, rentLogs, onRefresh, showToast, initialType, onBack, title }: Props) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<InventoryItem | null>(null);
-  const [type, setType] = useState<"대여" | "반납">("대여");
+  const [type, setType] = useState<"대여" | "반납">(initialType || "대여");
   const [qty, setQty] = useState(1);
   const [user, setUser] = useState("");
   const [note, setNote] = useState("");
@@ -61,6 +64,13 @@ export default function RentalTab({ scriptUrl, inventory, rentLogs, onRefresh, s
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onBack} style={{ ...secondaryBtnStyle, padding: "8px 12px" }}>
+          ← 메뉴로
+        </button>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: 0 }}>{title}</h3>
+      </div>
+
       <div style={cardStyle}>
         <label style={labelStyle}>구분</label>
         <div style={pillGroupStyle}>
