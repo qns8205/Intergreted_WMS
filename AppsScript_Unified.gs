@@ -1114,7 +1114,13 @@ function getFormHtml(inventory) {
 // - doGet/doPost 없음: 상단 통합 라우팅(doGet/doPost)에서 액션으로 호출됨
 // ═══════════════════════════════════════════════════════════════════════════
 
-var SLACK_WEBHOOK_URL = "https://hooks.slack.com/services/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";
+// ─── Slack 봇 설정 (Incoming Webhook 미사용: 봇 토큰 하나로 일원화) ───
+// [새 앱 전환 방법]
+//  1) api.slack.com/apps 에서 새 앱 생성 → Bot Token Scopes: chat:write, users:read, users:read.email
+//  2) Install to Workspace → 발급된 xoxb- 토큰을 아래 SLACK_BOT_TOKEN 에 붙여넣기
+//  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
+//  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
+//  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
 var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-f7Ln781J9wJTJL3C3FMFltkW";
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
@@ -1435,10 +1441,10 @@ function migrateGeneralSheetColumns() {
   try { SpreadsheetApp.getUi().alert("로그 시트 헤더를 보강했습니다."); } catch (e) {}
 }
 
+// 봇 토큰으로 채널에 단일 메시지 발송 (구 웹훅 sendSlackNotification 대체)
+// 성공 시 메시지 ts를 반환, 실패 시 null (lastSlackError_에 사유 기록)
 function sendSlackNotification(message) {
-  try {
-    UrlFetchApp.fetch(SLACK_WEBHOOK_URL, { method: "post", contentType: "application/json", payload: JSON.stringify({ text: message }), muteHttpExceptions: true });
-  } catch (e) {}
+  return postSlackMessage_(message);
 }
 
 var lastSlackError_ = "";
@@ -1498,14 +1504,25 @@ function sendOverdueReminders() {
     groups[borrower].entries.push({ label: item.itemLabel, hours: Math.floor(elapsedHours) });
   });
   if (order.length === 0) return { success: true, message: "대여 후 " + OVERDUE_HOURS + "시간 이상 경과한 미반납 항목이 없습니다." };
+  var locations = buildLocationMap_();
+  var failed = 0;
   order.forEach(function (borrower) {
     var g = groups[borrower];
     var mention = buildMentionText_(borrower, g.email, "");
+    var mainText = "⏰ " + mention + "님, 대여하신 물품을 빌리신 지 " + OVERDUE_HOURS + "시간이 지났습니다. 반납 부탁드립니다!";
     var itemLines = g.entries.map(function (e) { return "  · " + e.label + " (" + e.hours + "시간 경과)"; }).join("\n");
-    var text = "⏰ " + mention + "님, 대여하신 물품을 빌리신 지 " + OVERDUE_HOURS + "시간이 지났습니다. 반납 부탁드립니다!\n" + itemLines;
-    sendSlackNotification(text);
+    var ts = postSlackMessage_(boxWrap_(mainText));
+    if (ts) {
+      // 위치 정렬된 물품·위치 목록을 스레드 댓글로 첨부
+      var parsedItems = g.entries.map(function (e) { return parseItemLabel_(e.label); });
+      var locLines = buildMergedLocationLines_(parsedItems, locations);
+      if (locLines.length) postThreadReply_("📍 *미반납 물품 · 위치*\n" + locLines.join("\n"), ts);
+    } else {
+      failed++;
+    }
   });
-  return { success: true, message: order.length + "명에게 미반납 알림을 보냈습니다." };
+  var note = failed ? " (" + failed + "명은 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)" : "";
+  return { success: true, message: order.length + "명에게 미반납 알림을 보냈습니다." + note };
 }
 
 function sendOverdueRemindersManual() { var res = sendOverdueReminders(); SpreadsheetApp.getUi().alert(res.message); }
@@ -1903,8 +1920,11 @@ function recordBorrow(borrowList, clientVersion) {
       scenarioRows.forEach(function (r) { scenarioSheet.getRange(r, 9).setValue(ts); });
       if (objLines.length) postThreadReply_(replyText, ts);
     } else {
-      sendSlackNotification(boxWrap_(mainText + "\n───────────────\n" + replyText));
-      slackNote = " (Slack 스레드 실패: " + lastSlackError_ + " — 봇을 채널에 초대해야 댓글이 달립니다)";
+      // 봇 메인 메시지 실패 시: 스레드 없이 단일 메시지로라도 재시도 (웹훅 미사용)
+      var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText));
+      slackNote = combined
+        ? " (스레드 없이 단일 메시지로 발송했습니다)"
+        : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
     }
     return { success: true, message: "SID " + scenarioCount + "건, 일반 물품 " + generalCount + "개를 기록했습니다." + slackNote };
   } catch (e) { return { success: false, message: "대여 기록 중 오류: " + e.message }; }
@@ -2048,8 +2068,10 @@ function processReturn(returnRequests, clientVersion) {
         postThreadReply_(replyText, ts);
         postThreadReply_(remainingText, ts);
       } else {
-        sendSlackNotification(boxWrap_(mainText + "\n───────────────\n" + replyText + "\n───────────────\n" + remainingText));
-        slackNote = " (Slack 스레드 실패: " + lastSlackError_ + " — 봇을 채널에 초대해야 댓글이 달립니다)";
+        var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText + "\n───────────────\n" + remainingText));
+        slackNote = combined
+          ? " (스레드 없이 단일 메시지로 발송했습니다)"
+          : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
       }
     });
 

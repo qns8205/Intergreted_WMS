@@ -6,6 +6,8 @@ interface LoginPageProps {
   users: WmsUser[];
   onLoginSuccess: (user: WmsUser) => void;
   onViewOnlyMode: () => void;
+  adminOnly?: boolean;
+  onBack?: () => void;
   isLightMode: boolean;
   onSyncUsers: () => Promise<void>;
   syncing: boolean;
@@ -16,12 +18,14 @@ export default function LoginPage({
   users,
   onLoginSuccess,
   onViewOnlyMode,
+  adminOnly = false,
+  onBack,
   isLightMode,
   onSyncUsers,
   syncing,
   isMobile,
 }: LoginPageProps) {
-  const [selectedMode, setSelectedMode] = useState<"view" | "admin">("view");
+  const [selectedMode, setSelectedMode] = useState<"view" | "admin">(adminOnly ? "admin" : "view");
   const [idInput, setIdInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [localError, setLocalError] = useState("");
@@ -108,6 +112,8 @@ export default function LoginPage({
           </p>
         </div>
 
+        {!adminOnly && (
+        <>
         {/* Permissions Choice Cards: Side-by-Side */}
         <div
           style={{
@@ -243,6 +249,8 @@ export default function LoginPage({
             </div>
           </button>
         </div>
+        </>
+        )}
 
         {isMobile && (
           <div
@@ -263,6 +271,24 @@ export default function LoginPage({
             ) : (
               <span>👀 현재 <b>열람용 모드</b>가 선택되어 있습니다. 우측의 관리자 모드를 선택하시면 로그인하여 직접 작업을 수행할 수 있습니다.</span>
             )}
+          </div>
+        )}
+
+        {adminOnly && (
+          <div
+            style={{
+              fontSize: "12px",
+              color: ACCENT,
+              background: "rgba(99, 102, 241, 0.08)",
+              border: "1px solid rgba(99, 102, 241, 0.2)",
+              borderRadius: "12px",
+              padding: "12px 14px",
+              marginBottom: "20px",
+              textAlign: "center",
+              lineHeight: 1.5,
+            }}
+          >
+            🔒 <b>관리 모드</b>는 Admin 시트에 등록된 ID와 비밀번호로 로그인해야 이용할 수 있습니다.
           </div>
         )}
 
@@ -425,6 +451,26 @@ export default function LoginPage({
             {syncing ? "스프레드시트에서 동기화 중..." : "관리자 계정 실시간 수동 동기화"}
           </button>
         </div>
+
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            style={{
+              marginTop: "16px",
+              width: "100%",
+              background: "transparent",
+              border: "none",
+              color: TEXT_DIM,
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+              padding: "8px",
+            }}
+          >
+            ← 처음 화면으로 돌아가기
+          </button>
+        )}
       </div>
 
       <style>{`

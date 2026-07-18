@@ -9,7 +9,7 @@ import {
   computeLocationSortIndex, padSlot, isKoreanName, nowString,
   fetchBorrowAppVersion, fetchObjectItems, fetchScenarioDefinition, fetchUnreturnedItems,
   fetchMyBorrowedItems, checkConfigDsRegistered, postRecordBorrow, postProcessReturn,
-  DEMO_OBJECT_ITEMS,
+  DEMO_OBJECT_ITEMS, loadBrowseCart, clearBrowseCart, saveIdentity,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
 
@@ -25,16 +25,22 @@ interface CartItem { id: string; name: string; quantity: number; rootSlot?: stri
 interface SidEntry { sid: string; loading: boolean; scenario: ScenarioDefinition | null }
 
 interface BorrowSystemPageProps {
+  key?: string;
   scriptUrl: string;
   connected: boolean;
   isLightMode: boolean;
   onBack: () => void;
   showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
+  /** "borrow" = 대여 신청부터, "return" = 반납 처리부터, "mode" = 모드 선택 화면 */
+  entry?: "mode" | "borrow" | "return" | "mylookup" | "sidlookup" | "location";
+  /** 열람 조회에서 넘어온 신원 (사번/성함 자동 입력 + 장바구니 연동) */
+  initialIdentity?: { name: string; employeeId: string } | null;
 }
 
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
-export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast }: BorrowSystemPageProps) {
+export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "mode", initialIdentity = null }: BorrowSystemPageProps) {
+  const rootMode: Mode = entry === "borrow" ? "b1" : entry === "mode" ? "mode" : (entry as Mode);
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
   const C = {
     bg: isLightMode ? "#f8fafc" : "#0b0f19",
@@ -55,7 +61,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   };
 
   /* ---------- 공용 상태 ---------- */
-  const [mode, setMode] = useState<Mode>("mode");
+  const [mode, setMode] = useState<Mode>(rootMode);
   const [appVersion, setAppVersion] = useState<string>("");
   const [objectItems, setObjectItems] = useState<ObjectItem[]>([]);
   const [itemsLoaded, setItemsLoaded] = useState(false);
@@ -64,9 +70,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string }>({ ok: true, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
-  const [borrowerName, setBorrowerName] = useState("");
+  const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
   const [affiliation, setAffiliation] = useState<"cfgw" | "configds" | "other">("cfgw");
-  const [employeeId, setEmployeeId] = useState("");
+  const [employeeId, setEmployeeId] = useState(initialIdentity?.employeeId || "");
   const [otherName, setOtherName] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [itemType, setItemType] = useState<"scenario" | "general">("scenario");
@@ -88,9 +94,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [returnSubmitting, setReturnSubmitting] = useState(false);
 
   /* ---------- 내 대여 조회 상태 ---------- */
-  const [myName, setMyName] = useState("");
+  const [myName, setMyName] = useState(initialIdentity?.name || "");
   const [myAff, setMyAff] = useState<"cfgw" | "other">("cfgw");
-  const [myEmpId, setMyEmpId] = useState("");
+  const [myEmpId, setMyEmpId] = useState(initialIdentity?.employeeId || "");
   const [myLoading, setMyLoading] = useState(false);
   const [myResult, setMyResult] = useState<UnreturnedItem[] | null>(null);
 
@@ -118,6 +124,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!connected || !scriptUrl) return;
     fetchBorrowAppVersion(scriptUrl).then(setAppVersion).catch(() => {});
   }, [connected, scriptUrl]);
+
+  /* 직접 진입(대여/반납) 시 필요한 데이터 선로드 */
+  const bootedRef = useRef(false);
+  useEffect(() => {
+    if (bootedRef.current) return;
+    bootedRef.current = true;
+    if (entry === "borrow") loadItems();
+    if (entry === "return") loadUnreturned();
+    if (entry === "location") loadItems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ---------- 물품 목록 로드 ---------- */
   const loadItems = useCallback(async () => {
@@ -415,6 +432,26 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         setVerifying(false);
       }
     }
+    // 열람 조회 장바구니 불러오기 (같은 사번·성함)
+    if (affiliation === "cfgw") {
+      const nm = borrowerName.trim();
+      const eid = employeeId.trim();
+      saveIdentity({ name: nm, employeeId: eid });
+      const saved = loadBrowseCart(nm, eid);
+      if (saved.length > 0) {
+        const merge = (prev: CartItem[]) => {
+          const next = prev.slice();
+          saved.forEach((sv) => {
+            const i = next.findIndex((c) => c.id === sv.id);
+            if (i === -1) next.push({ id: sv.id, name: sv.name, quantity: sv.quantity, rootSlot: sv.rootSlot });
+          });
+          return next;
+        };
+        setCart(merge);
+        setReqCart(merge);
+        showToast(`열람 장바구니에서 ${saved.length}개 물품을 불러왔습니다.`, "ok");
+      }
+    }
     setMode("b2");
   }
 
@@ -512,6 +549,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     try {
       if (connected && scriptUrl) {
         const res = await postRecordBorrow(scriptUrl, borrowList, appVersion);
+        if (res.success && affiliation === "cfgw") clearBrowseCart(borrowerName.trim(), employeeId.trim());
         setResultInfo({ ok: res.success, title: res.success ? "신청 완료!" : "오류 발생", sub: res.message });
       } else {
         setResultInfo({ ok: true, title: "신청 완료!", sub: "성공적으로 접수되었습니다. (로컬 데모)" });
@@ -790,7 +828,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setLocBasket([]); setLocSearch(""); setLocCat(""); setLocSub("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
-    setMode("mode");
+    setMode(rootMode);
+    if (rootMode === "return") loadUnreturned();
+    if (rootMode === "b1") loadItems();
   }
 
   /* ══════════════════════ 헤더/네비 ══════════════════════ */
@@ -802,6 +842,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   };
 
   function goPrev() {
+    if (mode === rootMode) { onBack(); return; }
     if (mode === "b1") setMode("mode");
     else if (mode === "b2") setMode("b1");
     else if (mode === "b3g" || mode === "b3s") setMode("b2");
@@ -821,10 +862,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       {/* 상단바 */}
       <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button
-          onClick={() => (mode === "mode" ? onBack() : goPrev())}
+          onClick={() => (mode === rootMode ? onBack() : goPrev())}
           style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
         >
-          <ArrowLeft size={15} /> {mode === "mode" ? "메인으로" : "이전"}
+          <ArrowLeft size={15} /> {mode === rootMode ? "메인으로" : "이전"}
         </button>
         <h1 style={{ fontSize: "17px", fontWeight: 800, margin: 0, flex: 1 }}>{titles[mode] || "물품 대여 시스템"}</h1>
         {!connected ? (
@@ -933,7 +974,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : null}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
-              <button onClick={() => setMode("mode")} style={secondaryBtn}>이전</button>
+              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
               <button onClick={step1Next} disabled={verifying} style={{ ...primaryBtn, opacity: verifying ? 0.7 : 1 }}>
                 {verifying ? <><Spinner size={16} light /> 확인 중...</> : <>다음 단계 <ChevronRight size={15} /></>}
               </button>
@@ -950,7 +991,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <TypeCard active={itemType === "general"} icon={<Boxes size={26} />} text="일반 대여" onClick={() => { setItemType("general"); setMode("b3g"); }} />
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
-              <button onClick={() => setMode("b1")} style={secondaryBtn}>이전</button>
+              <button onClick={() => (rootMode === "b1" ? onBack() : setMode("b1"))} style={secondaryBtn}>이전</button>
               <button onClick={() => setMode(itemType === "general" ? "b3g" : "b3s")} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
             </div>
           </div>
@@ -1155,7 +1196,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
             <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.card, borderTop: `1px solid ${C.border}`, padding: "12px 16px", zIndex: 10 }}>
               <div style={{ maxWidth: "620px", margin: "0 auto", display: "flex", gap: "10px" }}>
-                <button onClick={() => setMode("mode")} style={secondaryBtn}>이전</button>
+                <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
                 <button
                   onClick={handleReturnSubmit}
                   disabled={Object.keys(selectedReturn).length === 0 || returnSubmitting}
@@ -1201,7 +1242,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 </div>
               ) : null}
               <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
-                <button onClick={() => setMode("mode")} style={secondaryBtn}>이전</button>
+                <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
                 <button onClick={runMyLookup} disabled={myLoading} style={{ ...primaryBtn, opacity: myLoading ? 0.7 : 1 }}>
                   {myLoading ? <><Spinner size={16} light /> 조회 중...</> : <><Search size={15} /> 조회하기</>}
                 </button>
@@ -1243,7 +1284,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 })
               )}
               <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                <button onClick={() => { setMyResult(null); setMode("mode"); }} style={secondaryBtn}>처음으로</button>
+                <button onClick={() => { setMyResult(null); rootMode === "mode" ? setMode("mode") : onBack(); }} style={secondaryBtn}>처음으로</button>
               </div>
             </div>
           )
@@ -1322,7 +1363,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             )}
             <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-              <button onClick={() => setMode("mode")} style={secondaryBtn}>이전</button>
+              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
             </div>
           </div>
         ) : null}
@@ -1413,7 +1454,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               )}
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-              <button onClick={() => setMode("mode")} style={secondaryBtn}>이전</button>
+              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
             </div>
           </div>
         ) : null}

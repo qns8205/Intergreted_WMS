@@ -14,6 +14,7 @@ import LandingPage from "./components/LandingPage";
 import LoginPage from "./components/LoginPage";
 import RentalPage from "./components/RentalPage";
 import BorrowSystemPage from "./components/BorrowSystemPage";
+import BrowsePage from "./components/BrowsePage";
 import MobileViewPage from "./components/MobileViewPage";
 
 // Icons
@@ -143,7 +144,9 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "monitor" | "defect" | "rent">("login");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "sidlookup" | "location" | "monitor" | "defect" | "rent">("landing");
+  // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
+  const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string } | null>(null);
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -253,7 +256,7 @@ export default function App() {
         if (hasUser) {
           window.location.hash = "#/monitor";
         } else {
-          window.location.hash = "#/login";
+          window.location.hash = "#/landing";
         }
         return;
       }
@@ -267,6 +270,16 @@ export default function App() {
         setCurrentView("rental");
       } else if (path === "borrow") {
         setCurrentView("borrow");
+      } else if (path === "return") {
+        setCurrentView("return");
+      } else if (path === "browse") {
+        setCurrentView("browse");
+      } else if (path === "mylookup") {
+        setCurrentView("mylookup");
+      } else if (path === "sidlookup") {
+        setCurrentView("sidlookup");
+      } else if (path === "location") {
+        setCurrentView("location");
       } else if (path === "monitor") {
         setCurrentView("monitor");
       } else if (path === "rent") {
@@ -1436,10 +1449,13 @@ export default function App() {
     return (
       <LandingPage
         onNavigate={(view) => {
-          if (view === "rental") {
-            setCurrentView("rental");
-          } else if (view === "borrow") {
+          if (view === "borrow") {
+            setBorrowIdentity(null);
             setCurrentView("borrow");
+          } else if (view === "return") {
+            setCurrentView("return");
+          } else if (view === "browse") {
+            setCurrentView("browse");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
@@ -1489,6 +1505,8 @@ export default function App() {
           setCurrentView("monitor");
           showToast("열람용 모드(조회 전용)로 진입했습니다. 수정이 차단됩니다.", "ok");
         }}
+        adminOnly
+        onBack={() => setCurrentView("landing")}
         isLightMode={isLightMode}
         onSyncUsers={handleRefresh}
         syncing={connecting}
@@ -1514,14 +1532,44 @@ export default function App() {
     );
   }
 
-  if (currentView === "borrow") {
+  if (currentView === "borrow" || currentView === "return" || currentView === "mylookup" || currentView === "sidlookup" || currentView === "location") {
     return (
       <BorrowSystemPage
+        key={currentView + (borrowIdentity ? `:${borrowIdentity.employeeId}` : "")}
+        scriptUrl={scriptUrl}
+        connected={connected}
+        isLightMode={isLightMode}
+        onBack={() => setCurrentView(currentView === "borrow" || currentView === "return" ? "landing" : "browse")}
+        showToast={showToast}
+        entry={currentView}
+        initialIdentity={borrowIdentity}
+      />
+    );
+  }
+
+  if (currentView === "browse") {
+    return (
+      <BrowsePage
         scriptUrl={scriptUrl}
         connected={connected}
         isLightMode={isLightMode}
         onBack={() => setCurrentView("landing")}
         showToast={showToast}
+        onOpenWarehouseView={() => {
+          setIsAdmin(false);
+          safeSetLocalStorage("wms_is_admin", "false");
+          setCurrentUser(null);
+          setCurrentView("monitor");
+          showToast("창고 물품 열람용 모드입니다. 수정이 차단됩니다.", "info");
+        }}
+        onGoBorrow={(identity) => {
+          setBorrowIdentity(identity);
+          setCurrentView("borrow");
+        }}
+        onGoMode={(m, identity) => {
+          setBorrowIdentity(identity);
+          setCurrentView(m);
+        }}
       />
     );
   }

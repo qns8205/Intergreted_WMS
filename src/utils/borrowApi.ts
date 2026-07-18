@@ -197,3 +197,45 @@ export const DEMO_OBJECT_ITEMS: ObjectItem[] = [
   { id: "002884", name: "Mechanical Pencil", sector: "Seoul-Root", rootSlot: "000246", category: "사무용품", subcategory: "필기구", image: "", stock: 25, rented: 5 },
   { id: "001531", name: "electronic scale", sector: "Seoul-Root", rootSlot: "000028", category: "전자기기", subcategory: "측정기기", image: "", stock: 4, rented: 1 },
 ];
+
+/* ══════════ 열람 ↔ 대여 공용: 신원 & 장바구니 (localStorage) ══════════ */
+
+export interface BrowseIdentity { name: string; employeeId: string }
+export interface BrowseCartItem { id: string; name: string; quantity: number; rootSlot?: string }
+
+const IDENTITY_KEY = "wms_browse_identity";
+const CART_PREFIX = "wms_browse_cart:";
+
+export function identityKey(name: string, employeeId: string): string {
+  return `${String(name || "").trim()}|${String(employeeId || "").trim()}`;
+}
+
+export function saveIdentity(identity: BrowseIdentity): void {
+  try { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); } catch {}
+}
+
+export function loadIdentity(): BrowseIdentity | null {
+  try {
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    return raw ? (JSON.parse(raw) as BrowseIdentity) : null;
+  } catch { return null; }
+}
+
+export function saveBrowseCart(name: string, employeeId: string, items: BrowseCartItem[]): void {
+  try {
+    const k = CART_PREFIX + identityKey(name, employeeId);
+    if (items.length === 0) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(items));
+  } catch {}
+}
+
+export function loadBrowseCart(name: string, employeeId: string): BrowseCartItem[] {
+  try {
+    const raw = localStorage.getItem(CART_PREFIX + identityKey(name, employeeId));
+    return raw ? (JSON.parse(raw) as BrowseCartItem[]) : [];
+  } catch { return []; }
+}
+
+export function clearBrowseCart(name: string, employeeId: string): void {
+  try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
+}
