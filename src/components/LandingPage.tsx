@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { ClipboardList, HandHelping, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "return" | "browse" | "login") => void;
+  onNavigate: (view: "borrow" | "return" | "browse" | "mylookup" | "login") => void;
   isLightMode: boolean;
   scriptUrl: string;
   setScriptUrl: (url: string) => void;
@@ -89,7 +89,7 @@ export default function LandingPage({
           }}
         >
           실시간 구글 스프레드시트 연동 기반 of 자재 관리 플랫폼입니다.<br />
-          대여·반납·열람은 아래 세 가지 모드를 이용하세요. 창고 배치 및 재고 수정은 관리 모드에서 가능합니다.
+          대여·반납·열람·내 대여조회는 아래 네 가지 모드를 이용하세요. 창고 배치 및 재고 수정은 관리 모드에서 가능합니다.
         </p>
 
         {/* 구글 시트 연동 상태 인디케이터 */}
@@ -161,7 +161,7 @@ export default function LandingPage({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
           gap: "16px",
           maxWidth: "800px",
           width: "100%",
@@ -185,6 +185,12 @@ export default function LandingPage({
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
             desc: "시나리오 물품과 창고 물품을 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+          },
+          {
+            key: "mylookup" as const,
+            icon: <PackageOpen size={24} />,
+            title: "내 대여 조회",
+            desc: "내가 대여 중인 시나리오·창고 물품과 위치를 확인합니다.",
           },
         ].map((c) => (
           <div

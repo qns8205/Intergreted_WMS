@@ -239,3 +239,77 @@ export function loadBrowseCart(name: string, employeeId: string): BrowseCartItem
 export function clearBrowseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
+
+/* ══════════ 창고 물품 (창고물품 시트) 타입 & 헬퍼 ══════════ */
+
+export interface WarehouseItem {
+  rowIndex: number;
+  location: string;   // 예: "A-01", "F-02"
+  name: string;
+  photo: string;
+  stock: number | string | null;
+  spec: string;
+  note: string;
+  manager: string;
+}
+
+// 위치 문자열 "A-01" → { rack: "A", slot: "01" }
+export function parseRackSlot(loc: string | null | undefined): { rack: string; slot: string } {
+  const t = String(loc ?? "").trim().toUpperCase();
+  const parts = t.split("-");
+  if (parts.length < 2) return { rack: t, slot: "" };
+  return { rack: parts[0], slot: parts.slice(1).join("-") };
+}
+
+export function warehouseStockNum(stock: number | string | null): number {
+  if (stock === "" || stock === null || stock === undefined) return NaN; // N/A 취급
+  const n = Number(stock);
+  return isNaN(n) ? NaN : n;
+}
+
+export interface WarehouseCartItem {
+  rowIndex: number;
+  location: string;
+  name: string;
+  quantity: number;
+}
+
+const WH_CART_PREFIX = "wms_wh_cart:";
+
+export function saveWarehouseCart(name: string, employeeId: string, items: WarehouseCartItem[]): void {
+  try {
+    const k = WH_CART_PREFIX + identityKey(name, employeeId);
+    if (items.length === 0) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(items));
+  } catch {}
+}
+
+export function loadWarehouseCart(name: string, employeeId: string): WarehouseCartItem[] {
+  try {
+    const raw = localStorage.getItem(WH_CART_PREFIX + identityKey(name, employeeId));
+    return raw ? (JSON.parse(raw) as WarehouseCartItem[]) : [];
+  } catch { return []; }
+}
+
+export function clearWarehouseCart(name: string, employeeId: string): void {
+  try { localStorage.removeItem(WH_CART_PREFIX + identityKey(name, employeeId)); } catch {}
+}
+
+// 창고 재고 전체 조회 (WMS getAll의 inventory 사용)
+export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
+  const data = await apiGet(scriptUrl, "getAll");
+  return (data.inventory || []) as WarehouseItem[];
+}
+
+// 창고 물품 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
+export async function postWarehouseRent(
+  scriptUrl: string,
+  payload: { type: "대여" | "반납"; location: string; name: string; qty: number; user: string; note: string }
+): Promise<any> {
+  return apiPost(scriptUrl, "rentInventoryItem", payload);
+}
+
+export async function fetchWarehouseBorrowedItems(scriptUrl: string, name: string): Promise<any[]> {
+  const data = await apiGet(scriptUrl, "getWarehouseBorrowedItems", { name });
+  return (data.items || []) as any[];
+}

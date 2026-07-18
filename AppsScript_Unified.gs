@@ -117,6 +117,9 @@ function doGet(e) {
     if (action === "getBorrowAppInfo") {
       return responseJSON({ success: true, version: APP_VERSION });
     }
+    if (action === "getWarehouseBorrowedItems") {
+      return responseJSON({ success: true, items: getWarehouseBorrowedItems_(e.parameter.name || "") });
+    }
 
     return responseJSON({ success: false, error: "알 수 없는 GET 액션입니다." });
   } catch (err) {
@@ -588,8 +591,44 @@ function getRentLogs(sheet) {
   return logs;
 }
 
-function addRentLog(sheet, log) {
-  const lastRow = sheet.getLastRow();
+// 창고물품 대여로그에서 (사용자, 위치, 품명)별 순 대여량(대여-반납)을 집계.
+// name이 주어지면 해당 대여자만, 없으면 전원.
+function getWarehouseBorrowedItems_(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(RENT_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 1) return [];
+  var target = String(name || "").trim();
+  var logs = getRentLogs(sheet);
+  var map = {}; var order = [];
+  logs.forEach(function (lg) {
+    var user = String(lg.user || "").trim();
+    if (target && user !== target) return;
+    var key = user + "||" + lg.location + "||" + lg.name;
+    if (!map[key]) { map[key] = { borrowerName: user, location: lg.location, name: lg.name, net: 0, lastDate: "" }; order.push(key); }
+    var q = Number(lg.qty) || 0;
+    if (lg.type === "반납") map[key].net -= q;
+    else map[key].net += q;
+    if (lg.timestamp) map[key].lastDate = lg.timestamp;
+  });
+  var result = [];
+  order.forEach(function (k) {
+    var e = map[k];
+    if (e.net <= 0) return;
+    result.push({
+      sheetType: "warehouse",
+      borrowerName: e.borrowerName,
+      location: e.location,
+      name: e.name,
+      quantity: e.net,
+      itemLabel: (e.location ? "[" + e.location + "] " : "") + e.name + (e.net > 1 ? " x " + e.net : ""),
+      borrowDate: e.lastDate,
+      borrowPurpose: ""
+    });
+  });
+  return result;
+}
+
+function addRentLog(sheet, log) {  const lastRow = sheet.getLastRow();
   const nextRow = lastRow + 1;
   
   const nowStr = formatDate(new Date());

@@ -144,9 +144,10 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "sidlookup" | "location" | "monitor" | "defect" | "rent">("landing");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent">("landing");
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
-  const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string } | null>(null);
+  const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
+  const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -276,10 +277,6 @@ export default function App() {
         setCurrentView("browse");
       } else if (path === "mylookup") {
         setCurrentView("mylookup");
-      } else if (path === "sidlookup") {
-        setCurrentView("sidlookup");
-      } else if (path === "location") {
-        setCurrentView("location");
       } else if (path === "monitor") {
         setCurrentView("monitor");
       } else if (path === "rent") {
@@ -1451,11 +1448,14 @@ export default function App() {
         onNavigate={(view) => {
           if (view === "borrow") {
             setBorrowIdentity(null);
+            setBorrowKind(null);
             setCurrentView("borrow");
           } else if (view === "return") {
             setCurrentView("return");
           } else if (view === "browse") {
             setCurrentView("browse");
+          } else if (view === "mylookup") {
+            setCurrentView("mylookup");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
@@ -1532,43 +1532,37 @@ export default function App() {
     );
   }
 
-  if (currentView === "borrow" || currentView === "return" || currentView === "mylookup" || currentView === "sidlookup" || currentView === "location") {
+  if (currentView === "borrow" || currentView === "return") {
     return (
       <BorrowSystemPage
-        key={currentView + (borrowIdentity ? `:${borrowIdentity.employeeId}` : "")}
+        key={currentView + (borrowIdentity ? `:${borrowIdentity.employeeId}:${borrowKind || ""}` : "")}
         scriptUrl={scriptUrl}
         connected={connected}
         isLightMode={isLightMode}
-        onBack={() => setCurrentView(currentView === "borrow" || currentView === "return" ? "landing" : "browse")}
+        onBack={() => { setBorrowIdentity(null); setBorrowKind(null); setCurrentView("landing"); }}
         showToast={showToast}
         entry={currentView}
         initialIdentity={borrowIdentity}
+        initialKind={borrowKind}
+        onBackToWarehouseBrowse={() => { setBorrowKind(null); setCurrentView("browse"); }}
       />
     );
   }
 
-  if (currentView === "browse") {
+  if (currentView === "browse" || currentView === "mylookup") {
     return (
       <BrowsePage
+        key={currentView}
         scriptUrl={scriptUrl}
         connected={connected}
         isLightMode={isLightMode}
         onBack={() => setCurrentView("landing")}
         showToast={showToast}
-        onOpenWarehouseView={() => {
-          setIsAdmin(false);
-          safeSetLocalStorage("wms_is_admin", "false");
-          setCurrentUser(null);
-          setCurrentView("monitor");
-          showToast("창고 물품 열람용 모드입니다. 수정이 차단됩니다.", "info");
-        }}
-        onGoBorrow={(identity) => {
+        purpose={currentView === "mylookup" ? "mylookup" : "browse"}
+        onGoBorrow={({ identity, kind }) => {
           setBorrowIdentity(identity);
+          setBorrowKind(kind);
           setCurrentView("borrow");
-        }}
-        onGoMode={(m, identity) => {
-          setBorrowIdentity(identity);
-          setCurrentView(m);
         }}
       />
     );

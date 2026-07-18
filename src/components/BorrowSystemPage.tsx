@@ -3,6 +3,7 @@ import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
   HandHelping, PackageOpen, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
+  Warehouse, Trash2,
 } from "lucide-react";
 import {
   ObjectItem, ScenarioDefinition, UnreturnedItem, BorrowEntry, ReturnRequest,
@@ -10,6 +11,9 @@ import {
   fetchBorrowAppVersion, fetchObjectItems, fetchScenarioDefinition, fetchUnreturnedItems,
   fetchMyBorrowedItems, checkConfigDsRegistered, postRecordBorrow, postProcessReturn,
   DEMO_OBJECT_ITEMS, loadBrowseCart, clearBrowseCart, saveIdentity,
+  WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum,
+  fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
+  loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
 
@@ -17,8 +21,10 @@ import { getGoogleDriveImageUrl } from "../utils/drive";
 
 type Mode =
   | "mode"
+  | "pickBorrowKind" | "pickReturnKind"
   | "b1" | "b2" | "b3g" | "b4g" | "b3s" | "b4s"
-  | "return" | "mylookup" | "sidlookup" | "location"
+  | "wborrow" | "wreturn"
+  | "return"
   | "result";
 
 interface CartItem { id: string; name: string; quantity: number; rootSlot?: string }
@@ -31,16 +37,23 @@ interface BorrowSystemPageProps {
   isLightMode: boolean;
   onBack: () => void;
   showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
-  /** "borrow" = 대여 신청부터, "return" = 반납 처리부터, "mode" = 모드 선택 화면 */
-  entry?: "mode" | "borrow" | "return" | "mylookup" | "sidlookup" | "location";
+  /** "borrow" = 대여(종류 선택부터), "return" = 반납(종류 선택부터) */
+  entry?: "borrow" | "return";
   /** 열람 조회에서 넘어온 신원 (사번/성함 자동 입력 + 장바구니 연동) */
-  initialIdentity?: { name: string; employeeId: string } | null;
+  initialIdentity?: { name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null;
+  /** 열람에서 바로 넘어온 경우: "scenario"면 일반대여 흐름, "warehouse"면 창고대여 흐름으로 직행 */
+  initialKind?: "scenario" | "warehouse" | null;
+  /** 뒤로가기 시 창고 열람으로 복귀해야 하는 경우 */
+  onBackToWarehouseBrowse?: () => void;
 }
 
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
-export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "mode", initialIdentity = null }: BorrowSystemPageProps) {
-  const rootMode: Mode = entry === "borrow" ? "b1" : entry === "mode" ? "mode" : (entry as Mode);
+export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
+  // 열람에서 창고 물품을 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
+  const rootMode: Mode = initialKind === "warehouse" ? "wborrow"
+    : initialKind === "scenario" ? "b1"
+    : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
   const C = {
     bg: isLightMode ? "#f8fafc" : "#0b0f19",
@@ -71,9 +84,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   /* ---------- 대여 신청 상태 ---------- */
   const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
-  const [affiliation, setAffiliation] = useState<"cfgw" | "configds" | "other">("cfgw");
+  const [affiliation, setAffiliation] = useState<"cfgw" | "configds" | "other">(initialIdentity?.affiliation || "cfgw");
   const [employeeId, setEmployeeId] = useState(initialIdentity?.employeeId || "");
-  const [otherName, setOtherName] = useState("");
+  const [otherName, setOtherName] = useState(initialIdentity?.affiliation === "other" ? (initialIdentity?.name || "") : "");
   const [verifying, setVerifying] = useState(false);
   const [itemType, setItemType] = useState<"scenario" | "general">("scenario");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -94,22 +107,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [returnSubmitting, setReturnSubmitting] = useState(false);
 
   /* ---------- 내 대여 조회 상태 ---------- */
-  const [myName, setMyName] = useState(initialIdentity?.name || "");
-  const [myAff, setMyAff] = useState<"cfgw" | "other">("cfgw");
-  const [myEmpId, setMyEmpId] = useState(initialIdentity?.employeeId || "");
-  const [myLoading, setMyLoading] = useState(false);
-  const [myResult, setMyResult] = useState<UnreturnedItem[] | null>(null);
 
   /* ---------- SID 검색 상태 ---------- */
-  const [sidLookupInput, setSidLookupInput] = useState("");
-  const [sidLookupLoading, setSidLookupLoading] = useState(false);
-  const [sidLookupResult, setSidLookupResult] = useState<ScenarioDefinition | null>(null);
 
   /* ---------- 위치 검색 상태 ---------- */
-  const [locSearch, setLocSearch] = useState("");
-  const [locCat, setLocCat] = useState("");
-  const [locSub, setLocSub] = useState("");
-  const [locBasket, setLocBasket] = useState<{ id: string; name: string; rootSlot: string }[]>([]);
 
   /* ---------- 물품 필터 상태 (일반/추가 물품 피커) ---------- */
   const [itemSearch, setItemSearch] = useState("");
@@ -118,6 +119,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [reqSearch, setReqSearch] = useState("");
   const [reqCat, setReqCat] = useState("");
   const [reqSub, setReqSub] = useState("");
+
+  /* ---------- 창고 물품 상태 ---------- */
+  const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
+  const [whLoaded, setWhLoaded] = useState(false);
+  const [whLoading, setWhLoading] = useState(false);
+  const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
+  const [whSearch, setWhSearch] = useState("");
+  const [whRack, setWhRack] = useState("");
+  const [whSlot, setWhSlot] = useState("");
+  const [whPurpose, setWhPurpose] = useState("");
+  const [whReturnItems, setWhReturnItems] = useState<any[]>([]);
+  const [whReturnLoading, setWhReturnLoading] = useState(false);
+  const [whReturnSel, setWhReturnSel] = useState<Record<string, number>>({});
+  const [whName, setWhName] = useState(initialIdentity?.name || "");
+  const [whEmpId, setWhEmpId] = useState(initialIdentity?.employeeId || "");
 
   /* ---------- 초기 로드: 버전 ---------- */
   useEffect(() => {
@@ -130,11 +146,48 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
-    if (entry === "borrow") loadItems();
-    if (entry === "return") loadUnreturned();
-    if (entry === "location") loadItems();
+    if (initialKind === "scenario") {
+      loadItems();
+      // 열람 시나리오 장바구니 → 일반대여 카트로
+      if (initialIdentity && (initialIdentity.affiliation === "cfgw" || !initialIdentity.affiliation)) {
+        const saved = loadBrowseCart(initialIdentity.name, initialIdentity.employeeId);
+        if (saved.length) { setCart(saved.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity, rootSlot: c.rootSlot }))); setItemType("general"); }
+      }
+    }
+    if (initialKind === "warehouse") {
+      loadWarehouse();
+      if (initialIdentity) {
+        const saved = loadWarehouseCart(initialIdentity.name, initialIdentity.employeeId);
+        if (saved.length) setWhCart(saved);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /* ---------- 창고 재고/미반납 로드 ---------- */
+  const loadWarehouse = useCallback(async () => {
+    if (whLoaded) return;
+    setWhLoading(true);
+    try {
+      if (connected && scriptUrl) setWhItems(await fetchWarehouseInventory(scriptUrl));
+      else setWhItems([
+        { rowIndex: 2, location: "A-01", name: "랙 선반용 합판", photo: "", stock: 12, spec: "", note: "", manager: "고성민" },
+        { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
+      ]);
+      setWhLoaded(true);
+    } catch (e: any) { showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
+    finally { setWhLoading(false); }
+  }, [connected, scriptUrl, whLoaded, showToast]);
+
+  const loadWhReturn = useCallback(async (nm: string) => {
+    setWhReturnLoading(true);
+    setWhReturnSel({});
+    try {
+      if (connected && scriptUrl) setWhReturnItems(await fetchWarehouseBorrowedItems(scriptUrl, nm));
+      else setWhReturnItems([{ location: "A-01", name: "랙 선반용 합판", quantity: 2, itemLabel: "[A-01] 랙 선반용 합판 x 2", borrowDate: "2026-07-01", borrowerName: nm }]);
+    } catch (e: any) { showToast(`창고 대여 내역을 불러오지 못했습니다: ${e.message}`, "error"); }
+    finally { setWhReturnLoading(false); }
+  }, [connected, scriptUrl, showToast]);
 
   /* ---------- 물품 목록 로드 ---------- */
   const loadItems = useCallback(async () => {
@@ -156,7 +209,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, [connected, scriptUrl, itemsLoading, showToast]);
 
   useEffect(() => {
-    if ((mode === "b3g" || mode === "b4s" || mode === "location") && !itemsLoaded && !itemsLoading) {
+    if ((mode === "b3g" || mode === "b4s") && !itemsLoaded && !itemsLoading) {
       loadItems();
     }
   }, [mode, itemsLoaded, itemsLoading, loadItems]);
@@ -746,75 +799,100 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     }
   }
 
-  /* ══════════════════════ 내 대여 조회 ══════════════════════ */
+  /* ══════════════════════ 창고 물품 대여/반납 ══════════════════════ */
 
-  async function runMyLookup() {
-    const name = myName.trim();
-    if (!name) { showToast("성함을 입력해주세요.", "warn"); return; }
-    if (!isKoreanName(name)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    let empId = "";
-    if (myAff === "cfgw") {
-      empId = myEmpId.trim();
-      if (!/^\d+$/.test(empId)) { showToast("사번은 숫자만 입력할 수 있습니다.", "warn"); return; }
+
+  async function handleWarehouseBorrow() {
+    const user = whName.trim();
+    if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
+    if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
+    if (whCart.length === 0) { showToast("대여할 창고 물품을 담아주세요.", "warn"); return; }
+    // 재고 검증
+    for (const c of whCart) {
+      const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
+      const stock = orig ? warehouseStockNum(orig.stock) : NaN;
+      if (!isNaN(stock) && c.quantity > stock) { showToast(`['${c.name}'] 신청 수량(${c.quantity})이 재고(${stock})를 초과합니다.`, "warn"); return; }
     }
-    setMyLoading(true);
+    setSubmitting(true);
     try {
       if (connected && scriptUrl) {
-        setMyResult(await fetchMyBorrowedItems(scriptUrl, name, empId));
-      } else {
-        setMyResult([
-          { sheetType: "general", rowIndex: 2, borrowerName: name, itemLabel: "[000008] fruit x 2", location: "000060", quantity: 2, borrowDate: "2026-06-20", borrowPurpose: "테스트", email: "", batchId: "", image: "", stock: 15, rented: 8 },
-        ]);
+        for (const c of whCart) {
+          await postWarehouseRent(scriptUrl, { type: "대여", location: c.location, name: c.name, qty: c.quantity, user, note: whPurpose || "대여 신청" });
+        }
+        clearWarehouseCart(user, whEmpId.trim());
       }
+      setResultInfo({ ok: true, title: "창고 물품 대여 완료!", sub: `${whCart.reduce((n, c) => n + c.quantity, 0)}개 물품을 대여 처리했습니다.` });
+      setMode("result");
     } catch (e: any) {
-      showToast(`조회 중 오류: ${e.message}`, "error");
-    } finally {
-      setMyLoading(false);
-    }
+      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
+      setMode("result");
+    } finally { setSubmitting(false); }
   }
 
-  /* ══════════════════════ SID 검색 ══════════════════════ */
-
-  async function runSidLookup() {
-    const sid = sidLookupInput.trim().toUpperCase();
-    if (!sid) { showToast("검색할 SID를 입력해주세요.", "warn"); return; }
-    if (!/^[SL]\d+$/i.test(sid)) { showToast("시나리오 ID 형식이 유효하지 않습니다. (예: S1234, L1234)", "warn"); return; }
-    setSidLookupLoading(true);
-    setSidLookupResult(null);
+  async function handleWarehouseReturn() {
+    const keys = Object.keys(whReturnSel);
+    if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
+    setReturnSubmitting(true);
     try {
       if (connected && scriptUrl) {
-        setSidLookupResult(await fetchScenarioDefinition(scriptUrl, sid));
-      } else {
-        setSidLookupResult({
-          sid, found: true, syncNeeded: false, blocked: false, blockReason: "",
-          highLevelEn: "Prepare the workstation and verify all listed items.",
-          highLevelKo: "워크스테이션을 준비하고 나열된 물품을 모두 확인하세요.",
-          items: [
-            { id: "000008", name: "fruit", quantity: 1, rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", stock: 15, rented: 8 },
-            { id: "000019", name: "towel (정사각형 소형 행주)", quantity: 2, rootSlot: "000098", category: "청소 및 위생용품", subcategory: "위생 및 타월", stock: 58, rented: 3 },
-          ],
-        });
+        for (const k of keys) {
+          const idx = parseInt(k, 10);
+          const item = whReturnItems[idx];
+          if (!item) continue;
+          const qty = whReturnSel[k];
+          await postWarehouseRent(scriptUrl, { type: "반납", location: item.location, name: item.name, qty, user: item.borrowerName || whName.trim(), note: "반납 접수" });
+        }
       }
+      setResultInfo({ ok: true, title: "창고 물품 반납 완료!", sub: `${keys.length}건을 반납 처리했습니다.` });
+      setMode("result");
     } catch (e: any) {
-      showToast(`검색 중 오류: ${e.message}`, "error");
-    } finally {
-      setSidLookupLoading(false);
-    }
+      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
+      setMode("result");
+    } finally { setReturnSubmitting(false); }
   }
 
-  /* ══════════════════════ 위치 검색 ══════════════════════ */
+  const whCatMapRacks = useMemo(() => {
+    const map: Record<string, Set<string>> = {};
+    whItems.forEach((it) => {
+      const { rack, slot } = parseRackSlot(it.location);
+      if (!rack) return;
+      if (!map[rack]) map[rack] = new Set<string>();
+      if (slot) map[rack].add(slot);
+    });
+    return map;
+  }, [whItems]);
+  const whRacks = useMemo(() => Object.keys(whCatMapRacks).sort(), [whCatMapRacks]);
+  const whSlots = whRack && whCatMapRacks[whRack] ? Array.from<string>(whCatMapRacks[whRack]).sort() : [];
+  const whFiltered = useMemo(() => {
+    const q = whSearch.trim().toLowerCase();
+    return whItems.filter((it) => {
+      const { rack, slot } = parseRackSlot(it.location);
+      if (whRack && rack !== whRack) return false;
+      if (whSlot && slot !== whSlot) return false;
+      if (!q) return true;
+      return it.name.toLowerCase().includes(q);
+    });
+  }, [whItems, whSearch, whRack, whSlot]);
+  const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
 
-  const locResults = useMemo(
-    () => objectItems.filter((it) => matchesFilters(it, locSearch.trim(), locCat, locSub)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [objectItems, locSearch, locCat, locSub]
-  );
-
-  function toggleLocBasket(item: ObjectItem) {
-    setLocBasket((prev) => {
-      const idx = prev.findIndex((b) => b.id === item.id);
-      if (idx === -1) return [...prev, { id: item.id, name: item.name, rootSlot: item.rootSlot }];
-      return prev.filter((_, i) => i !== idx);
+  function addWhCart(it: WarehouseItem) {
+    const stock = warehouseStockNum(it.stock);
+    if (!isNaN(stock) && stock < 1) { showToast("재고가 부족합니다. (재고: 0)", "warn"); return; }
+    setWhCart((prev) => {
+      const idx = prev.findIndex((c) => c.rowIndex === it.rowIndex);
+      if (idx === -1) return [...prev, { rowIndex: it.rowIndex, location: it.location, name: it.name, quantity: 1 }];
+      if (!isNaN(stock) && prev[idx].quantity >= stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
+      return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
+    });
+  }
+  function chgWhCart(idx: number, d: number) {
+    setWhCart((prev) => {
+      const item = prev[idx]; if (!item) return prev;
+      const orig = whItems.find((o) => o.rowIndex === item.rowIndex);
+      const stock = orig ? warehouseStockNum(orig.stock) : NaN; const next = item.quantity + d;
+      if (d > 0 && !isNaN(stock) && next > stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
+      if (next < 1) return prev.filter((_, i) => i !== idx);
+      return prev.map((c, i) => (i === idx ? { ...c, quantity: next } : c));
     });
   }
 
@@ -824,31 +902,38 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setCart([]); setReqCart([]); setSidCart([]); setSidInput("");
     setGeneralOption(""); setPurposeGeneral(""); setPurposeScenario("");
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
-    setMyResult(null); setSidLookupResult(null); setSidLookupInput("");
-    setLocBasket([]); setLocSearch(""); setLocCat(""); setLocSub("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
+    setWhCart([]); setWhSearch(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhReturnSel({});
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
+    if (rootMode === "wborrow") { setWhLoaded(false); loadWarehouse(); }
+    if (rootMode === "wreturn") loadWhReturn(whName.trim());
   }
 
   /* ══════════════════════ 헤더/네비 ══════════════════════ */
 
   const titles: Record<string, string> = {
-    mode: "물품 대여 시스템", b1: "물품 대여 신청", b2: "물품 대여 신청", b3g: "물품 대여 신청",
-    b4g: "물품 대여 신청", b3s: "물품 대여 신청", b4s: "물품 대여 신청",
-    return: "반납 처리", mylookup: "내 대여 조회", sidlookup: "SID 검색", location: "위치 검색", result: "",
+    pickBorrowKind: "대여 신청", pickReturnKind: "반납 처리",
+    b1: "시나리오 대여 신청", b2: "시나리오 대여 신청", b3g: "시나리오 대여 신청",
+    b4g: "시나리오 대여 신청", b3s: "시나리오 대여 신청", b4s: "시나리오 대여 신청",
+    return: "시나리오 반납 처리", wborrow: "창고 물품 대여", wreturn: "창고 물품 반납", result: "",
   };
 
   function goPrev() {
-    if (mode === rootMode) { onBack(); return; }
-    if (mode === "b1") setMode("mode");
+    if (mode === rootMode) {
+      if (rootMode === "wborrow" && onBackToWarehouseBrowse) { onBackToWarehouseBrowse(); return; }
+      onBack(); return;
+    }
+    if (mode === "b1") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
     else if (mode === "b2") setMode("b1");
     else if (mode === "b3g" || mode === "b3s") setMode("b2");
     else if (mode === "b4g") setMode("b3g");
     else if (mode === "b4s") setMode("b3s");
-    else setMode("mode");
+    else if (mode === "return") setMode("pickReturnKind");
+    else if (mode === "wborrow" || mode === "wreturn") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
+    else setMode(rootMode);
   }
 
   const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" ? 3 : mode === "b4g" || mode === "b4s" ? 4 : 0;
@@ -887,27 +972,28 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {/* ───────── 모드 선택 ───────── */}
-        {mode === "mode" ? (
+        {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
+        {mode === "pickBorrowKind" || mode === "pickReturnKind" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "4px" }}>
+              {mode === "pickBorrowKind" ? "대여할 물품 종류를 선택하세요." : "반납할 물품 종류를 선택하세요."}
+            </div>
             {[
-              { key: "b1", icon: <HandHelping size={22} />, color: C.accentText, bg: C.accentSoft, title: "대여 신청", sub: "물품을 새로 대여 신청합니다" },
-              { key: "mylookup", icon: <PackageOpen size={22} />, color: C.accentText, bg: C.accentSoft, title: "내 대여 조회", sub: "내가 빌린 물품과 그 위치를 확인합니다" },
-              { key: "return", icon: <Undo2 size={22} />, color: C.success, bg: C.successSoft, title: "반납 처리", sub: "대여 중인 물품을 반납 처리합니다" },
-              { key: "sidlookup", icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "SID 검색", sub: "시나리오 ID로 High Level 안내와 필요 물품·위치를 확인합니다" },
-              { key: "location", icon: <MapPin size={22} />, color: C.warn, bg: C.warnSoft, title: "위치 검색", sub: "오브젝트 이름으로 해당 물품의 위치를 조회합니다" },
+              { kind: "scenario", icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품", sub: "SID 기반 대여 및 일반 대여 (Slack 연동)" },
+              { kind: "warehouse", icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "창고 물품", sub: "창고 재고를 랙·슬롯 기준으로 대여/반납" },
             ].map((m) => (
               <div
-                key={m.key}
+                key={m.kind}
                 onClick={() => {
-                  setMode(m.key as Mode);
-                  if (m.key === "return") loadUnreturned();
-                  if (m.key === "b1") { setItemsLoaded(false); loadItems(); }
-                  if (m.key === "location" && !itemsLoaded) loadItems();
-                  if (m.key === "mylookup") setMyResult(null);
-                  if (m.key === "sidlookup") { setSidLookupInput(""); setSidLookupResult(null); }
+                  if (mode === "pickBorrowKind") {
+                    if (m.kind === "scenario") { setMode("b1"); setItemsLoaded(false); loadItems(); }
+                    else { setMode("wborrow"); loadWarehouse(); }
+                  } else {
+                    if (m.kind === "scenario") { setMode("return"); loadUnreturned(); }
+                    else { setMode("wreturn"); loadWarehouse(); }
+                  }
                 }}
-                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "20px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
+                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}
               >
@@ -974,7 +1060,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : null}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
-              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
+              <button onClick={() => (onBack())} style={secondaryBtn}>이전</button>
               <button onClick={step1Next} disabled={verifying} style={{ ...primaryBtn, opacity: verifying ? 0.7 : 1 }}>
                 {verifying ? <><Spinner size={16} light /> 확인 중...</> : <>다음 단계 <ChevronRight size={15} /></>}
               </button>
@@ -1196,7 +1282,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
             <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.card, borderTop: `1px solid ${C.border}`, padding: "12px 16px", zIndex: 10 }}>
               <div style={{ maxWidth: "620px", margin: "0 auto", display: "flex", gap: "10px" }}>
-                <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
+                <button onClick={() => (onBack())} style={secondaryBtn}>이전</button>
                 <button
                   onClick={handleReturnSubmit}
                   disabled={Object.keys(selectedReturn).length === 0 || returnSubmitting}
@@ -1209,253 +1295,153 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {/* ───────── 내 대여 조회 ───────── */}
-        {mode === "mylookup" ? (
-          myResult === null ? (
-            <div>
-              <label style={labelStyle}>성함</label>
-              <div style={{ position: "relative", marginBottom: "16px" }}>
-                <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                <input
-                  value={myName}
-                  onChange={(e) => setMyName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
-                  onKeyDown={(e) => { if (e.key === "Enter") runMyLookup(); }}
-                  placeholder="대여 시 입력한 성함을 입력해주세요"
-                  style={{ ...inputStyle, paddingLeft: "40px" }}
-                />
-              </div>
-              <label style={labelStyle}>소속</label>
-              <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
-                <TypeCard small active={myAff === "cfgw"} icon={<Building2 size={19} />} text="Cfgw-kr" onClick={() => setMyAff("cfgw")} />
-                <TypeCard small active={myAff === "other"} icon={<MoreHorizontal size={19} />} text="ConfigDS · 기타" onClick={() => setMyAff("other")} />
-              </div>
-              {myAff === "cfgw" ? (
-                <div style={{ position: "relative", marginBottom: "16px" }}>
-                  <IdCard size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input
-                    value={myEmpId}
-                    onChange={(e) => setMyEmpId(e.target.value.replace(/\D/g, ""))}
-                    onKeyDown={(e) => { if (e.key === "Enter") runMyLookup(); }}
-                    placeholder="사번을 입력해주세요 (숫자만)" inputMode="numeric"
-                    style={{ ...inputStyle, paddingLeft: "40px" }}
-                  />
-                </div>
-              ) : null}
-              <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
-                <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
-                <button onClick={runMyLookup} disabled={myLoading} style={{ ...primaryBtn, opacity: myLoading ? 0.7 : 1 }}>
-                  {myLoading ? <><Spinner size={16} light /> 조회 중...</> : <><Search size={15} /> 조회하기</>}
-                </button>
-              </div>
+        {/* ───────── 창고 물품 대여 ───────── */}
+        {mode === "wborrow" ? (
+          <div>
+            <label style={labelStyle}>대여자 성함</label>
+            <div style={{ position: "relative", marginBottom: "16px" }}>
+              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
             </div>
-          ) : (
-            <div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span style={{ fontSize: "14px", fontWeight: 700 }}>{myName}님이 대여 중인 물품 ({sumQty(myResult)}개)</span>
-                <button onClick={() => setMyResult(null)} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: C.accentText, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>
-                  <RotateCcw size={12} /> 다시 조회
-                </button>
-              </div>
-              {myResult.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>
-                  <Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div>
+
+            {whCart.length > 0 ? (
+              <div style={{ marginBottom: "14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "13px", color: C.label }}>담은 창고 물품</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{whCartCount}개</span>
                 </div>
-              ) : (
-                sortByLoc(myResult).map((item) => {
-                  const isScenario = item.sheetType === "scenario";
-                  const badgeText = isScenario ? (item.itemKind === "대여 물품" ? "필요 물품" : "추가 물품") : (item.generalOption || "일반 대여");
-                  return (
-                    <div key={keyOf(item)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "13px", border: `1px solid ${C.border}`, borderRadius: "12px", marginBottom: "8px", background: C.card }}>
-                      <div style={{ flex: "0 0 40px", width: 40, height: 40, borderRadius: "10px", background: isScenario ? C.successSoft : C.accentSoft, color: isScenario ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {isScenario ? <Fingerprint size={17} /> : <Boxes size={17} />}
-                      </div>
-                      <Thumb url={item.image} size={44} />
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
+                  {whCart.map((item, idx) => (
+                    <div key={item.rowIndex} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px", wordBreak: "break-word" }}>{item.itemLabel}</div>
-                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
-                          <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", marginRight: "5px", background: isScenario ? C.successSoft : C.accentSoft, color: isScenario ? C.success : C.accentText }}>{badgeText}</span>
-                          대여일: {item.borrowDate || "-"}{isScenario && item.scenarioId ? ` · ${item.scenarioId}` : ""}
+                        <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
+                        <div style={{ fontSize: "11px", color: C.label }}>{item.location}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
+                        <span style={{ fontWeight: 700, minWidth: "20px", textAlign: "center", fontSize: "13px" }}>{item.quantity}</span>
+                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
+                      </div>
+                      <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/* 랙/슬롯 필터 + 검색 */}
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <select value={whRack} onChange={(e) => { setWhRack(e.target.value); setWhSlot(""); }} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
+                <option value="">전체 랙</option>{whRacks.map((r) => <option key={r} value={r}>{r}랙</option>)}
+              </select>
+              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
+                <option value="">전체 슬롯</option>{whSlots.map((sl) => <option key={sl} value={sl}>{sl}번</option>)}
+              </select>
+            </div>
+            <div style={{ position: "relative", marginBottom: "8px" }}>
+              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
+            </div>
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
+              {!whLoaded || whLoading ? (
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 창고 물품을 불러오는 중...</div>
+              ) : whFiltered.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
+              ) : (
+                whFiltered.map((it) => {
+                  const inCart = whCart.some((c) => c.rowIndex === it.rowIndex);
+                  const stockN = warehouseStockNum(it.stock);
+                  const { rack, slot } = parseRackSlot(it.location);
+                  return (
+                    <div key={it.rowIndex} onClick={() => addWhCart(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}>
+                      <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
+                      <Thumb url={it.photo} size={44} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
+                        <div style={{ marginTop: "3px", display: "flex", gap: "5px", flexWrap: "wrap" }}>
+                          {it.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
+                          <span style={{ fontSize: "11px", color: C.success, background: C.successSoft, padding: "2px 8px", borderRadius: "6px", fontWeight: 600 }}>재고 {isNaN(stockN) ? "N/A" : stockN}</span>
                         </div>
-                        <div style={{ marginTop: "5px" }}><LocBadge slot={item.location} /></div>
-                        <StockBadges stock={item.stock} rented={item.rented} />
                       </div>
                     </div>
                   );
                 })
               )}
-              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                <button onClick={() => { setMyResult(null); rootMode === "mode" ? setMode("mode") : onBack(); }} style={secondaryBtn}>처음으로</button>
-              </div>
             </div>
-          )
-        ) : null}
 
-        {/* ───────── SID 검색 ───────── */}
-        {mode === "sidlookup" ? (
-          <div>
-            <label style={labelStyle}>SID 검색</label>
-            <div style={{ position: "relative", marginBottom: "12px" }}>
-              <Fingerprint size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input
-                value={sidLookupInput}
-                onChange={(e) => setSidLookupInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") runSidLookup(); }}
-                placeholder="예: S1234 또는 L1234"
-                style={{ ...inputStyle, paddingLeft: "40px" }}
-              />
+            <div style={{ marginTop: "16px" }}>
+              <label style={labelStyle}>대여 목적 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
+              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
             </div>
-            <button onClick={runSidLookup} disabled={sidLookupLoading} style={{ ...primaryBtn, width: "100%", marginBottom: "16px", padding: "12px", opacity: sidLookupLoading ? 0.7 : 1 }}>
-              {sidLookupLoading ? <><Spinner size={16} light /> 검색 중...</> : <><Search size={15} /> 검색</>}
-            </button>
-
-            {sidLookupResult ? (
-              <>
-                <div style={{ marginBottom: "14px", padding: "14px 16px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}` }}>
-                  <div style={{ fontWeight: 700, fontSize: "14px", color: C.accentText, display: "flex", alignItems: "center", gap: "7px", marginBottom: "8px" }}>
-                    <Fingerprint size={15} />{sidLookupResult.sid}
-                    {sidLookupResult.found ? (
-                      <span style={{ fontSize: "10px", fontWeight: 700, background: C.success, color: "#fff", borderRadius: "10px", padding: "2px 8px" }}>등록됨</span>
-                    ) : (
-                      <span style={{ fontSize: "10px", fontWeight: 700, background: C.warn, color: "#fff", borderRadius: "10px", padding: "2px 8px" }}>동기화 필요</span>
-                    )}
-                  </div>
-                  {sidLookupResult.found ? (
-                    <>
-                      <div style={{ fontSize: "13px", lineHeight: 1.5, marginBottom: "4px" }}><span style={{ fontWeight: 700, color: C.label, marginRight: "6px", fontSize: "11px" }}>EN</span>{sidLookupResult.highLevelEn || "-"}</div>
-                      <div style={{ fontSize: "13px", lineHeight: 1.5 }}><span style={{ fontWeight: 700, color: C.label, marginRight: "6px", fontSize: "11px" }}>KO</span>{sidLookupResult.highLevelKo || "-"}</div>
-                    </>
-                  ) : (
-                    <div style={{ fontSize: "13px" }}>Scenario 시트에 등록되지 않은 SID입니다. High Level 안내가 없습니다.</div>
-                  )}
-                </div>
-                {sidLookupResult.items.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>{sidLookupResult.sid}에 등록된 Required Objects가 없습니다.</div>
-                ) : (
-                  <>
-                    <div style={{ fontSize: "11px", color: C.label, textAlign: "right", marginBottom: "4px" }}>{sidLookupResult.items.length}개 물품</div>
-                    <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden" }}>
-                      {sidLookupResult.items.map((it) => (
-                        <div key={it.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}` }}>
-                          <Thumb url={it.image} size={44} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                              <span style={{ fontSize: "11px", fontWeight: 700, color: C.label, background: C.cardSub, borderRadius: "5px", padding: "2px 6px" }}>{it.id}</span>
-                              <span style={{ fontWeight: 600, fontSize: "13px", wordBreak: "break-word" }}>{it.name}{(it.quantity || 1) > 1 ? ` × ${it.quantity}` : ""}</span>
-                            </div>
-                            {it.category ? (
-                              <div style={{ marginTop: "3px" }}>
-                                <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.warnSoft, color: C.warn }}>{it.category}{it.subcategory ? ` · ${it.subcategory}` : ""}</span>
-                              </div>
-                            ) : null}
-                            <StockBadges stock={it.stock || 0} rented={it.rented || 0} />
-                          </div>
-                          <span style={{ fontSize: "11px", color: C.warn, fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>{it.rootSlot ? padSlot(it.rootSlot) : "위치 없음"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "13px" }}>
-                <Fingerprint size={32} style={{ color: C.border, marginBottom: "8px" }} />
-                <div>검색할 SID를 입력하고 "검색"을 눌러주세요.</div>
-              </div>
-            )}
-            <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
+            <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
+              <button onClick={goPrev} style={secondaryBtn}>이전</button>
+              <button onClick={handleWarehouseBorrow} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
+                {submitting ? <><Spinner size={16} light /> 처리 중...</> : "대여 신청하기"}
+              </button>
             </div>
           </div>
         ) : null}
 
-        {/* ───────── 위치 검색 ───────── */}
-        {mode === "location" ? (
+        {/* ───────── 창고 물품 반납 ───────── */}
+        {mode === "wreturn" ? (
           <div>
-            <label style={labelStyle}>물품 위치 검색</label>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <select value={locCat} onChange={(e) => { setLocCat(e.target.value); setLocSub(""); }} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
-                <option value="">전체 카테고리</option>
-                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-              <select value={locSub} onChange={(e) => setLocSub(e.target.value)} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
-                <option value="">전체 서브카테고리</option>
-                {subsOf(locCat).map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+            <label style={labelStyle}>반납자 성함</label>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+                <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") loadWhReturn(whName.trim()); }} placeholder="대여 시 입력한 성함" style={{ ...inputStyle, paddingLeft: "40px" }} />
+              </div>
+              <button onClick={() => { if (!whName.trim()) { showToast("성함을 입력해주세요.", "warn"); return; } loadWhReturn(whName.trim()); }} style={{ ...primaryBtn, flex: "0 0 auto", padding: "14px 20px" }}><Search size={15} /> 조회</button>
             </div>
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.warn }} />
-              <input value={locSearch} onChange={(e) => setLocSearch(e.target.value)} placeholder="물품명 · ID · 위치(예: 000060)로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-            </div>
-            <div style={{ fontSize: "11px", color: C.label, textAlign: "right", marginBottom: "4px" }}>{itemsLoaded ? `${locResults.length}개 물품` : ""}</div>
-            <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "300px", overflowY: "auto", marginBottom: "14px" }}>
-              {!itemsLoaded ? (
-                <div style={{ padding: "28px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                  <Spinner /> 물품 목록을 불러오는 중입니다...
-                </div>
-              ) : locResults.length === 0 ? (
-                <div style={{ padding: "28px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다</div>
-              ) : (
-                locResults.map((it) => {
-                  const inBasket = locBasket.some((b) => b.id === it.id);
+
+            {whReturnLoading ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "48px 0", color: C.label }}><Spinner size={30} /> 대여 내역을 불러오는 중...</div>
+            ) : whReturnItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>조회된 대여 중인 창고 물품이 없습니다. 성함을 입력하고 조회하세요.</div>
+            ) : (
+              <>
+                {whReturnItems.map((item, idx) => {
+                  const key = String(idx);
+                  const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
+                  const sel = whReturnSel[key];
+                  const checked = sel !== undefined;
+                  const { rack, slot } = parseRackSlot(item.location);
                   return (
-                    <div key={it.id} onClick={() => toggleLocBasket(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inBasket ? C.warnSoft : "transparent" }}>
-                      <Thumb url={it.image} size={44} />
+                    <div key={key} onClick={() => setWhReturnSel((p) => { const n = { ...p }; if (checked) delete n[key]; else n[key] = maxQty; return n; })}
+                      style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "13px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "12px", marginBottom: "8px", cursor: "pointer" }}>
+                      <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                          <span style={{ fontSize: "11px", fontWeight: 700, color: C.label, background: C.cardSub, borderRadius: "5px", padding: "2px 6px" }}>{it.id}</span>
-                          <span style={{ fontWeight: 600, fontSize: "13px", wordBreak: "break-word" }}>{it.name}</span>
+                        <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
+                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>대여일: {item.borrowDate || "-"}</div>
+                        <div style={{ marginTop: "4px" }}>
+                          {item.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "2px 8px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
                         </div>
-                        {it.category ? (
-                          <div style={{ marginTop: "3px" }}>
-                            <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.warnSoft, color: C.warn }}>{it.category}{it.subcategory ? ` · ${it.subcategory}` : ""}</span>
+                        {maxQty > 1 ? (
+                          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                            <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
+                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.max(1, (p[key] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
+                            <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{sel ?? maxQty}</span>
+                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.min(maxQty, (p[key] ?? maxQty) + 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={12} /></button>
+                            <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
                           </div>
                         ) : null}
-                        <StockBadges stock={it.stock} rented={it.rented} />
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px", flexShrink: 0 }}>
-                        <span style={{ fontSize: "11px", color: C.warn, fontFamily: "monospace", fontWeight: 700 }}>{padSlot(it.rootSlot)}</span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleLocBasket(it); }}
-                          style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: inBasket ? "rgba(245,158,11,0.3)" : C.warnSoft, color: C.warn, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
-                        >
-                          {inBasket ? <Check size={13} /> : <Plus size={13} />}
-                        </button>
                       </div>
                     </div>
                   );
-                })
-              )}
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-              <span style={{ fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "5px" }}>
-                <Bookmark size={13} style={{ color: C.warn }} /> 위치 바구니 {locBasket.length > 0 ? <span style={{ color: C.warn }}>({locBasket.length})</span> : null}
-              </span>
-              <button onClick={() => setLocBasket([])} style={{ fontSize: "12px", color: C.error, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}>전체 삭제</button>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "200px", overflowY: "auto" }}>
-              {locBasket.length === 0 ? (
-                <div style={{ textAlign: "center", color: C.label, fontSize: "12px", padding: "12px 0", border: `1px dashed ${C.border}`, borderRadius: "10px" }}>
-                  바구니가 비어 있습니다. 검색 결과에서 + 를 눌러 추가하세요.
+                })}
+                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                  <button onClick={goPrev} style={secondaryBtn}>이전</button>
+                  <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
+                    {returnSubmitting ? <><Spinner size={16} light /> 처리 중...</> : `반납 처리하기${Object.keys(whReturnSel).length ? ` (${Object.keys(whReturnSel).length}건)` : ""}`}
+                  </button>
                 </div>
-              ) : (
-                locBasket.map((item, idx) => (
-                  <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "9px 12px", background: C.warnSoft, border: `1px solid rgba(245,158,11,0.3)`, borderRadius: "10px" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
-                      <div style={{ fontSize: "11px", color: C.label }}>ID: {item.id}</div>
-                    </div>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", padding: "3px 10px", background: "rgba(245,158,11,0.2)", borderRadius: "12px", fontSize: "11px", fontWeight: 700, color: C.warn, fontFamily: "monospace", whiteSpace: "nowrap" }}>
-                      <MapPin size={11} />{padSlot(item.rootSlot)}
-                    </span>
-                    <button onClick={() => setLocBasket(locBasket.filter((_, i) => i !== idx))} style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={12} /></button>
-                  </div>
-                ))
-              )}
-            </div>
-            <div style={{ display: "flex", gap: "10px", marginTop: "20px" }}>
-              <button onClick={() => (rootMode === "mode" ? setMode("mode") : onBack())} style={secondaryBtn}>이전</button>
-            </div>
+              </>
+            )}
+            {whReturnItems.length === 0 ? (
+              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                <button onClick={goPrev} style={secondaryBtn}>이전</button>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
