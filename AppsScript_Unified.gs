@@ -591,32 +591,43 @@ function getRentLogs(sheet) {
   return logs;
 }
 
-// 창고물품 대여로그에서 (사용자, 위치, 품명)별 순 대여량(대여-반납)을 집계.
-// name이 주어지면 해당 대여자만, 없으면 전원.
+// 창고물품 대여로그에서 (위치, 품명)별 순 대여량(대여-반납)을 집계.
+// - 이 시트는 헤더 없이 1행부터 데이터이므로 1행부터 직접 읽습니다.
+// - 이름 필터는 적용하지 않고 전체 미반납 목록을 반환합니다 (WMS 대여/반납과 동일).
+// - name 인자는 하위호환용으로 받되 무시합니다.
 function getWarehouseBorrowedItems_(name) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(RENT_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 1) return [];
-  var target = String(name || "").trim();
-  var logs = getRentLogs(sheet);
+  var lastRow = sheet.getLastRow();
+  var values = sheet.getRange(1, 1, lastRow, 7).getValues();
+  var display = sheet.getRange(1, 1, lastRow, 7).getDisplayValues();
   var map = {}; var order = [];
-  logs.forEach(function (lg) {
-    var user = String(lg.user || "").trim();
-    if (target && user !== target) return;
-    var key = user + "||" + lg.location + "||" + lg.name;
-    if (!map[key]) { map[key] = { borrowerName: user, location: lg.location, name: lg.name, net: 0, lastDate: "" }; order.push(key); }
-    var q = Number(lg.qty) || 0;
-    if (lg.type === "반납") map[key].net -= q;
-    else map[key].net += q;
-    if (lg.timestamp) map[key].lastDate = lg.timestamp;
-  });
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var typ = String(row[1] || "").trim();
+    var loc = String(row[2] || "").trim();
+    var nm = String(row[3] || "").trim();
+    if (!loc && !nm) continue; // 빈 줄/실수로 남은 헤더 방어
+    var q = (row[4] === "" || row[4] == null) ? 0 : Number(row[4]);
+    if (isNaN(q)) q = 0;
+    var user = String(row[5] || "").trim();
+    var ts = display[i][0] || "";
+    // 대여자 이름은 참고용으로만 보관 (필터에는 사용하지 않음)
+    var key = loc + "||" + nm;
+    if (!map[key]) { map[key] = { location: loc, name: nm, net: 0, lastDate: "", borrowers: {} }; order.push(key); }
+    if (typ === "반납") map[key].net -= q;
+    else { map[key].net += q; if (user) map[key].borrowers[user] = true; }
+    if (ts) map[key].lastDate = ts;
+  }
   var result = [];
   order.forEach(function (k) {
     var e = map[k];
     if (e.net <= 0) return;
+    var borrowerList = Object.keys(e.borrowers);
     result.push({
       sheetType: "warehouse",
-      borrowerName: e.borrowerName,
+      borrowerName: borrowerList.length === 1 ? borrowerList[0] : (borrowerList.join(", ") || ""),
       location: e.location,
       name: e.name,
       quantity: e.net,

@@ -179,12 +179,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
 
-  const loadWhReturn = useCallback(async (nm: string) => {
+  const loadWhReturn = useCallback(async () => {
     setWhReturnLoading(true);
     setWhReturnSel({});
     try {
-      if (connected && scriptUrl) setWhReturnItems(await fetchWarehouseBorrowedItems(scriptUrl, nm));
-      else setWhReturnItems([{ location: "A-01", name: "랙 선반용 합판", quantity: 2, itemLabel: "[A-01] 랙 선반용 합판 x 2", borrowDate: "2026-07-01", borrowerName: nm }]);
+      if (connected && scriptUrl) setWhReturnItems(await fetchWarehouseBorrowedItems(scriptUrl, ""));
+      else setWhReturnItems([{ location: "A-01", name: "랙 선반용 합판", quantity: 2, itemLabel: "[A-01] 랙 선반용 합판 x 2", borrowDate: "2026-07-01", borrowerName: "고성민" }]);
     } catch (e: any) { showToast(`창고 대여 내역을 불러오지 못했습니다: ${e.message}`, "error"); }
     finally { setWhReturnLoading(false); }
   }, [connected, scriptUrl, showToast]);
@@ -832,6 +832,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   async function handleWarehouseReturn() {
     const keys = Object.keys(whReturnSel);
     if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
+    if (!whName.trim()) { showToast("반납자 성함을 입력해주세요.", "warn"); return; }
     setReturnSubmitting(true);
     try {
       if (connected && scriptUrl) {
@@ -840,7 +841,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           const item = whReturnItems[idx];
           if (!item) continue;
           const qty = whReturnSel[k];
-          await postWarehouseRent(scriptUrl, { type: "반납", location: item.location, name: item.name, qty, user: item.borrowerName || whName.trim(), note: "반납 접수" });
+          await postWarehouseRent(scriptUrl, { type: "반납", location: item.location, name: item.name, qty, user: whName.trim() || item.borrowerName || "", note: "반납 접수" });
         }
       }
       setResultInfo({ ok: true, title: "창고 물품 반납 완료!", sub: `${keys.length}건을 반납 처리했습니다.` });
@@ -909,7 +910,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
     if (rootMode === "wborrow") { setWhLoaded(false); loadWarehouse(); }
-    if (rootMode === "wreturn") loadWhReturn(whName.trim());
+    if (rootMode === "wreturn") loadWhReturn();
   }
 
   /* ══════════════════════ 헤더/네비 ══════════════════════ */
@@ -990,7 +991,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     else { setMode("wborrow"); loadWarehouse(); }
                   } else {
                     if (m.kind === "scenario") { setMode("return"); loadUnreturned(); }
-                    else { setMode("wreturn"); loadWarehouse(); }
+                    else { setMode("wreturn"); loadWhReturn(); }
                   }
                 }}
                 style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
@@ -1385,22 +1386,35 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── 창고 물품 반납 ───────── */}
         {mode === "wreturn" ? (
           <div>
+            <div style={{ marginBottom: "12px", padding: "12px 14px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "12px", lineHeight: 1.6 }}>
+              현재 대여 중인 창고 물품 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
+            </div>
             <label style={labelStyle}>반납자 성함</label>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-              <div style={{ position: "relative", flex: 1 }}>
-                <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") loadWhReturn(whName.trim()); }} placeholder="대여 시 입력한 성함" style={{ ...inputStyle, paddingLeft: "40px" }} />
-              </div>
-              <button onClick={() => { if (!whName.trim()) { showToast("성함을 입력해주세요.", "warn"); return; } loadWhReturn(whName.trim()); }} style={{ ...primaryBtn, flex: "0 0 auto", padding: "14px 20px" }}><Search size={15} /> 조회</button>
+            <div style={{ position: "relative", marginBottom: "12px" }}>
+              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="반납자 성함 (반납 기록에 남습니다)" style={{ ...inputStyle, paddingLeft: "40px" }} />
+            </div>
+            <div style={{ position: "relative", marginBottom: "12px" }}>
+              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명 · 대여자 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
             </div>
 
             {whReturnLoading ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "48px 0", color: C.label }}><Spinner size={30} /> 대여 내역을 불러오는 중...</div>
             ) : whReturnItems.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>조회된 대여 중인 창고 물품이 없습니다. 성함을 입력하고 조회하세요.</div>
+              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 창고 물품이 없습니다.</div>
             ) : (
               <>
-                {whReturnItems.map((item, idx) => {
+                {whReturnItems
+                  .map((item, idx) => ({ item, idx }))
+                  .filter(({ item }) => {
+                    const q = whSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return String(item.name || "").toLowerCase().includes(q)
+                      || String(item.borrowerName || "").toLowerCase().includes(q)
+                      || String(item.location || "").toLowerCase().includes(q);
+                  })
+                  .map(({ item, idx }) => {
                   const key = String(idx);
                   const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
                   const sel = whReturnSel[key];
@@ -1412,7 +1426,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                       <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
-                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>대여일: {item.borrowDate || "-"}</div>
+                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
+                          {item.borrowerName ? `대여자: ${item.borrowerName} · ` : ""}대여일: {item.borrowDate || "-"}
+                        </div>
                         <div style={{ marginTop: "4px" }}>
                           {item.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "2px 8px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
                         </div>
