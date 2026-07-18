@@ -102,6 +102,9 @@ function doGet(e) {
     if (action === "getObjectItems") {
       return responseJSON({ success: true, items: getObjectItems() });
     }
+    if (action === "getScenarioObjectsForAdmin") {
+      return responseJSON({ success: true, items: getScenarioObjectsForAdmin_() });
+    }
     if (action === "getScenarioDefinition") {
       return responseJSON({ success: true, scenario: getScenarioDefinition(e.parameter.sid) });
     }
@@ -147,6 +150,16 @@ function doPost(e) {
     }
     if (action === "upsertScenario") {
       return handleScenarioUpsertPost_(payload);
+    }
+    if (action === "updateScenarioObject") {
+      return responseJSON({ success: true, item: updateScenarioObject_(payload) });
+    }
+    if (action === "addScenarioObject") {
+      return responseJSON({ success: true, item: addScenarioObject_(payload) });
+    }
+    if (action === "deleteScenarioObject") {
+      deleteScenarioObject_(payload.rowIndex);
+      return responseJSON({ success: true });
     }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = getInventorySheet(ss);
@@ -1298,6 +1311,113 @@ function getObjectItems() {
     return na - nb;
   });
   return result;
+}
+
+// ─────────────────────────────────────────────
+// 시나리오 오브젝트 관리 (WMS 관리자 모드용)
+// 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9)
+// 사진: 창고물품과 동일하게 data:image/... 가 오면 드라이브 업로드 후 링크 저장
+// ─────────────────────────────────────────────
+var SCENARIO_OBJECT_FOLDER_ID = "REPLACE_WITH_SCENARIO_FOLDER_ID"; // ← 시나리오 전용 드라이브 폴더 ID로 교체
+
+function getScenarioObjectsForAdmin_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+  var result = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    if (!row[0] && !row[1]) continue;
+    result.push({
+      rowIndex: i + 2,
+      id: padSlot_(String(row[0]).trim()),
+      name: String(row[1]).trim(),
+      sector: String(row[2] || "").trim(),
+      rootSlot: padSlot_(String(row[3]).trim()),
+      category: String(row[4] || "").trim(),
+      subcategory: String(row[5] || "").trim(),
+      image: String(row[6] || "").trim(),
+      stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0,
+      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0
+    });
+  }
+  return result;
+}
+
+function resolveScenarioImage_(photoVal, name) {
+  photoVal = photoVal || "";
+  if (photoVal.indexOf("data:image/") === 0) {
+    var fileName = String(name || "시나리오물품").trim();
+    return uploadImageToDrive(photoVal, fileName, SCENARIO_OBJECT_FOLDER_ID, "Scenario Object Images");
+  }
+  return photoVal;
+}
+
+function updateScenarioObject_(item) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var rowIndex = Number(item.rowIndex);
+  if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
+  var range = sheet.getRange(rowIndex, 1, 1, 9);
+  var cur = range.getValues()[0];
+
+  if (item.id !== undefined) cur[0] = padSlot_(String(item.id).trim());
+  if (item.name !== undefined) cur[1] = item.name;
+  if (item.sector !== undefined) cur[2] = item.sector;
+  if (item.rootSlot !== undefined) cur[3] = padSlot_(String(item.rootSlot).trim());
+  if (item.category !== undefined) cur[4] = item.category;
+  if (item.subcategory !== undefined) cur[5] = item.subcategory;
+  if (item.image !== undefined) cur[6] = resolveScenarioImage_(item.image, item.name || cur[1]);
+  // 재고 열은 수식이 있을 수 있으므로 수식이 없을 때만 값 설정
+  if (item.stock !== undefined) {
+    var stockCell = sheet.getRange(rowIndex, 8);
+    if (!stockCell.getFormula()) {
+      cur[7] = (item.stock === "" || item.stock == null) ? "" : Number(item.stock);
+    }
+  }
+  range.setValues([cur]);
+  return {
+    rowIndex: rowIndex, id: padSlot_(String(cur[0]).trim()), name: String(cur[1]).trim(),
+    sector: String(cur[2] || "").trim(), rootSlot: padSlot_(String(cur[3]).trim()),
+    category: String(cur[4] || "").trim(), subcategory: String(cur[5] || "").trim(),
+    image: String(cur[6] || "").trim(),
+    stock: (cur[7] !== "" && cur[7] !== undefined) ? Number(cur[7]) : 0,
+    rented: (cur[8] !== "" && cur[8] !== undefined) ? Number(cur[8]) : 0
+  };
+}
+
+function addScenarioObject_(item) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var nextRow = sheet.getLastRow() + 1;
+  var img = resolveScenarioImage_(item.image || "", item.name);
+  var rowValues = [
+    padSlot_(String(item.id || "").trim()),
+    item.name || "",
+    item.sector || "",
+    padSlot_(String(item.rootSlot || "").trim()),
+    item.category || "",
+    item.subcategory || "",
+    img,
+    (item.stock === "" || item.stock == null) ? 0 : Number(item.stock),
+    0
+  ];
+  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
+  return { rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3], category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0 };
+}
+
+function deleteScenarioObject_(rowIndex) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var idx = Number(rowIndex);
+  if (!idx || idx < 2) throw new Error("올바르지 않은 행 인덱스: " + idx);
+  sheet.deleteRow(idx);
 }
 
 function padSlot_(raw) {

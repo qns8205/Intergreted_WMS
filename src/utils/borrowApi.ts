@@ -313,3 +313,35 @@ export async function fetchWarehouseBorrowedItems(scriptUrl: string, name: strin
   const data = await apiGet(scriptUrl, "getWarehouseBorrowedItems", { name });
   return (data.items || []) as any[];
 }
+
+/* ══════════ 시나리오 오브젝트 관리 (WMS 관리자용) ══════════ */
+
+export interface ScenarioObjectAdmin {
+  rowIndex: number;
+  id: string;
+  name: string;
+  sector: string;
+  rootSlot: string;
+  category: string;
+  subcategory: string;
+  image: string;
+  stock: number;
+  rented: number;
+}
+
+export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
+  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin");
+  return (data.items || []) as ScenarioObjectAdmin[];
+}
+
+export async function updateScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin> & { rowIndex: number }): Promise<any> {
+  return apiPost(scriptUrl, "updateScenarioObject", payload);
+}
+
+export async function addScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin>): Promise<any> {
+  return apiPost(scriptUrl, "addScenarioObject", payload);
+}
+
+export async function deleteScenarioObject(scriptUrl: string, rowIndex: number): Promise<any> {
+  return apiPost(scriptUrl, "deleteScenarioObject", { rowIndex });
+}

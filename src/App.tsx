@@ -8,6 +8,7 @@ import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import SidePanel from "./components/SidePanel";
+import ScenarioAdminPage from "./components/ScenarioAdminPage";
 import DefectLogsPage from "./components/DefectLogsPage";
 import RentLogsPage from "./components/RentLogsPage";
 import LandingPage from "./components/LandingPage";
@@ -144,7 +145,7 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent">("landing");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario">("landing");
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
@@ -1848,6 +1849,30 @@ export default function App() {
             <AlertTriangle size={18} />
             {!sidebarCollapsed && <span>불량로그</span>}
           </button>
+
+          {isAdmin && (
+          <button
+            onClick={() => setCurrentView("scenario")}
+            title={sidebarCollapsed ? "시나리오 물품" : undefined}
+            style={{
+              width: "100%",
+              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 700,
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              background: currentView === "scenario" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(99, 102, 241, 0.15)") : "transparent",
+              color: currentView === "scenario" ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+              display: "flex",
+              alignItems: "center",
+              gap: sidebarCollapsed ? 0 : 10,
+              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(99, 102, 241, 0.3)") : "1px solid transparent",
+            }}
+          >
+            <Grid size={18} />
+            {!sidebarCollapsed && <span>시나리오 물품</span>}
+          </button>
+          )}
         </div>
 
         {/* 사이드바 하단 영역 */}
@@ -1945,7 +1970,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 보관 구역 모니터링" : currentView === "rent" ? "📋 대여/반납 대장" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 보관 구역 모니터링" : currentView === "rent" ? "📋 대여/반납 대장" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2206,7 +2231,20 @@ export default function App() {
 
       {/* ===== 2. 본문 메인 ===== */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {currentView === "defect" ? (
+        {currentView === "scenario" && !isAdmin ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)", fontSize: "14px" }}>
+            시나리오 물품 관리는 관리자만 사용할 수 있습니다.
+          </div>
+        ) : currentView === "scenario" ? (
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+            <ScenarioAdminPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              showToast={showToast}
+            />
+          </div>
+        ) : currentView === "defect" ? (
           <DefectLogsPage
             defectLogs={defectLogs}
             inventory={inventory}
