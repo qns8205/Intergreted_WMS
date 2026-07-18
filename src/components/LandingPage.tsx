@@ -1,8 +1,8 @@
 import React, { useState } from "react";
-import { ClipboardList, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
+import { ClipboardList, HandHelping, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
 
 interface LandingPageProps {
-  onNavigate: (view: "rental" | "scenario" | "login") => void;
+  onNavigate: (view: "rental" | "borrow" | "login") => void;
   isLightMode: boolean;
   scriptUrl: string;
   setScriptUrl: (url: string) => void;
@@ -249,9 +249,9 @@ export default function LandingPage({
           </div>
         </div>
 
-        {/* 시나리오 물품 대여 카드 */}
+        {/* 물품 대여 시스템 (Slack 연동) 카드 */}
         <div
-          onClick={() => onNavigate("scenario")}
+          onClick={() => onNavigate("borrow")}
           className="group"
           style={{
             background: isLightMode ? "#ffffff" : "#1e293b",
@@ -267,8 +267,8 @@ export default function LandingPage({
           }}
           onMouseEnter={(e) => {
             e.currentTarget.style.transform = "translateY(-4px)";
-            e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(16, 185, 129, 0.25)";
-            e.currentTarget.style.borderColor = "#10b981";
+            e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(99, 102, 241, 0.25)";
+            e.currentTarget.style.borderColor = "#6366f1";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.transform = "translateY(0)";
@@ -281,15 +281,15 @@ export default function LandingPage({
               width: "48px",
               height: "48px",
               borderRadius: "14px",
-              background: "rgba(16, 185, 129, 0.15)",
-              color: "#34d399",
+              background: "rgba(99, 102, 241, 0.15)",
+              color: "#818cf8",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               marginBottom: "24px",
             }}
           >
-            <Fingerprint size={24} />
+            <HandHelping size={24} />
           </div>
           <h2
             style={{
@@ -299,24 +299,23 @@ export default function LandingPage({
               color: isLightMode ? "#0f172a" : "#f1f5f9",
             }}
           >
-            🎬 시나리오 물품 대여
+            📦 물품 대여 시스템 (Slack 연동)
           </h2>
           <p
             style={{
-              fontSize: "13px",
-              color: isLightMode ? "#64748b" : "#94a3b8",
-              lineHeight: 1.5,
+              fontSize: "14px",
+              lineHeight: 1.6,
+              color: isLightMode ? "#475569" : "#94a3b8",
               marginBottom: "24px",
-              textAlign: "left",
             }}
           >
-            SID(시나리오 ID) 기반으로 필요 물품을 확인하고 대여·반납합니다. 내 대여 조회와 SID 검색도 이 화면에서 이용할 수 있습니다.
+            SID 기반 대여 · 일반 대여 · 반납 처리 · 내 대여 조회 · SID/위치 검색을 지원합니다. 신청과 반납 내역은 Slack 채널에 자동으로 공유됩니다.
           </p>
           <div
             style={{
               marginTop: "auto",
               padding: "10px 20px",
-              background: "#10b981",
+              background: "#4f46e5",
               color: "#ffffff",
               borderRadius: "12px",
               fontSize: "13px",
@@ -327,7 +326,7 @@ export default function LandingPage({
               transition: "background 0.2s",
             }}
           >
-            시나리오 대여 페이지 가기 →
+            대여 시스템 열기 →
           </div>
         </div>
 
