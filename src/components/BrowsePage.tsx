@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   ObjectItem, WarehouseItem, BrowseCartItem, WarehouseCartItem,
-  padSlot, isKoreanName, parseRackSlot, warehouseStockNum,
+  padSlot, isKoreanName, parseRackSlot, warehouseStockNum, compareRackSlot,
   fetchObjectItems, fetchWarehouseInventory, checkConfigDsRegistered,
   fetchMyBorrowedItems, fetchWarehouseBorrowedItems,
   saveIdentity, loadIdentity,
@@ -181,7 +181,7 @@ export default function BrowsePage({
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
       return it.name.toLowerCase().includes(q);
-    });
+    }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
 
   const sciCartCount = sciCart.reduce((n, c) => n + c.quantity, 0);

@@ -625,12 +625,23 @@ function getWarehouseBorrowedItems_(name) {
     var q = (row[4] === "" || row[4] == null) ? 0 : Number(row[4]);
     if (isNaN(q)) q = 0;
     var user = String(row[5] || "").trim();
+    var note = String(row[6] || "").trim();
     var ts = display[i][0] || "";
-    // 대여자 이름은 참고용으로만 보관 (필터에는 사용하지 않음)
     var key = loc + "||" + nm;
     if (!map[key]) { map[key] = { location: loc, name: nm, net: 0, lastDate: "", borrowers: {} }; order.push(key); }
-    if (typ === "반납") map[key].net -= q;
-    else { map[key].net += q; if (user) map[key].borrowers[user] = true; }
+
+    // 소모: 반납 대상이 아님. 재고에서 영구 차감된 것이므로 미반납 목록의 대여량에서 제외한다.
+    //  - 직접 소모(type === "소모"): 미반납으로 잡지 않음 → net에 더하지 않음
+    //  - 즉시 소모([소모완료] note가 붙은 반납 로그): 해당 대여 건을 닫는 것 → net에서 차감 (반납과 동일)
+    var isConsumeNote = note.indexOf("[소모완료]") !== -1 || note.indexOf("[즉시반납]") !== -1;
+    if (typ === "소모") {
+      // 소모는 대여도 반납도 아님: net 불변 (미반납 목록에서 완전히 배제)
+    } else if (typ === "반납" || isConsumeNote) {
+      map[key].net -= q;
+    } else {
+      // 대여
+      map[key].net += q; if (user) map[key].borrowers[user] = true;
+    }
     if (ts) map[key].lastDate = ts;
   }
   var result = [];
@@ -649,7 +660,21 @@ function getWarehouseBorrowedItems_(name) {
       borrowPurpose: ""
     });
   });
+  result.sort(function (a, b) { return compareRackSlot_(a.location, b.location); });
   return result;
+}
+
+// 위치 "A-01" 를 랙(A~) → 슬롯 숫자 순으로 정렬 비교
+function compareRackSlot_(la, lb) {
+  var pa = String(la || "").toUpperCase().split("-");
+  var pb = String(lb || "").toUpperCase().split("-");
+  var ra = pa[0] || "", rb = pb[0] || "";
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  var sa = parseInt(String(pa[1] || "").replace(/\D/g, ""), 10);
+  var sb = parseInt(String(pb[1] || "").replace(/\D/g, ""), 10);
+  if (isNaN(sa)) sa = 999999;
+  if (isNaN(sb)) sb = 999999;
+  return sa - sb;
 }
 
 function addRentLog(sheet, log) {  const lastRow = sheet.getLastRow();

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon,
 } from "lucide-react";
@@ -76,6 +77,14 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       return it.name.toLowerCase().includes(q) || it.id.includes(q) ||
         (it.category || "").toLowerCase().includes(q) || (it.subcategory || "").toLowerCase().includes(q) ||
         slotPad.includes(q);
+    }).sort((a, b) => {
+      // Location(rootSlot) 기준 정렬 (숫자 오름차순, 위치 없는 항목은 뒤로)
+      const na = parseInt(String(a.rootSlot ?? "").replace(/\D/g, ""), 10);
+      const nb = parseInt(String(b.rootSlot ?? "").replace(/\D/g, ""), 10);
+      const va = isNaN(na) ? Number.MAX_SAFE_INTEGER : na;
+      const vb = isNaN(nb) ? Number.MAX_SAFE_INTEGER : nb;
+      if (va !== vb) return va - vb;
+      return a.name.localeCompare(b.name);
     });
   }, [items, search, cat]);
 
@@ -190,9 +199,9 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         </div>
       )}
 
-      {/* 편집 모달 */}
-      {editing ? (
-        <div onClick={() => !saving && setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+      {/* 편집 모달 (뷰포트 중앙 고정 — 사이드바 영향 없이 화면 정중앙) */}
+      {editing ? createPortal(
+        <div onClick={() => !saving && setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)", maxHeight: "90vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
               <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>{isNew ? "새 시나리오 물품" : "시나리오 물품 편집"}</h2>
@@ -264,15 +273,17 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       ) : null}
 
       {/* 이미지 확대 */}
-      {modalUrl ? (
+      {modalUrl ? createPortal(
         <div onClick={() => setModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <button onClick={() => setModalUrl("")} style={{ position: "absolute", top: "16px", right: "20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}><X size={32} /></button>
           <img src={modalUrl} alt="" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px", objectFit: "contain" }} />
-        </div>
+        </div>,
+        document.body
       ) : null}
     </div>
   );

@@ -162,32 +162,8 @@ export default function SidePanel({
   }, [highlightedItemRowIndex, shelvesWithItems]);
 
   if (!rack) {
-    return (
-      <aside
-        style={{
-          width: 420,
-          background: PANEL,
-          borderLeft: `1px solid ${PANEL_BORDER}`,
-          padding: 24,
-          flexShrink: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          textAlign: "center",
-          gap: 12,
-        }}
-      >
-        <Package size={48} style={{ opacity: 0.2, color: TEXT_MAIN }} />
-        <div style={{ fontSize: 13, color: TEXT_DIM, lineHeight: 1.6 }}>
-          배치 지도에서 랙을 클릭하면
-          <br />
-          <b>상세 선반 단수 및 실시간 재고 정보</b>가
-          <br />
-          여기에 표시됩니다.
-        </div>
-      </aside>
-    );
+    // 랙이 선택되기 전에는 사이드바를 숨긴다 (지도 영역이 전체 폭을 차지).
+    return null;
   }
 
   const totalStock = shelvesWithItems.reduce(
@@ -209,7 +185,9 @@ export default function SidePanel({
   return (
     <aside
       style={{
-        width: 420,
+        width: "50%",
+        minWidth: 380,
+        maxWidth: "50vw",
         background: PANEL,
         borderLeft: `1px solid ${PANEL_BORDER}`,
         flexShrink: 0,
@@ -637,8 +615,8 @@ export default function SidePanel({
                                     }}
                                     title={hasImage ? "클릭하여 사진 확대" : undefined}
                                     style={{
-                                      width: 56,
-                                      height: 56,
+                                      width: 76,
+                                      height: 76,
                                       background: "var(--app-bg, #1b1c21)",
                                       border: `1px solid ${PANEL_BORDER}`,
                                       borderRadius: 6,
@@ -685,7 +663,7 @@ export default function SidePanel({
                                   <div style={{ flex: 1, minWidth: 0 }}>
                                     <div
                                       style={{
-                                        fontSize: "13px",
+                                        fontSize: "15px",
                                         fontWeight: 600,
                                         color: TEXT_MAIN,
                                         whiteSpace: "nowrap",

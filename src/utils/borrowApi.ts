@@ -304,7 +304,7 @@ export async function fetchWarehouseInventory(scriptUrl: string): Promise<Wareho
 // 창고 물품 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
 export async function postWarehouseRent(
   scriptUrl: string,
-  payload: { type: "대여" | "반납"; location: string; name: string; qty: number; user: string; note: string }
+  payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
 ): Promise<any> {
   return apiPost(scriptUrl, "rentInventoryItem", payload);
 }
@@ -344,4 +344,17 @@ export async function addScenarioObject(scriptUrl: string, payload: Partial<Scen
 
 export async function deleteScenarioObject(scriptUrl: string, rowIndex: number): Promise<any> {
   return apiPost(scriptUrl, "deleteScenarioObject", { rowIndex });
+}
+
+// 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
+export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
+  const pa = String(la ?? "").toUpperCase().split("-");
+  const pb = String(lb ?? "").toUpperCase().split("-");
+  const ra = pa[0] || "", rb = pb[0] || "";
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  let sa = parseInt(String(pa[1] ?? "").replace(/\D/g, ""), 10);
+  let sb = parseInt(String(pb[1] ?? "").replace(/\D/g, ""), 10);
+  if (isNaN(sa)) sa = 999999;
+  if (isNaN(sb)) sb = 999999;
+  return sa - sb;
 }

@@ -11,7 +11,7 @@ import {
   fetchBorrowAppVersion, fetchObjectItems, fetchScenarioDefinition, fetchUnreturnedItems,
   fetchMyBorrowedItems, checkConfigDsRegistered, postRecordBorrow, postProcessReturn,
   DEMO_OBJECT_ITEMS, loadBrowseCart, clearBrowseCart, saveIdentity,
-  WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum,
+  WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum, compareRackSlot,
   fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
   loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
@@ -802,11 +802,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   /* ══════════════════════ 창고 물품 대여/반납 ══════════════════════ */
 
 
-  async function handleWarehouseBorrow() {
+  async function handleWarehouseBorrow(actionType: "대여" | "소모" = "대여") {
     const user = whName.trim();
     if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
     if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    if (whCart.length === 0) { showToast("대여할 창고 물품을 담아주세요.", "warn"); return; }
+    if (whCart.length === 0) { showToast(`${actionType}할 창고 물품을 담아주세요.`, "warn"); return; }
     // 재고 검증
     for (const c of whCart) {
       const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
@@ -817,11 +817,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     try {
       if (connected && scriptUrl) {
         for (const c of whCart) {
-          await postWarehouseRent(scriptUrl, { type: "대여", location: c.location, name: c.name, qty: c.quantity, user, note: whPurpose || "대여 신청" });
+          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청") });
         }
         clearWarehouseCart(user, whEmpId.trim());
       }
-      setResultInfo({ ok: true, title: "창고 물품 대여 완료!", sub: `${whCart.reduce((n, c) => n + c.quantity, 0)}개 물품을 대여 처리했습니다.` });
+      const total = whCart.reduce((n, c) => n + c.quantity, 0);
+      setResultInfo({
+        ok: true,
+        title: actionType === "소모" ? "창고 물품 소모 완료!" : "창고 물품 대여 완료!",
+        sub: actionType === "소모"
+          ? `${total}개 물품을 소모 처리했습니다. (재고에서 차감되며 반납 대상이 아닙니다)`
+          : `${total}개 물품을 대여 처리했습니다.`,
+      });
       setMode("result");
     } catch (e: any) {
       setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
@@ -872,7 +879,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
       return it.name.toLowerCase().includes(q);
-    });
+    }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
   const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
 
@@ -1371,14 +1378,20 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
 
             <div style={{ marginTop: "16px" }}>
-              <label style={labelStyle}>대여 목적 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
-              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
+              <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
+              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={goPrev} style={secondaryBtn}>이전</button>
-              <button onClick={handleWarehouseBorrow} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light /> 처리 중...</> : "대여 신청하기"}
+              <button onClick={() => handleWarehouseBorrow("소모")} disabled={submitting} style={{ flex: 1, padding: "14px", borderRadius: "12px", border: "none", cursor: "pointer", background: C.warn, color: "#fff", fontSize: "15px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", opacity: submitting ? 0.7 : 1 }}>
+                {submitting ? <Spinner size={16} light /> : <Flame size={16} />} 소모
               </button>
+              <button onClick={() => handleWarehouseBorrow("대여")} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
+                {submitting ? <><Spinner size={16} light /> 처리 중...</> : <><HandHelping size={16} /> 대여</>}
+              </button>
+            </div>
+            <div style={{ fontSize: "11px", color: C.label, marginTop: "8px", lineHeight: 1.5 }}>
+              <b>소모</b>는 재고에서 차감되며 <b>반납 대상이 아닙니다</b> (아예 사용/소진). 반납이 필요하면 <b>대여</b>를 선택하세요.
             </div>
           </div>
         ) : null}
