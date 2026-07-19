@@ -82,6 +82,16 @@ export default function MobileViewPage({
   const [mode, setMode] = useState<Mode>("대여");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
+  const TAB_ORDER: Record<string, number> = { "대여": 0, "반납": 1, "등록": 2, "불량": 3 };
+  const prevTabOrderRef = useRef(TAB_ORDER[mode] ?? 0);
+  const [tabSlideDir, setTabSlideDir] = useState<"forward" | "back">("forward");
+  useEffect(() => {
+    const cur = TAB_ORDER[mode] ?? 0;
+    setTabSlideDir(cur >= prevTabOrderRef.current ? "forward" : "back");
+    prevTabOrderRef.current = cur;
+  }, [mode]);
+
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [outstandingContext, setOutstandingContext] = useState<OutstandingRental | null>(null);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
@@ -995,6 +1005,7 @@ export default function MobileViewPage({
 
       {/* ===== 리스트 & 폼 메인 영역 ===== */}
       <main style={{ flex: 1, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto" }}>
+        <div key={mode} className={tabSlideDir === "forward" ? "step-forward" : "step-back"} style={{ display: "flex", flexDirection: "column", gap: "10px", flex: 1 }}>
         {mode === "대여" ? (
           filteredInventory.length === 0 ? (
             <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
@@ -1941,6 +1952,7 @@ export default function MobileViewPage({
             )}
           </div>
         )}
+        </div>
       </main>
 
       {/* ===== 상세/신청 바텀시트 ===== */}

@@ -36,8 +36,8 @@ export default function LandingPage({
         alignItems: "center",
         justifyContent: "center",
         minHeight: "100vh",
-        background: "var(--app-gradient)",
-        color: isLightMode ? "#1a2233" : "#eef2fb",
+        background: isLightMode ? "radial-gradient(circle at top, #f8fafc 0%, #e2e8f0 100%)" : "radial-gradient(circle at top, #0f172a 0%, #020617 100%)",
+        color: isLightMode ? "#111827" : "#f1f5f9",
         padding: "32px 20px",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
       }}
@@ -118,28 +118,26 @@ export default function LandingPage({
             key={c.key}
             onClick={() => onNavigate(c.key)}
             style={{
-              background: isLightMode ? "rgba(255,255,255,0.5)" : "rgba(36,44,66,0.5)",
-              border: `1px solid ${isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.14)"}`,
+              background: isLightMode ? "#ffffff" : "#1e293b",
+              border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
               borderRadius: "16px",
               padding: "20px 20px",
               cursor: "pointer",
               transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
-              boxShadow: "var(--glass-edge), var(--glass-shadow)",
-              backdropFilter: "blur(20px) saturate(180%)",
-              WebkitBackdropFilter: "blur(20px) saturate(180%)",
+              boxShadow: "var(--shadow-sm)",
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-start",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 1px 0 rgba(255,255,255,0.5) inset, 0 12px 40px rgba(31,45,80,0.22)";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
               e.currentTarget.style.borderColor = "#2563eb";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "var(--glass-edge), var(--glass-shadow)";
-              e.currentTarget.style.borderColor = isLightMode ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.22)";
+              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
+              e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
             }}
           >
             <div
@@ -162,7 +160,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#1a2233" : "#eef2fb",
+                color: isLightMode ? "#111827" : "#f1f5f9",
               }}
             >
               {c.title}
@@ -204,8 +202,8 @@ export default function LandingPage({
           maxWidth: "620px",
           width: "100%",
           marginTop: "16px",
-          background: isLightMode ? "rgba(255,255,255,0.5)" : "rgba(36,44,66,0.5)",
-          border: `1px solid ${isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.14)"}`,
+          background: isLightMode ? "#ffffff" : "#1e293b",
+          border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
           borderRadius: "20px",
           padding: "20px 24px",
           cursor: "pointer",
@@ -220,7 +218,7 @@ export default function LandingPage({
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = isLightMode ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.22)";
+          e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
           e.currentTarget.style.transform = "translateY(0)";
         }}
       >
@@ -244,7 +242,7 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#1a2233" : "#eef2fb",
+              color: isLightMode ? "#111827" : "#f1f5f9",
               marginBottom: "3px",
             }}
           >

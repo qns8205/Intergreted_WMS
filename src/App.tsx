@@ -1690,7 +1690,7 @@ export default function App() {
       style={{
         width: "100%",
         height: "100vh",
-        background: "transparent",
+        background: "var(--app-bg, #0f172a)",
         color: "var(--text-main, #f1f5f9)",
         fontFamily: "'Inter', sans-serif",
         display: "flex",
@@ -1698,71 +1698,62 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      {/* 글로벌 스타일 오버라이드 — Liquid Glass (액체 유리) */}
+      {/* 글로벌 스타일 오버라이드 */}
       <style>{`
         * { box-sizing: border-box; }
         .wms-dark {
-          --app-bg: #0a1020;
-          --canvas-bg: transparent;
-          --header-bg: rgba(22,28,44,0.55);
-          --panel-bg: rgba(30,38,58,0.45);
-          --panel-border: rgba(255,255,255,0.12);
-          --text-main: #eef2fb;
-          --text-dim: #a7b0c4;
-          --input-bg: rgba(15,20,34,0.5);
-          --accent: #4f8cff;
-          --accent-strong: #2f6bff;
-          --accent-soft: rgba(79,140,255,0.18);
-          --radius: 16px;
-          --radius-sm: 12px;
-          --radius-lg: 24px;
-          --glass-blur: blur(20px) saturate(160%);
-          --glass-edge: 0 1px 0 rgba(255,255,255,0.18) inset, 0 0 0 1px rgba(255,255,255,0.06) inset;
-          --glass-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
-          --shadow-sm: 0 4px 16px rgba(0,0,0,0.3);
-          --shadow: 0 12px 40px rgba(0,0,0,0.45);
-          --app-gradient: radial-gradient(1200px 800px at 15% 5%, #1e3a6e 0%, transparent 55%), radial-gradient(1000px 700px at 85% 20%, #3b2a6b 0%, transparent 50%), radial-gradient(900px 900px at 60% 100%, #0e4a5c 0%, transparent 55%), linear-gradient(160deg, #0a1020 0%, #0d1428 100%);
+          --app-bg: #0f172a;
+          --canvas-bg: #0b1120;
+          --header-bg: #161f30;
+          --panel-bg: #161f30;
+          --panel-border: #26324a;
+          --text-main: #f1f5f9;
+          --text-dim: #8b98ac;
+          --input-bg: #0f172a;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.16);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
+          --shadow: 0 4px 12px rgba(0,0,0,0.22);
         }
         .wms-light {
-          --app-bg: #dfe7f5;
-          --canvas-bg: transparent;
-          --header-bg: rgba(255,255,255,0.55);
-          --panel-bg: rgba(255,255,255,0.5);
-          --panel-border: rgba(255,255,255,0.7);
-          --text-main: #1a2233;
-          --text-dim: #5b6577;
-          --input-bg: rgba(255,255,255,0.55);
-          --accent: #2f6bff;
-          --accent-strong: #1e50e0;
-          --accent-soft: rgba(47,107,255,0.12);
-          --radius: 16px;
-          --radius-sm: 12px;
-          --radius-lg: 24px;
-          --glass-blur: blur(20px) saturate(180%);
-          --glass-edge: 0 1px 0 rgba(255,255,255,0.9) inset, 0 0 0 1px rgba(255,255,255,0.5) inset;
-          --glass-shadow: 0 8px 32px rgba(31,45,80,0.14), 0 2px 8px rgba(31,45,80,0.08);
-          --shadow-sm: 0 4px 16px rgba(31,45,80,0.10);
-          --shadow: 0 14px 44px rgba(31,45,80,0.18);
-          --app-gradient: radial-gradient(1100px 700px at 12% 0%, #cde0ff 0%, transparent 55%), radial-gradient(900px 650px at 88% 10%, #e6d8ff 0%, transparent 50%), radial-gradient(1000px 900px at 55% 100%, #cdf0ee 0%, transparent 55%), linear-gradient(160deg, #eaf1fc 0%, #dfe7f5 100%);
+          --app-bg: #f7f8fa;
+          --canvas-bg: #eef1f5;
+          --header-bg: #ffffff;
+          --panel-bg: #ffffff;
+          --panel-border: #e6e9ef;
+          --text-main: #111827;
+          --text-dim: #626c7d;
+          --input-bg: #f4f6f9;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.10);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
+          --shadow: 0 4px 14px rgba(15,23,42,0.08);
         }
-        html, body { min-height: 100%; }
-        body { font-size: ${16 * fontScale}px; background: var(--app-gradient) fixed; background-attachment: fixed; }
+        body { font-size: ${16 * fontScale}px; }
         .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
-        /* 유리 표면 유틸리티 */
-        .glass { background: var(--panel-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 1px solid var(--panel-border); box-shadow: var(--glass-edge), var(--glass-shadow); }
-        button { cursor: pointer; transition: box-shadow 0.18s ease, transform 0.12s ease, filter 0.18s ease; display: flex; align-items: center; justify-content: center; border: none; }
-        button:hover { filter: brightness(1.05); }
-        button:active { transform: translateY(1px) scale(0.995); }
-        input, select, textarea { outline: none; transition: box-shadow 0.18s ease; }
-        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--accent-soft) !important; }
-        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-        ::-webkit-scrollbar { width: 10px; height: 10px; }
-        ::-webkit-scrollbar-thumb { background: rgba(140,150,175,0.4); border-radius: 20px; border: 2px solid transparent; background-clip: padding-box; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(140,150,175,0.65); background-clip: padding-box; }
+        button { cursor: pointer; transition: background 0.14s ease, opacity 0.14s ease, transform 0.08s ease; display: flex; align-items: center; justify-content: center; border: none; }
+        button:hover { opacity: 0.92; }
+        button:active { transform: scale(0.98); }
+        input, select, textarea { outline: none; transition: border-color 0.14s ease, box-shadow 0.14s ease; }
+        input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-soft) !important; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; }
         ::-webkit-scrollbar-track { background: transparent; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px var(--accent-soft); } 100% { box-shadow: 0 0 0 14px rgba(47,107,255,0); } }
+        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(37, 99, 235,0.4); } 100% { box-shadow: 0 0 0 14px rgba(37, 99, 235,0); } }
+        /* 흐름 단계 슬라이딩 전환 */
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes slideInLeft { from { opacity: 0; transform: translateX(-28px); } to { opacity: 1; transform: translateX(0); } }
+        .step-forward { animation: slideInRight 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+        .step-back { animation: slideInLeft 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
         .canvas-bg { user-select: none; }
       `}</style>
 
@@ -1771,8 +1762,6 @@ export default function App() {
         style={{
           width: sidebarCollapsed ? 64 : 232,
           background: "var(--header-bg, #1e293b)",
-          backdropFilter: "var(--glass-blur)",
-          WebkitBackdropFilter: "var(--glass-blur)",
           borderRight: "1px solid var(--panel-border, #334155)",
           display: "flex",
           flexDirection: "column",
@@ -1780,7 +1769,7 @@ export default function App() {
           flexShrink: 0,
           zIndex: 110,
           transition: "width 0.2s ease",
-        } as React.CSSProperties}
+        }}
       >
         {/* 상단 로고 영역 */}
         {sidebarCollapsed ? (
@@ -2088,12 +2077,10 @@ export default function App() {
           justifyContent: "space-between",
           padding: "0 24px",
           background: "var(--header-bg, #1e293b)",
-          backdropFilter: "var(--glass-blur)",
-          WebkitBackdropFilter: "var(--glass-blur)",
           borderBottom: "1px solid var(--panel-border, #334155)",
           zIndex: 100,
           flexShrink: 0,
-        } as React.CSSProperties}
+        }}
       >
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2196,8 +2183,6 @@ export default function App() {
                 left: 0,
                 right: 0,
                 background: "var(--panel-bg, #1e293b)",
-                backdropFilter: "var(--glass-blur)",
-                WebkitBackdropFilter: "var(--glass-blur)",
                 border: "1px solid var(--panel-border, #334155)",
                 borderRadius: 8,
                 boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
@@ -2512,8 +2497,6 @@ export default function App() {
                       onClick={regenerateFromInventory}
                       style={{
                         background: "var(--panel-bg, #1e293b)",
-                backdropFilter: "var(--glass-blur)",
-                WebkitBackdropFilter: "var(--glass-blur)",
                         border: "1px solid var(--panel-border, #334155)",
                         color: "var(--text-main, #f1f5f9)",
                         padding: "8px 14px",
@@ -2598,8 +2581,6 @@ export default function App() {
                       onClick={addManualRack}
                       style={{
                         background: "var(--panel-bg, #1e293b)",
-                backdropFilter: "var(--glass-blur)",
-                WebkitBackdropFilter: "var(--glass-blur)",
                         border: "1px solid var(--panel-border, #334155)",
                         color: "var(--text-main, #f1f5f9)",
                         padding: "10px 18px",

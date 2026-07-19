@@ -47,13 +47,13 @@ export default function BrowsePage({
   scriptUrl, connected, isLightMode, onBack, showToast, onGoBorrow, initialStep = null, purpose = "browse",
 }: BrowsePageProps) {
   const C = {
-    bg: "var(--app-gradient)",
-    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
-    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
-    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
-    text: isLightMode ? "#1a2233" : "#eef2fb",
+    bg: isLightMode ? "#f7f8fa" : "#0b1120",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
     label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2f6bff",
+    accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
@@ -316,6 +316,16 @@ export default function BrowsePage({
   /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
   const stepRef = useRef(step);
   stepRef.current = step;
+
+  // 슬라이딩 방향 추적
+  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenario: 2, warehouse: 2, mylookup: 2 };
+  const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
+  const [slideDir, setSlideDir] = useState<"forward" | "back">("forward");
+  useEffect(() => {
+    const cur = STEP_ORDER[step] ?? 0;
+    setSlideDir(cur >= prevStepOrderRef.current ? "forward" : "back");
+    prevStepOrderRef.current = cur;
+  }, [step]);
   const suppressBrowseHash = useRef(false);
   const browseBase = purpose === "mylookup" ? "mylookup" : "browse";
 
@@ -365,6 +375,7 @@ export default function BrowsePage({
 
       <div style={{ maxWidth: step === "scenario" || step === "warehouse" ? "1200px" : "620px", margin: "0 auto", padding: "24px 16px 96px" }}>
 
+        <div key={step} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {step === "identity" ? (
           <div>
             <div style={{ marginBottom: "20px", padding: "14px 16px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "13px", lineHeight: 1.6 }}>
@@ -423,7 +434,7 @@ export default function BrowsePage({
               <div
                 key={m.key}
                 onClick={() => setStep(m.key)}
-                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s", boxShadow: "var(--glass-edge), var(--shadow-sm)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)" } as React.CSSProperties}
+                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}
               >
@@ -553,6 +564,7 @@ export default function BrowsePage({
             )}
           </div>
         ) : null}
+        </div>
       </div>
 
       {(step === "scenario" || step === "warehouse") && (step === "scenario" ? sciCartCount : whCartCount) > 0 ? (
@@ -659,7 +671,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
 
 function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus }: any) {
   return (
-    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 24px -6px rgba(47,107,255,0.45), var(--glass-edge)" : "var(--glass-edge), var(--shadow-sm)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)", transition: "all 0.2s", opacity: out ? 0.6 : 1 } as React.CSSProperties}>
+    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
         {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>

@@ -15,12 +15,12 @@ interface Props {
 
 export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onImageClick }: Props) {
   const C = {
-    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
-    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
-    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
-    text: isLightMode ? "#1a2233" : "#eef2fb",
-    label: isLightMode ? "#5b6577" : "#a7b0c4",
-    accent: "#2f6bff",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#626c7d" : "#8b98ac",
+    accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -93,7 +93,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
           {groups.map(([rack, items]) => {
             const isCollapsed = !!collapsed[rack];
             return (
-              <section key={rack} style={{ border: `1px solid ${C.border}`, borderRadius: "18px", background: C.card, overflow: "hidden", boxShadow: "var(--glass-edge), var(--glass-shadow)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)" } as React.CSSProperties}>
+              <section key={rack} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
                 {/* 랙 헤더 */}
                 <button
                   onClick={() => toggle(rack)}
@@ -115,7 +115,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                     {items.map((it) => {
                       const img = it.photo ? getGoogleDriveImageUrl(it.photo) : "";
                       return (
-                        <div key={it.rowIndex} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", overflow: "hidden", background: C.card, display: "flex", flexDirection: "column", boxShadow: "var(--glass-edge), var(--shadow-sm)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)" } as React.CSSProperties}>
+                        <div key={it.rowIndex} style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", background: C.cardSub, display: "flex", flexDirection: "column" }}>
                           <div onClick={() => img && onImageClick && onImageClick(img)} style={{ height: "104px", background: C.card, display: "flex", alignItems: "center", justifyContent: "center", cursor: img ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
                             {img ? <img src={img} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={28} style={{ color: C.border }} />}
                           </div>

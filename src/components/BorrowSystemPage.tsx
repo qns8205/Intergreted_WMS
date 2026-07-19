@@ -57,13 +57,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
   const C = {
-    bg: "var(--app-gradient)",
-    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
-    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
-    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
-    text: isLightMode ? "#1a2233" : "#eef2fb",
+    bg: isLightMode ? "#f7f8fa" : "#0b1120",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
     label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2f6bff",
+    accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
@@ -249,18 +249,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   };
   const labelStyle: React.CSSProperties = { display: "block", fontSize: "14px", fontWeight: 700, color: C.text, marginBottom: "8px" };
   const primaryBtn: React.CSSProperties = {
-    flex: 1, padding: "14px", borderRadius: "14px", border: "none", cursor: "pointer",
-    background: "linear-gradient(180deg, #5b9bff 0%, #2f6bff 100%)", color: "#fff", fontSize: "15px", fontWeight: 700,
+    flex: 1, padding: "14px", borderRadius: "12px", border: "none", cursor: "pointer",
+    background: C.accent, color: "#fff", fontSize: "15px", fontWeight: 700,
     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-    boxShadow: "0 1px 0 rgba(255,255,255,0.35) inset, 0 6px 18px rgba(47,107,255,0.4)",
   };
   const secondaryBtn: React.CSSProperties = {
-    flex: 1, padding: "14px", borderRadius: "14px", cursor: "pointer",
-    border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: "15px", fontWeight: 700,
-    boxShadow: "var(--glass-edge), var(--shadow-sm)",
-    backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)",
+    flex: 1, padding: "14px", borderRadius: "12px", cursor: "pointer",
+    border: `1px solid ${C.border}`, background: C.card, color: C.label, fontSize: "15px", fontWeight: 700,
     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-  } as React.CSSProperties;
+  };
 
   function StockBadges({ stock, rented }: { stock: number; rented: number }) {
     return (
@@ -974,6 +971,20 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   modeRef.current = mode;
   const suppressHashSync = useRef(false);
 
+  // 슬라이딩 방향 추적: 단계 순서를 매겨 앞으로/뒤로를 판단한다.
+  const MODE_ORDER: Record<string, number> = {
+    pickBorrowKind: 0, pickReturnKind: 0, mode: 0,
+    b1: 1, b2: 2, b3g: 3, b3s: 3, b4g: 4, b4s: 4,
+    wborrow: 1, wreturn: 1, return: 1, result: 5,
+  };
+  const prevOrderRef = useRef(MODE_ORDER[mode] ?? 0);
+  const [slideDir, setSlideDir] = useState<"forward" | "back">("forward");
+  useEffect(() => {
+    const cur = MODE_ORDER[mode] ?? 0;
+    setSlideDir(cur >= prevOrderRef.current ? "forward" : "back");
+    prevOrderRef.current = cur;
+  }, [mode]);
+
   // mode 변경 → 해시 반영 (뒤로가기용 히스토리 항목 생성)
   useEffect(() => {
     if (suppressHashSync.current) { suppressHashSync.current = false; return; }
@@ -1041,6 +1052,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         ) : null}
 
         {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
+        <div key={mode} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {mode === "pickBorrowKind" || mode === "pickReturnKind" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <div style={{ fontSize: "13px", color: C.label, marginBottom: "4px" }}>
@@ -1584,6 +1596,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
           </div>
         ) : null}
+        </div>
       </div>
 
       {/* 이미지 확대 모달 */}
