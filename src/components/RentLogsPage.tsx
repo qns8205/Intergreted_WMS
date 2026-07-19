@@ -32,7 +32,7 @@ interface RentLogsPageProps {
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
+const ACCENT = "#475569";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 const WARNING = "#f59e0b";
@@ -481,9 +481,9 @@ export default function RentLogsPage({
         <button
           onClick={() => setShowAddForm((prev) => !prev)}
           style={{
-            background: showAddForm ? "rgba(239, 68, 68, 0.15)" : `rgba(99, 102, 241, 0.15)`,
+            background: showAddForm ? "rgba(239, 68, 68, 0.15)" : `rgba(71, 85, 105, 0.15)`,
             color: showAddForm ? DANGER : ACCENT,
-            border: `1px solid ${showAddForm ? "rgba(239, 68, 68, 0.3)" : "rgba(99, 102, 241, 0.3)"}`,
+            border: `1px solid ${showAddForm ? "rgba(239, 68, 68, 0.3)" : "rgba(71, 85, 105, 0.3)"}`,
             borderRadius: "8px",
             padding: "6px 14px",
             fontSize: "12px",
@@ -699,8 +699,8 @@ export default function RentLogsPage({
                             padding: "10px 12px",
                             borderBottom: `1px solid ${PANEL_BORDER}`,
                             cursor: "pointer",
-                            background: "rgba(99, 102, 241, 0.12)",
-                            color: "#818cf8",
+                            background: "rgba(71, 85, 105, 0.12)",
+                            color: "#94a3b8",
                           }}
                         >
                           <span style={{ fontSize: "14px" }}>➕</span>
@@ -738,7 +738,7 @@ export default function RentLogsPage({
                               color: TEXT_MAIN,
                               display: "flex",
                               justifyContent: "space-between",
-                              background: selectedItem?.rowIndex === item.rowIndex ? "rgba(99, 102, 241, 0.1)" : "transparent",
+                              background: selectedItem?.rowIndex === item.rowIndex ? "rgba(71, 85, 105, 0.1)" : "transparent",
                             }}
                           >
                             <span style={{ fontWeight: 600 }}>{item.name}</span>
@@ -906,7 +906,7 @@ export default function RentLogsPage({
                     fontWeight: 700,
                     border: "none",
                     cursor: "pointer",
-                    background: filterType === t ? (t === "대여" ? "rgba(99,102,241,0.2)" : t === "반납" ? "rgba(16,185,129,0.2)" : t === "소모" ? "rgba(245,158,11,0.2)" : "rgba(255,255,255,0.1)") : "transparent",
+                    background: filterType === t ? (t === "대여" ? "rgba(71, 85, 105,0.2)" : t === "반납" ? "rgba(16,185,129,0.2)" : t === "소모" ? "rgba(245,158,11,0.2)" : "rgba(255,255,255,0.1)") : "transparent",
                     color: filterType === t ? (t === "대여" ? ACCENT : t === "반납" ? OK : t === "소모" ? WARNING : TEXT_MAIN) : TEXT_DIM,
                   }}
                 >
@@ -1000,7 +1000,7 @@ export default function RentLogsPage({
                                 borderRadius: 4,
                                 fontSize: 10,
                                 fontWeight: 800,
-                                background: log.type === "대여" ? "rgba(99, 102, 241, 0.15)" : log.type === "소모" ? "rgba(245, 158, 11, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                                background: log.type === "대여" ? "rgba(71, 85, 105, 0.15)" : log.type === "소모" ? "rgba(245, 158, 11, 0.15)" : "rgba(16, 185, 129, 0.15)",
                                 color: log.type === "대여" ? ACCENT : log.type === "소모" ? WARNING : OK,
                               }}
                             >
@@ -1023,7 +1023,7 @@ export default function RentLogsPage({
                           </td>
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.note}>
                             {dueDate ? (
-                              <span style={{ display: "inline-block", marginRight: 6, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "rgba(239,68,68,0.2)" : "rgba(99,102,241,0.15)", color: isOverdue ? "#f87171" : ACCENT }}>
+                              <span style={{ display: "inline-block", marginRight: 6, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "rgba(239,68,68,0.2)" : "rgba(71, 85, 105,0.15)", color: isOverdue ? "#f87171" : ACCENT }}>
                                 {isOverdue ? `연체 (예정 ${dueDate})` : `예정 ${dueDate}`}
                               </span>
                             ) : null}

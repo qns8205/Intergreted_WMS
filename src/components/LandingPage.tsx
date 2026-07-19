@@ -60,7 +60,7 @@ export default function LandingPage({
             width: "64px",
             height: "64px",
             borderRadius: "16px",
-            background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+            background: "linear-gradient(135deg, #475569 0%, #334155 100%)",
             color: "#ffffff",
             marginBottom: "20px",
             boxShadow: "0 10px 25px -5px rgba(79, 70, 229, 0.4)",
@@ -74,7 +74,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            background: "linear-gradient(to right, #818cf8, #6366f1, #4f46e5)",
+            background: "linear-gradient(to right, #94a3b8, #475569, #334155)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
           }}
@@ -135,8 +135,8 @@ export default function LandingPage({
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(99, 102, 241, 0.28)";
-              e.currentTarget.style.borderColor = "#6366f1";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(71, 85, 105, 0.28)";
+              e.currentTarget.style.borderColor = "#475569";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
@@ -149,8 +149,8 @@ export default function LandingPage({
                 width: "40px",
                 height: "40px",
                 borderRadius: "11px",
-                background: "rgba(99, 102, 241, 0.13)",
-                color: "#818cf8",
+                background: "rgba(71, 85, 105, 0.13)",
+                color: "#94a3b8",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -183,7 +183,7 @@ export default function LandingPage({
               style={{
                 marginTop: "auto",
                 padding: "9px 16px",
-                background: "#4f46e5",
+                background: "#334155",
                 color: "#ffffff",
                 borderRadius: "12px",
                 fontSize: "13px",
@@ -218,7 +218,7 @@ export default function LandingPage({
           boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#6366f1";
+          e.currentTarget.style.borderColor = "#475569";
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
@@ -232,8 +232,8 @@ export default function LandingPage({
             width: "44px",
             height: "44px",
             borderRadius: "12px",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "#818cf8",
+            background: "rgba(71, 85, 105, 0.15)",
+            color: "#94a3b8",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -259,7 +259,7 @@ export default function LandingPage({
         <div
           style={{
             padding: "9px 18px",
-            background: "#4f46e5",
+            background: "#334155",
             color: "#ffffff",
             borderRadius: "12px",
             fontSize: "13px",

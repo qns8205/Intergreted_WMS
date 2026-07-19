@@ -62,9 +62,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     border: isLightMode ? "#e2e8f0" : "#334155",
     text: isLightMode ? "#0f172a" : "#f1f5f9",
     label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#6366f1",
-    accentSoft: "rgba(99, 102, 241, 0.15)",
-    accentText: isLightMode ? "#4f46e5" : "#818cf8",
+    accent: "#475569",
+    accentSoft: "rgba(71, 85, 105, 0.15)",
+    accentText: isLightMode ? "#334155" : "#94a3b8",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -966,21 +966,47 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" ? 3 : mode === "b4g" || mode === "b4s" ? 4 : 0;
 
-  /* ── 브라우저 뒤로가기(제스처/버튼)로 처음 화면으로 튀지 않고 이전 '단계'로만 이동 ── */
-  const goPrevRef = useRef(goPrev);
-  goPrevRef.current = goPrev;
+  /* ── URL 해시로 대여 단계를 세분화 (#/borrow/<단계>) — 새로고침·공유·뒤로가기 지원 ── */
+  const MODE_SLUGS: Record<string, string> = {
+    pickBorrowKind: "kind", pickReturnKind: "kind",
+    b1: "identity", b2: "items", b3g: "general", b4g: "confirm",
+    b3s: "sid", b4s: "confirm-sid", wborrow: "warehouse", wreturn: "warehouse-return",
+    return: "return", result: "done", mode: "kind",
+  };
+  const SLUG_TO_MODE: Record<string, Mode> = {
+    kind: entry === "return" ? "pickReturnKind" : "pickBorrowKind",
+    identity: "b1", items: "b2", general: "b3g", confirm: "b4g",
+    sid: "b3s", "confirm-sid": "b4s", warehouse: "wborrow",
+    "warehouse-return": "wreturn", return: "return", done: "result",
+  };
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const suppressHashSync = useRef(false);
+
+  // mode 변경 → 해시 반영 (뒤로가기용 히스토리 항목 생성)
   useEffect(() => {
-    // 진입 시 방어용 히스토리 항목을 하나 쌓아, 첫 뒤로가기가 페이지를 벗어나지 않게 한다.
-    try { window.history.pushState({ borrowGuard: true }, ""); } catch {}
-    const onPop = (e: PopStateEvent) => {
-      // 루트 단계가 아니면: 단계만 한 칸 뒤로 이동하고, 히스토리는 다시 채워서 페이지 이탈을 막는다.
-      if (modeRef.current !== rootMode) {
-        goPrevRef.current();
-        try { window.history.pushState({ borrowGuard: true }, ""); } catch {}
-      } else {
-        // 루트 단계에서의 뒤로가기는 정상적으로 이전 화면으로 나간다.
+    if (suppressHashSync.current) { suppressHashSync.current = false; return; }
+    const base = entry === "return" ? "return" : "borrow";
+    const slug = MODE_SLUGS[mode] || "";
+    const target = `#/${base}/${slug}`;
+    if (window.location.hash !== target) {
+      window.history.pushState(null, "", target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // 브라우저 뒤로/앞으로 → 해시에서 mode 복원. 흐름을 벗어나면 onBack.
+  useEffect(() => {
+    const onPop = () => {
+      const parts = window.location.hash.split("/");
+      const base = parts[1] || "";
+      const slug = parts[2] || "";
+      if (base !== "borrow" && base !== "return") { onBack(); return; }
+      const restored = SLUG_TO_MODE[slug];
+      if (restored && restored !== modeRef.current) {
+        suppressHashSync.current = true; // 복원은 히스토리를 새로 쌓지 않음
+        setMode(restored);
+      } else if (!restored) {
         onBack();
       }
     };
@@ -1015,7 +1041,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {progressIdx > 0 ? (
           <div style={{ marginBottom: "24px" }}>
             <div style={{ width: "100%", height: "6px", background: C.border, borderRadius: "10px", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${((progressIdx - 1) / 3) * 100}%`, background: `linear-gradient(90deg, ${C.accent}, #818cf8)`, borderRadius: "10px", transition: "width 0.3s" }} />
+              <div style={{ height: "100%", width: `${((progressIdx - 1) / 3) * 100}%`, background: `linear-gradient(90deg, ${C.accent}, #94a3b8)`, borderRadius: "10px", transition: "width 0.3s" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: C.label, fontWeight: 600 }}>
               <span>정보 입력</span><span>유형 선택</span><span>물품 선택</span><span>제출</span>

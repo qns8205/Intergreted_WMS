@@ -26,7 +26,7 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
+const ACCENT = "#475569";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 const WARN = "#f59e0b";
@@ -523,7 +523,7 @@ export default function SidePanel({
                                   style={{
                                     fontSize: "11px",
                                     fontWeight: 700,
-                                    color: isLightMode ? "#4f46e5" : ACCENT,
+                                    color: isLightMode ? "#334155" : ACCENT,
                                     background: isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(168, 166, 160, 0.12)",
                                     padding: "2px 8px",
                                     borderRadius: 12,
@@ -807,7 +807,7 @@ export default function SidePanel({
                                               onMouseEnter={(e) => {
                                                 if (typeof item.stock === "number") {
                                                   e.currentTarget.style.border = `1px dashed ${ACCENT}`;
-                                                  e.currentTarget.style.background = isLightMode ? "rgba(99, 102, 241, 0.08)" : "rgba(99, 102, 241, 0.15)";
+                                                  e.currentTarget.style.background = isLightMode ? "rgba(71, 85, 105, 0.08)" : "rgba(71, 85, 105, 0.15)";
                                                 }
                                               }}
                                               onMouseLeave={(e) => {
@@ -849,9 +849,9 @@ export default function SidePanel({
                                                 display: "flex",
                                                 alignItems: "center",
                                                 gap: 5,
-                                                background: "rgba(99, 102, 241, 0.15)",
-                                                border: "1px solid rgba(99, 102, 241, 0.3)",
-                                                color: "#818cf8",
+                                                background: "rgba(71, 85, 105, 0.15)",
+                                                border: "1px solid rgba(71, 85, 105, 0.3)",
+                                                color: "#94a3b8",
                                                 cursor: "pointer",
                                                 padding: "7px 12px",
                                                 borderRadius: 8,
@@ -889,8 +889,8 @@ export default function SidePanel({
                                           disabled={item.stock === null || (typeof item.stock === "number" ? item.stock <= 0 : false)}
                                           style={{
                                             flex: 1,
-                                            background: "rgba(99, 102, 241, 0.08)",
-                                            border: `1px solid rgba(99, 102, 241, 0.3)`,
+                                            background: "rgba(71, 85, 105, 0.08)",
+                                            border: `1px solid rgba(71, 85, 105, 0.3)`,
                                             color: ACCENT,
                                             borderRadius: "6px",
                                             padding: "4px 6px",
@@ -961,7 +961,7 @@ export default function SidePanel({
                                           disabled={item.stock === null || (typeof item.stock === "number" ? item.stock <= 0 : false)}
                                           style={{
                                             flex: 1,
-                                            background: "rgba(99, 102, 241, 0.12)",
+                                            background: "rgba(71, 85, 105, 0.12)",
                                             border: `1px solid ${ACCENT}`,
                                             color: ACCENT,
                                             borderRadius: "6px",

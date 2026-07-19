@@ -20,8 +20,8 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
-const ACCENT_SOFT = "#818cf8";
+const ACCENT = "#475569";
+const ACCENT_SOFT = "#94a3b8";
 
 export default function ItemFormModal({
   item,
@@ -183,8 +183,8 @@ export default function ItemFormModal({
             transition: border-color 0.15s ease-in-out !important;
           }
           .item-modal input:focus, .item-modal select:focus, .item-modal textarea:focus {
-            border-color: #6366f1 !important;
-            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+            border-color: #475569 !important;
+            box-shadow: 0 0 0 2px rgba(71, 85, 105, 0.2) !important;
           }
         `}</style>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -397,7 +397,7 @@ export default function ItemFormModal({
                   type="button"
                   onClick={() => update("stock", "N/A")}
                   style={{
-                    background: form.stock === "N/A" ? "#6366f1" : "rgba(255, 255, 255, 0.05)",
+                    background: form.stock === "N/A" ? "#475569" : "rgba(255, 255, 255, 0.05)",
                     border: "1px solid var(--panel-border, #334155)",
                     borderRadius: "6px",
                     padding: "0 10px",
@@ -446,8 +446,8 @@ export default function ItemFormModal({
                 }
               }}
               style={{
-                border: `1px dashed ${isDragging ? "#6366f1" : PANEL_BORDER}`,
-                background: isDragging ? "rgba(99, 102, 241, 0.05)" : "rgba(255, 255, 255, 0.02)",
+                border: `1px dashed ${isDragging ? "#475569" : PANEL_BORDER}`,
+                background: isDragging ? "rgba(71, 85, 105, 0.05)" : "rgba(255, 255, 255, 0.02)",
                 borderRadius: 8,
                 padding: "14px",
                 textAlign: "center",
@@ -476,7 +476,7 @@ export default function ItemFormModal({
                     style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }}
                   />
                   <div style={{ textAlign: "left" }}>
-                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#6366f1", display: "block" }}>
+                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#475569", display: "block" }}>
                       📸 이미지 직접 등록 준비 완료
                     </span>
                     <span style={{ fontSize: 9.5, color: TEXT_DIM, display: "block" }}>
@@ -508,7 +508,7 @@ export default function ItemFormModal({
                 <span style={{ fontSize: 11, color: TEXT_DIM }}>이미지 변환 및 등록 대기 중...</span>
               ) : (
                 <>
-                  <Upload size={16} color={isDragging ? "#6366f1" : TEXT_DIM} />
+                  <Upload size={16} color={isDragging ? "#475569" : TEXT_DIM} />
                   <span style={{ fontSize: 11.5, color: TEXT_MAIN, fontWeight: 500 }}>
                     클릭하거나 이미지 파일을 여기로 드래그하여 직접 업로드
                   </span>

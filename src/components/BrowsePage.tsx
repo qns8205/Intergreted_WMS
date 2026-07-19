@@ -52,9 +52,9 @@ export default function BrowsePage({
     border: isLightMode ? "#e2e8f0" : "#334155",
     text: isLightMode ? "#0f172a" : "#f1f5f9",
     label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#6366f1",
-    accentSoft: "rgba(99, 102, 241, 0.15)",
-    accentText: isLightMode ? "#4f46e5" : "#818cf8",
+    accent: "#475569",
+    accentSoft: "rgba(71, 85, 105, 0.15)",
+    accentText: isLightMode ? "#334155" : "#94a3b8",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -315,18 +315,32 @@ export default function BrowsePage({
     : step === "warehouse" ? "창고 물품 열람"
     : step === "mylookup" ? "내 대여 조회" : "열람 조회";
 
-  /* ── 브라우저 뒤로가기로 처음으로 튀지 않고 이전 단계로만 이동 ── */
-  const topBackRef = useRef(topBack);
-  topBackRef.current = topBack;
+  /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
   const stepRef = useRef(step);
   stepRef.current = step;
+  const suppressBrowseHash = useRef(false);
+  const browseBase = purpose === "mylookup" ? "mylookup" : "browse";
+
   useEffect(() => {
-    try { window.history.pushState({ browseGuard: true }, ""); } catch {}
+    if (suppressBrowseHash.current) { suppressBrowseHash.current = false; return; }
+    const target = `#/${browseBase}/${step}`;
+    if (window.location.hash !== target) {
+      window.history.pushState(null, "", target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  useEffect(() => {
     const onPop = () => {
-      if (stepRef.current !== "identity") {
-        topBackRef.current();
-        try { window.history.pushState({ browseGuard: true }, ""); } catch {}
-      } else {
+      const parts = window.location.hash.split("/");
+      const base = parts[1] || "";
+      const slug = parts[2] || "";
+      if (base !== "browse" && base !== "mylookup") { onBack(); return; }
+      const valid: Step[] = ["identity", "menu", "scenario", "warehouse", "mylookup"];
+      if (valid.includes(slug as Step) && slug !== stepRef.current) {
+        suppressBrowseHash.current = true;
+        setStep(slug as Step);
+      } else if (!valid.includes(slug as Step)) {
         onBack();
       }
     };
@@ -546,7 +560,7 @@ export default function BrowsePage({
       {(step === "scenario" || step === "warehouse") && (step === "scenario" ? sciCartCount : whCartCount) > 0 ? (
         <button
           onClick={() => setCartOpen(step as Kind)}
-          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(99,102,241,0.5)" }}
+          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(71, 85, 105,0.5)" }}
         >
           <ShoppingCart size={18} /> 장바구니
           <span style={{ background: "#fff", color: C.accent, borderRadius: "999px", padding: "1px 9px", fontSize: "12px", fontWeight: 800 }}>{step === "scenario" ? sciCartCount : whCartCount}</span>
@@ -647,7 +661,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
 
 function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus }: any) {
   return (
-    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(99,102,241,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
+    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(71, 85, 105,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
         {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>
