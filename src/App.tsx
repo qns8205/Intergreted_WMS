@@ -151,7 +151,7 @@ export default function App() {
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
-  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("warehouse");
+  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("scenario");
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -1602,7 +1602,34 @@ export default function App() {
         toggleLightMode={toggleLightMode}
         connected={connected}
         currentView={currentView}
+        onOpenScenario={() => setCurrentView("scenario")}
       />
+    );
+  }
+
+  // 모바일: 시나리오 물품 관리 (관리자) — 전용 풀스크린 래퍼로 렌더
+  if (isMobile && currentView === "scenario") {
+    if (!isAdmin) {
+      setCurrentView("landing");
+      return null;
+    }
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--canvas-bg, #020617)", color: "var(--text-main, #f1f5f9)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", borderBottom: "1px solid var(--panel-border, #334155)", background: "var(--panel-bg, #1e293b)" }}>
+          <button onClick={() => setCurrentView("landing")} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)", background: "transparent", color: "var(--text-dim, #94a3b8)", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+            <Home size={15} /> 처음
+          </button>
+          <h1 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>🧩 시나리오 물품 관리</h1>
+        </div>
+        <div style={{ padding: "16px" }}>
+          <ScenarioAdminPage
+            scriptUrl={scriptUrl}
+            connected={connected}
+            isLightMode={isLightMode}
+            showToast={showToast}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -2272,8 +2299,8 @@ export default function App() {
             {/* 시나리오 / 창고 전환 탭 */}
             <div style={{ display: "flex", gap: "8px", padding: "16px 24px 0", background: "var(--canvas-bg, #020617)" }}>
               {[
-                { key: "warehouse" as const, label: "창고 물품 대장" },
                 { key: "scenario" as const, label: "시나리오 물품 대장" },
+                { key: "warehouse" as const, label: "창고 물품 대장" },
               ].map((t) => (
                 <button
                   key={t.key}

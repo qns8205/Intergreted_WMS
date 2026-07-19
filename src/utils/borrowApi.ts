@@ -124,7 +124,17 @@ export function nowString(): string {
 async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}) {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
   const qs = new URLSearchParams({ action, ...params }).toString();
-  const res = await fetch(`${scriptUrl}?${qs}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃 (무한로딩 방지)
+  let res: Response;
+  try {
+    res = await fetch(`${scriptUrl}?${qs}`, { signal: controller.signal });
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw new Error("서버 응답이 지연되어 요청을 취소했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+    throw new Error(e?.message || "네트워크 오류가 발생했습니다.");
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   let data: any;
   try {
@@ -357,4 +367,56 @@ export function compareRackSlot(la: string | null | undefined, lb: string | null
   if (isNaN(sa)) sa = 999999;
   if (isNaN(sb)) sb = 999999;
   return sa - sb;
+}
+
+/* ══════════ 시나리오 대여 대장 (반납완료 포함 전체 조회 + 재대여) ══════════ */
+
+export interface ScenarioLogEntry {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  borrowerName: string;
+  scenarioId?: string;
+  itemLabel: string;
+  itemKind?: string;
+  location: string;
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  borrowDate: string;
+  submitGroupKey?: string;
+  submitDisplay?: string;
+  borrowPurpose: string;
+  email: string;
+  batchId: string;
+  generalOption?: string;
+  returned: boolean;
+  image: string;
+  stock: number;
+  rented: number;
+}
+
+export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioLogEntry[]> {
+  const data = await apiGet(scriptUrl, "getScenarioAllLogs");
+  return (data.items || []) as ScenarioLogEntry[];
+}
+
+// 반납완료된 대여를 그대로 다시 대여 신청 (동일 물품/수량/대여자)
+export async function reBorrowScenarioLogs(
+  scriptUrl: string,
+  logs: ScenarioLogEntry[],
+  clientVersion: string
+): Promise<BorrowResult> {
+  // 대여자/이메일 기준으로 일반대여 항목으로 재구성 (재대여는 일반대여로 처리)
+  const first = logs[0];
+  const borrowList: BorrowEntry[] = [{
+    itemType: "general",
+    borrowerName: first.borrowerName,
+    affiliation: "",
+    employeeId: "",
+    borrowDate: nowString(),
+    borrowPurpose: first.borrowPurpose || "재대여",
+    generalOption: "재대여",
+    borrowedItems: logs.map((l) => ({ id: l.itemId, name: l.itemName, quantity: l.quantity })),
+  }];
+  return postRecordBorrow(scriptUrl, borrowList, clientVersion);
 }

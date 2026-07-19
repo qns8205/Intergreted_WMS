@@ -75,6 +75,8 @@ export default function BrowsePage({
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [sciErr, setSciErr] = useState("");
+  const [whErr, setWhErr] = useState("");
 
   const [sciCart, setSciCart] = useState<BrowseCartItem[]>([]);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
@@ -113,9 +115,12 @@ export default function BrowsePage({
     setLoading(true);
     try {
       setSciItems(connected && scriptUrl ? await fetchObjectItems(scriptUrl) : DEMO_OBJECT_ITEMS);
-      setSciLoaded(true);
-    } catch (e: any) { showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
-    finally { setLoading(false); }
+      setSciErr("");
+    } catch (e: any) {
+      setSciErr(e?.message || "불러오기에 실패했습니다.");
+      showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
+    finally { setSciLoaded(true); setLoading(false); }
   }, [connected, scriptUrl, sciLoaded, showToast]);
 
   const loadWarehouse = useCallback(async () => {
@@ -123,9 +128,12 @@ export default function BrowsePage({
     setLoading(true);
     try {
       setWhItems(connected && scriptUrl ? await fetchWarehouseInventory(scriptUrl) : DEMO_WAREHOUSE);
-      setWhLoaded(true);
-    } catch (e: any) { showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
-    finally { setLoading(false); }
+      setWhErr("");
+    } catch (e: any) {
+      setWhErr(e?.message || "불러오기에 실패했습니다.");
+      showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
+    finally { setWhLoaded(true); setLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
 
   useEffect(() => {
@@ -399,7 +407,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "scenario" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={loading} count={sciFiltered.length} total={sciItems.length}
+          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={loading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciLoaded(false); setSciErr(""); loadScenario(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -437,7 +445,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "warehouse" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={loading} count={whFiltered.length} total={whItems.length}
+          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={loading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhLoaded(false); setWhErr(""); loadWarehouse(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -579,12 +587,20 @@ function Chip({ C, icon, text, tone }: { C: any; icon?: React.ReactNode; text: s
   return <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10px", fontWeight: 700, color, background: bg, borderRadius: "6px", padding: "2px 7px", fontFamily: icon ? "monospace" : "inherit" }}>{icon}{text}</span>;
 }
 
-function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, children }: any) {
+function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, children, error, onRetry }: any) {
   return (
     <div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>{filterRow}</div>
-      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${count} / ${total}개 물품` : ""}</div>
-      {!loaded || loading ? (
+      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded && !error ? `${count} / ${total}개 물품` : ""}</div>
+      {loading ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
+      ) : error ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "56px 16px", color: C.label, textAlign: "center" }}>
+          <div style={{ fontSize: "14px", color: C.text, fontWeight: 700 }}>물품을 불러오지 못했습니다.</div>
+          <div style={{ fontSize: "12px", maxWidth: "320px", lineHeight: 1.5 }}>{String(error)}</div>
+          {onRetry ? <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>다시 시도</button> : null}
+        </div>
+      ) : !loaded ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
       ) : count === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>검색 결과가 없습니다.</div>

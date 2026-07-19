@@ -111,6 +111,9 @@ function doGet(e) {
     if (action === "getUnreturnedItems") {
       return responseJSON({ success: true, items: getUnreturnedItems() });
     }
+    if (action === "getScenarioAllLogs") {
+      return responseJSON({ success: true, items: getScenarioAllLogs_() });
+    }
     if (action === "getMyBorrowedItems") {
       return responseJSON({ success: true, items: getMyBorrowedItems(e.parameter.name, e.parameter.employeeId) });
     }
@@ -2158,6 +2161,68 @@ function getUnreturnedItems() {
       result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
     });
   }
+  return result;
+}
+
+// 시나리오 대여 대장 전체 조회 (반납 완료 항목 포함, 최신순 정렬)
+// 반납 여부: SID대여 row[5]='O', 일반대여 row[6]='O'
+function getScenarioAllLogs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
+  var locations = {}, objectMap = {};
+  getObjectItems().forEach(function (o) { locations[o.id] = o.rootSlot; objectMap[o.id] = o; });
+
+  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
+  if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
+    var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
+    data.forEach(function (row, i) {
+      if (!row[0] && !row[2]) return; // 빈 행
+      var returned = String(row[5]).trim() === "O";
+      var label = row[2] || "(물품 미등록)";
+      var idMatch = String(label).match(/^\[(\d+)\]/);
+      var itemId = idMatch ? padSlot_(idMatch[1]) : "";
+      var parsedQty = parseItemLabel_(label).quantity || 1;
+      var obj = objectMap[itemId] || {};
+      result.push({
+        sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1],
+        itemLabel: label, itemKind: row[11] || "추가 대여물품",
+        location: itemId ? (locations[itemId] || "") : "", itemId: itemId, itemName: parseItemLabel_(label).name || label,
+        quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4],
+        email: String(row[7] || "").trim(), batchId: String(row[9] || ""),
+        returned: returned, returnedMark: String(row[5] || "").trim(),
+        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
+      });
+    });
+  }
+
+  var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
+  if (generalSheet && generalSheet.getLastRow() > 1) {
+    var general = generalSheet.getRange(2, 1, generalSheet.getLastRow() - 1, Math.max(generalSheet.getLastColumn(), GENERAL_COL_COUNT)).getValues();
+    general.forEach(function (row, i) {
+      if (!row[0] && !row[2]) return;
+      var returned = String(row[6]).trim() === "O";
+      var id = String(row[1] || "").trim(), qty = row[3] || 1;
+      var pid = padSlot_(id);
+      var obj = objectMap[pid] || {};
+      var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
+      result.push({
+        sheetType: "general", rowIndex: i + 2, borrowerName: row[0],
+        itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""),
+        location: locations[pid] || "", itemId: pid, itemName: row[2],
+        quantity: qty, borrowDate: formatDateValue_(row[4]),
+        submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5],
+        email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""),
+        returned: returned, returnedMark: String(row[6] || "").trim(),
+        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
+      });
+    });
+  }
+
+  // 최신순 정렬 (borrowDate 내림차순 → 가장 최신이 앞, 오래된 것이 뒤)
+  result.sort(function (a, b) {
+    var da = String(a.borrowDate || ""), db = String(b.borrowDate || "");
+    if (da === db) return 0;
+    return da < db ? 1 : -1;
+  });
   return result;
 }
 
