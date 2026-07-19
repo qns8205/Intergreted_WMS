@@ -1698,60 +1698,69 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      {/* 글로벌 스타일 오버라이드 */}
+      {/* 글로벌 스타일 오버라이드 — Soft 3D / 물성 디자인 */}
       <style>{`
         * { box-sizing: border-box; }
         .wms-dark {
-          --app-bg: #0f172a;
-          --canvas-bg: #0b1120;
-          --header-bg: #161f30;
-          --panel-bg: #161f30;
-          --panel-border: #26324a;
-          --text-main: #f1f5f9;
-          --text-dim: #8b98ac;
-          --input-bg: #0f172a;
-          --accent: #2563eb;
-          --accent-soft: rgba(37, 99, 235,0.16);
-          --radius: 10px;
-          --radius-sm: 7px;
-          --radius-lg: 14px;
-          --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
-          --shadow: 0 4px 12px rgba(0,0,0,0.22);
+          --app-bg: #1a1d23;
+          --canvas-bg: #15181d;
+          --header-bg: #22262e;
+          --panel-bg: #262a33;
+          --panel-border: #333844;
+          --text-main: #e8eaed;
+          --text-dim: #9aa0aa;
+          --input-bg: #1e2128;
+          --accent: #3b82f6;
+          --accent-strong: #2563eb;
+          --accent-soft: rgba(59,130,246,0.14);
+          --radius: 12px;
+          --radius-sm: 9px;
+          --radius-lg: 18px;
+          /* 물성: 위쪽 하이라이트 + 아래쪽 그림자로 살짝 떠 보이게 */
+          --raise: 0 1px 0 rgba(255,255,255,0.04) inset, 0 2px 5px rgba(0,0,0,0.35), 0 8px 20px rgba(0,0,0,0.25);
+          --raise-sm: 0 1px 0 rgba(255,255,255,0.03) inset, 0 2px 6px rgba(0,0,0,0.3);
+          --inset: inset 0 2px 5px rgba(0,0,0,0.4), inset 0 -1px 0 rgba(255,255,255,0.03);
+          --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
+          --shadow: 0 8px 22px rgba(0,0,0,0.32);
         }
         .wms-light {
-          --app-bg: #f7f8fa;
-          --canvas-bg: #eef1f5;
-          --header-bg: #ffffff;
-          --panel-bg: #ffffff;
-          --panel-border: #e6e9ef;
-          --text-main: #111827;
-          --text-dim: #626c7d;
-          --input-bg: #f4f6f9;
+          --app-bg: #eceef1;
+          --canvas-bg: #e4e7ec;
+          --header-bg: #f6f7f9;
+          --panel-bg: #fbfcfd;
+          --panel-border: #dfe3e9;
+          --text-main: #23272f;
+          --text-dim: #6b7280;
+          --input-bg: #eef1f4;
           --accent: #2563eb;
-          --accent-soft: rgba(37, 99, 235,0.10);
-          --radius: 10px;
-          --radius-sm: 7px;
-          --radius-lg: 14px;
-          --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
-          --shadow: 0 4px 14px rgba(15,23,42,0.08);
+          --accent-strong: #1d4ed8;
+          --accent-soft: rgba(37,99,235,0.10);
+          --radius: 12px;
+          --radius-sm: 9px;
+          --radius-lg: 18px;
+          /* 물성: 위 하이라이트 + 아래 부드러운 그림자 (종이/플라스틱이 살짝 떠 있는 느낌) */
+          --raise: 0 1px 0 rgba(255,255,255,0.9) inset, 0 1px 2px rgba(17,24,39,0.04), 0 6px 16px rgba(17,24,39,0.08);
+          --raise-sm: 0 1px 0 rgba(255,255,255,0.8) inset, 0 2px 5px rgba(17,24,39,0.07);
+          --inset: inset 0 2px 4px rgba(17,24,39,0.09), inset 0 -1px 0 rgba(255,255,255,0.7);
+          --shadow-sm: 0 2px 6px rgba(17,24,39,0.07);
+          --shadow: 0 10px 26px rgba(17,24,39,0.10);
         }
         body { font-size: ${16 * fontScale}px; }
         .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
-        button { cursor: pointer; transition: background 0.14s ease, opacity 0.14s ease, transform 0.08s ease; display: flex; align-items: center; justify-content: center; border: none; }
-        button:hover { opacity: 0.92; }
-        button:active { transform: scale(0.98); }
-        input, select, textarea { outline: none; transition: border-color 0.14s ease, box-shadow 0.14s ease; }
-        input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-soft) !important; }
-        :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-        ::-webkit-scrollbar { width: 9px; height: 9px; }
-        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; }
+        button { cursor: pointer; transition: box-shadow 0.16s ease, transform 0.1s ease, filter 0.16s ease; display: flex; align-items: center; justify-content: center; border: none; }
+        button:hover { filter: brightness(1.03); }
+        button:active { transform: translateY(1px); box-shadow: var(--raise-sm) !important; }
+        input, select, textarea { outline: none; transition: box-shadow 0.16s ease; }
+        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--accent-soft), var(--inset) !important; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; border: 2px solid transparent; background-clip: padding-box; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); background-clip: padding-box; }
         ::-webkit-scrollbar-track { background: transparent; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(37, 99, 235,0.4); } 100% { box-shadow: 0 0 0 14px rgba(37, 99, 235,0); } }
-        .canvas-bg {
-          user-select: none;
-        }
+        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px var(--accent-soft); } 100% { box-shadow: 0 0 0 14px rgba(37,99,235,0); } }
+        .canvas-bg { user-select: none; }
       `}</style>
 
       {/* ===== 1. 좌측 사이드바 ===== */}
@@ -1905,7 +1914,7 @@ export default function App() {
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
               background: currentView === "monitor" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "monitor" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
+              color: currentView === "monitor" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
@@ -1928,7 +1937,7 @@ export default function App() {
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
               background: currentView === "scenario" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "scenario" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
+              color: currentView === "scenario" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
@@ -1951,7 +1960,7 @@ export default function App() {
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
               background: currentView === "rent" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "rent" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
+              color: currentView === "rent" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
@@ -2406,7 +2415,7 @@ export default function App() {
                     border: "none",
                     borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
                     background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
-                    color: rentLogTab === t.key ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
+                    color: rentLogTab === t.key ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
                     fontSize: "14px",
                     fontWeight: 700,
                     cursor: "pointer",

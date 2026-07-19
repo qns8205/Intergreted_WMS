@@ -21,14 +21,14 @@ type StatusFilter = "all" | "unreturned" | "returned";
 
 export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, isAdmin, showToast }: Props) {
   const C = {
-    card: isLightMode ? "#ffffff" : "#1e293b",
-    cardSub: isLightMode ? "#f8fafc" : "#151d30",
-    border: isLightMode ? "#e2e8f0" : "#334155",
-    text: isLightMode ? "#0f172a" : "#f1f5f9",
+    card: isLightMode ? "#fbfcfd" : "#262a33",
+    cardSub: isLightMode ? "#eef1f4" : "#1e2128",
+    border: isLightMode ? "#dfe3e9" : "#333844",
+    text: isLightMode ? "#23272f" : "#e8eaed",
     label: isLightMode ? "#2563eb" : "#94a3b8",
     accent: "#2563eb",
-    accentSoft: "rgba(37, 99, 235, 0.13)",
-    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",

@@ -39,7 +39,7 @@ export default function LandingPage({
         background: isLightMode
           ? "radial-gradient(circle at top, #f8fafc 0%, #e2e8f0 100%)"
           : "radial-gradient(circle at top, #0f172a 0%, #020617 100%)",
-        color: isLightMode ? "#0f172a" : "#f1f5f9",
+        color: isLightMode ? "#23272f" : "#e8eaed",
         padding: "32px 20px",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
       }}
@@ -74,9 +74,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            background: "linear-gradient(to right, #60a5fa, #2563eb, #1d4ed8)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
+            color: isLightMode ? "#2b303a" : "#e8eaed",
           }}
         >
           자재 대여 · 반납 · 관리
@@ -122,26 +120,26 @@ export default function LandingPage({
             key={c.key}
             onClick={() => onNavigate(c.key)}
             style={{
-              background: isLightMode ? "#ffffff" : "#1e293b",
-              border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+              background: isLightMode ? "#fbfcfd" : "#262a33",
+              border: `1px solid ${isLightMode ? "#dfe3e9" : "#333844"}`,
               borderRadius: "16px",
               padding: "20px 20px",
               cursor: "pointer",
               transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
-              boxShadow: "var(--shadow-sm)",
+              boxShadow: "var(--raise)",
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-start",
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
+              e.currentTarget.style.boxShadow = "0 1px 0 rgba(255,255,255,0.9) inset, 0 3px 6px rgba(17,24,39,0.06), 0 14px 30px rgba(17,24,39,0.13)";
               e.currentTarget.style.borderColor = "#2563eb";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
-              e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
+              e.currentTarget.style.boxShadow = "var(--raise)";
+              e.currentTarget.style.borderColor = isLightMode ? "#dfe3e9" : "#333844";
             }}
           >
             <div
@@ -164,7 +162,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#0f172a" : "#f1f5f9",
+                color: isLightMode ? "#23272f" : "#e8eaed",
               }}
             >
               {c.title}
@@ -173,7 +171,7 @@ export default function LandingPage({
               style={{
                 fontSize: "13px",
                 lineHeight: 1.6,
-                color: isLightMode ? "#2563eb" : "#94a3b8",
+                color: isLightMode ? "#5b6472" : "#c2c7d0",
                 marginBottom: "20px",
               }}
             >
@@ -206,8 +204,8 @@ export default function LandingPage({
           maxWidth: "620px",
           width: "100%",
           marginTop: "16px",
-          background: isLightMode ? "#ffffff" : "#1e293b",
-          border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+          background: isLightMode ? "#fbfcfd" : "#262a33",
+          border: `1px solid ${isLightMode ? "#dfe3e9" : "#333844"}`,
           borderRadius: "20px",
           padding: "20px 24px",
           cursor: "pointer",
@@ -222,7 +220,7 @@ export default function LandingPage({
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
+          e.currentTarget.style.borderColor = isLightMode ? "#dfe3e9" : "#333844";
           e.currentTarget.style.transform = "translateY(0)";
         }}
       >
@@ -246,7 +244,7 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#0f172a" : "#f1f5f9",
+              color: isLightMode ? "#23272f" : "#e8eaed",
               marginBottom: "3px",
             }}
           >

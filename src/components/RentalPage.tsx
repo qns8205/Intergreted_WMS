@@ -479,7 +479,7 @@ export default function RentalPage({
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#2563eb",
+                    color: "#5b6472",
                     fontSize: "11px",
                     fontWeight: 700,
                     cursor: "pointer",
@@ -603,7 +603,7 @@ export default function RentalPage({
                             height: "30px",
                             borderRadius: "6px",
                             background: "rgba(37, 99, 235,0.1)",
-                            color: "#2563eb",
+                            color: "#5b6472",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -668,7 +668,7 @@ export default function RentalPage({
                           borderBottom: `1px solid ${isLightMode ? "#cbd5e1" : "#334155"}`,
                           cursor: "pointer",
                           background: isLightMode ? "rgba(37, 99, 235, 0.05)" : "rgba(37, 99, 235, 0.12)",
-                          color: "#2563eb",
+                          color: "#5b6472",
                         }}
                       >
                         <div
@@ -677,7 +677,7 @@ export default function RentalPage({
                             height: "36px",
                             borderRadius: "8px",
                             background: "rgba(37, 99, 235, 0.15)",
-                            color: "#2563eb",
+                            color: "#5b6472",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -750,7 +750,7 @@ export default function RentalPage({
                                     height: "36px",
                                     borderRadius: "8px",
                                     background: "rgba(37, 99, 235,0.08)",
-                                    color: "#2563eb",
+                                    color: "#5b6472",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
@@ -762,11 +762,11 @@ export default function RentalPage({
                               <div style={{ textAlign: "left" }}>
                                 <div style={{ fontSize: "13px", fontWeight: 700, color: isLightMode ? "#1e293b" : "#f1f5f9" }}>{item.name}</div>
                                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                                  위치: <span style={{ color: "#2563eb", fontWeight: 600 }}>{item.location}</span> | 재고: <span style={{ color: "#10b981", fontWeight: 600 }}>{item.stock ?? 0}개</span>
+                                  위치: <span style={{ color: "#5b6472", fontWeight: 600 }}>{item.location}</span> | 재고: <span style={{ color: "#10b981", fontWeight: 600 }}>{item.stock ?? 0}개</span>
                                 </div>
                               </div>
                             </div>
-                            {isSelected && <Check size={16} style={{ color: "#2563eb" }} />}
+                            {isSelected && <Check size={16} style={{ color: "#5b6472" }} />}
                           </div>
                         );
                       })
@@ -1070,7 +1070,7 @@ export default function RentalPage({
                 </div>
               )}
               <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: "11px", color: "#2563eb", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
+                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
                 <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedItem.name}</div>
                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
                   위치: {selectedItem.location} | 현재고: {selectedItem.stock ?? 0}개

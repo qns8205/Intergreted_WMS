@@ -15,14 +15,14 @@ interface Props {
 
 export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onImageClick }: Props) {
   const C = {
-    card: isLightMode ? "#ffffff" : "#161f30",
-    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
-    border: isLightMode ? "#e6e9ef" : "#26324a",
-    text: isLightMode ? "#111827" : "#f1f5f9",
-    label: isLightMode ? "#626c7d" : "#8b98ac",
+    card: isLightMode ? "#fbfcfd" : "#262a33",
+    cardSub: isLightMode ? "#eef1f4" : "#1e2128",
+    border: isLightMode ? "#dfe3e9" : "#333844",
+    text: isLightMode ? "#23272f" : "#e8eaed",
+    label: isLightMode ? "#6b7280" : "#9aa0aa",
     accent: "#2563eb",
-    accentSoft: "rgba(37, 99, 235, 0.13)",
-    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     warn: isLightMode ? "#b45309" : "#fbbf24",
     warnSoft: "rgba(245,158,11,0.12)",
   };
@@ -93,7 +93,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
           {groups.map(([rack, items]) => {
             const isCollapsed = !!collapsed[rack];
             return (
-              <section key={rack} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden" }}>
+              <section key={rack} style={{ border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
                 {/* 랙 헤더 */}
                 <button
                   onClick={() => toggle(rack)}
@@ -115,7 +115,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                     {items.map((it) => {
                       const img = it.photo ? getGoogleDriveImageUrl(it.photo) : "";
                       return (
-                        <div key={it.rowIndex} style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", background: C.cardSub, display: "flex", flexDirection: "column" }}>
+                        <div key={it.rowIndex} style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", background: C.card, display: "flex", flexDirection: "column", boxShadow: "var(--raise-sm)" }}>
                           <div onClick={() => img && onImageClick && onImageClick(img)} style={{ height: "104px", background: C.card, display: "flex", alignItems: "center", justifyContent: "center", cursor: img ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
                             {img ? <img src={img} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={28} style={{ color: C.border }} />}
                           </div>

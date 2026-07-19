@@ -489,7 +489,7 @@ export default function ItemFormModal({
                     style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }}
                   />
                   <div style={{ textAlign: "left" }}>
-                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#2563eb", display: "block" }}>
+                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#5b6472", display: "block" }}>
                       📸 이미지 직접 등록 준비 완료
                     </span>
                     <span style={{ fontSize: 9.5, color: TEXT_DIM, display: "block" }}>

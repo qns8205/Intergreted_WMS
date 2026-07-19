@@ -1249,7 +1249,7 @@ export default function MobileViewPage({
                   onClick={() => setRegIsCustomLoc(!regIsCustomLoc)}
                   style={{
                     fontSize: "11px",
-                    color: "#2563eb",
+                    color: "#5b6472",
                     background: "transparent",
                     border: "none",
                     cursor: "pointer",
@@ -1431,7 +1431,7 @@ export default function MobileViewPage({
                       style={{ width: "38px", height: "38px", borderRadius: "6px", objectFit: "cover" }}
                     />
                     <div style={{ textAlign: "left" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", display: "block" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#5b6472", display: "block" }}>
                         📸 이미지 업로드 준비 완료
                       </span>
                       <span style={{ fontSize: "10px", color: TEXT_DIM, display: "block" }}>
