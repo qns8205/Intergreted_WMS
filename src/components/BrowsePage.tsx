@@ -47,13 +47,13 @@ export default function BrowsePage({
   scriptUrl, connected, isLightMode, onBack, showToast, onGoBorrow, initialStep = null, purpose = "browse",
 }: BrowsePageProps) {
   const C = {
-    bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#fbfcfd" : "#262a33",
-    cardSub: isLightMode ? "#eef1f4" : "#1e2128",
-    border: isLightMode ? "#dfe3e9" : "#333844",
-    text: isLightMode ? "#23272f" : "#e8eaed",
+    bg: "var(--app-gradient)",
+    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
+    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
+    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
+    text: isLightMode ? "#1a2233" : "#eef2fb",
     label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2563eb",
+    accent: "#2f6bff",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
@@ -423,7 +423,7 @@ export default function BrowsePage({
               <div
                 key={m.key}
                 onClick={() => setStep(m.key)}
-                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
+                style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s", boxShadow: "var(--glass-edge), var(--shadow-sm)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)" } as React.CSSProperties}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}
               >
@@ -659,7 +659,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
 
 function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus }: any) {
   return (
-    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
+    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 24px -6px rgba(47,107,255,0.45), var(--glass-edge)" : "var(--glass-edge), var(--shadow-sm)", backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)", transition: "all 0.2s", opacity: out ? 0.6 : 1 } as React.CSSProperties}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
         {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>

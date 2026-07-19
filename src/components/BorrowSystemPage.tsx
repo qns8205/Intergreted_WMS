@@ -57,13 +57,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
   const C = {
-    bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#fbfcfd" : "#262a33",
-    cardSub: isLightMode ? "#eef1f4" : "#1e2128",
-    border: isLightMode ? "#dfe3e9" : "#333844",
-    text: isLightMode ? "#23272f" : "#e8eaed",
+    bg: "var(--app-gradient)",
+    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
+    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
+    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
+    text: isLightMode ? "#1a2233" : "#eef2fb",
     label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2563eb",
+    accent: "#2f6bff",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
@@ -249,17 +249,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   };
   const labelStyle: React.CSSProperties = { display: "block", fontSize: "14px", fontWeight: 700, color: C.text, marginBottom: "8px" };
   const primaryBtn: React.CSSProperties = {
-    flex: 1, padding: "14px", borderRadius: "12px", border: "none", cursor: "pointer",
-    background: `linear-gradient(180deg, ${isLightMode ? "#3b82f6" : "#3b82f6"} 0%, ${C.accent} 100%)`, color: "#fff", fontSize: "15px", fontWeight: 700,
+    flex: 1, padding: "14px", borderRadius: "14px", border: "none", cursor: "pointer",
+    background: "linear-gradient(180deg, #5b9bff 0%, #2f6bff 100%)", color: "#fff", fontSize: "15px", fontWeight: 700,
     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-    boxShadow: "0 1px 0 rgba(255,255,255,0.25) inset, 0 3px 8px rgba(37,99,235,0.32)",
+    boxShadow: "0 1px 0 rgba(255,255,255,0.35) inset, 0 6px 18px rgba(47,107,255,0.4)",
   };
   const secondaryBtn: React.CSSProperties = {
-    flex: 1, padding: "14px", borderRadius: "12px", cursor: "pointer",
-    border: `1px solid ${C.border}`, background: C.card, color: C.label, fontSize: "15px", fontWeight: 700,
-    boxShadow: "var(--raise-sm)",
+    flex: 1, padding: "14px", borderRadius: "14px", cursor: "pointer",
+    border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: "15px", fontWeight: 700,
+    boxShadow: "var(--glass-edge), var(--shadow-sm)",
+    backdropFilter: "var(--glass-blur)", WebkitBackdropFilter: "var(--glass-blur)",
     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
-  };
+  } as React.CSSProperties;
 
   function StockBadges({ stock, rented }: { stock: number; rented: number }) {
     return (

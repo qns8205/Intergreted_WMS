@@ -1690,7 +1690,7 @@ export default function App() {
       style={{
         width: "100%",
         height: "100vh",
-        background: "var(--app-bg, #0f172a)",
+        background: "transparent",
         color: "var(--text-main, #f1f5f9)",
         fontFamily: "'Inter', sans-serif",
         display: "flex",
@@ -1698,68 +1698,71 @@ export default function App() {
         overflow: "hidden",
       }}
     >
-      {/* 글로벌 스타일 오버라이드 — Soft 3D / 물성 디자인 */}
+      {/* 글로벌 스타일 오버라이드 — Liquid Glass (액체 유리) */}
       <style>{`
         * { box-sizing: border-box; }
         .wms-dark {
-          --app-bg: #1a1d23;
-          --canvas-bg: #15181d;
-          --header-bg: #22262e;
-          --panel-bg: #262a33;
-          --panel-border: #333844;
-          --text-main: #e8eaed;
-          --text-dim: #9aa0aa;
-          --input-bg: #1e2128;
-          --accent: #3b82f6;
-          --accent-strong: #2563eb;
-          --accent-soft: rgba(59,130,246,0.14);
-          --radius: 12px;
-          --radius-sm: 9px;
-          --radius-lg: 18px;
-          /* 물성: 위쪽 하이라이트 + 아래쪽 그림자로 살짝 떠 보이게 */
-          --raise: 0 1px 0 rgba(255,255,255,0.04) inset, 0 2px 5px rgba(0,0,0,0.35), 0 8px 20px rgba(0,0,0,0.25);
-          --raise-sm: 0 1px 0 rgba(255,255,255,0.03) inset, 0 2px 6px rgba(0,0,0,0.3);
-          --inset: inset 0 2px 5px rgba(0,0,0,0.4), inset 0 -1px 0 rgba(255,255,255,0.03);
-          --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
-          --shadow: 0 8px 22px rgba(0,0,0,0.32);
+          --app-bg: #0a1020;
+          --canvas-bg: transparent;
+          --header-bg: rgba(22,28,44,0.55);
+          --panel-bg: rgba(30,38,58,0.45);
+          --panel-border: rgba(255,255,255,0.12);
+          --text-main: #eef2fb;
+          --text-dim: #a7b0c4;
+          --input-bg: rgba(15,20,34,0.5);
+          --accent: #4f8cff;
+          --accent-strong: #2f6bff;
+          --accent-soft: rgba(79,140,255,0.18);
+          --radius: 16px;
+          --radius-sm: 12px;
+          --radius-lg: 24px;
+          --glass-blur: blur(20px) saturate(160%);
+          --glass-edge: 0 1px 0 rgba(255,255,255,0.18) inset, 0 0 0 1px rgba(255,255,255,0.06) inset;
+          --glass-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.3);
+          --shadow-sm: 0 4px 16px rgba(0,0,0,0.3);
+          --shadow: 0 12px 40px rgba(0,0,0,0.45);
+          --app-gradient: radial-gradient(1200px 800px at 15% 5%, #1e3a6e 0%, transparent 55%), radial-gradient(1000px 700px at 85% 20%, #3b2a6b 0%, transparent 50%), radial-gradient(900px 900px at 60% 100%, #0e4a5c 0%, transparent 55%), linear-gradient(160deg, #0a1020 0%, #0d1428 100%);
         }
         .wms-light {
-          --app-bg: #eceef1;
-          --canvas-bg: #e4e7ec;
-          --header-bg: #f6f7f9;
-          --panel-bg: #fbfcfd;
-          --panel-border: #dfe3e9;
-          --text-main: #23272f;
-          --text-dim: #6b7280;
-          --input-bg: #eef1f4;
-          --accent: #2563eb;
-          --accent-strong: #1d4ed8;
-          --accent-soft: rgba(37,99,235,0.10);
-          --radius: 12px;
-          --radius-sm: 9px;
-          --radius-lg: 18px;
-          /* 물성: 위 하이라이트 + 아래 부드러운 그림자 (종이/플라스틱이 살짝 떠 있는 느낌) */
-          --raise: 0 1px 0 rgba(255,255,255,0.9) inset, 0 1px 2px rgba(17,24,39,0.04), 0 6px 16px rgba(17,24,39,0.08);
-          --raise-sm: 0 1px 0 rgba(255,255,255,0.8) inset, 0 2px 5px rgba(17,24,39,0.07);
-          --inset: inset 0 2px 4px rgba(17,24,39,0.09), inset 0 -1px 0 rgba(255,255,255,0.7);
-          --shadow-sm: 0 2px 6px rgba(17,24,39,0.07);
-          --shadow: 0 10px 26px rgba(17,24,39,0.10);
+          --app-bg: #dfe7f5;
+          --canvas-bg: transparent;
+          --header-bg: rgba(255,255,255,0.55);
+          --panel-bg: rgba(255,255,255,0.5);
+          --panel-border: rgba(255,255,255,0.7);
+          --text-main: #1a2233;
+          --text-dim: #5b6577;
+          --input-bg: rgba(255,255,255,0.55);
+          --accent: #2f6bff;
+          --accent-strong: #1e50e0;
+          --accent-soft: rgba(47,107,255,0.12);
+          --radius: 16px;
+          --radius-sm: 12px;
+          --radius-lg: 24px;
+          --glass-blur: blur(20px) saturate(180%);
+          --glass-edge: 0 1px 0 rgba(255,255,255,0.9) inset, 0 0 0 1px rgba(255,255,255,0.5) inset;
+          --glass-shadow: 0 8px 32px rgba(31,45,80,0.14), 0 2px 8px rgba(31,45,80,0.08);
+          --shadow-sm: 0 4px 16px rgba(31,45,80,0.10);
+          --shadow: 0 14px 44px rgba(31,45,80,0.18);
+          --app-gradient: radial-gradient(1100px 700px at 12% 0%, #cde0ff 0%, transparent 55%), radial-gradient(900px 650px at 88% 10%, #e6d8ff 0%, transparent 50%), radial-gradient(1000px 900px at 55% 100%, #cdf0ee 0%, transparent 55%), linear-gradient(160deg, #eaf1fc 0%, #dfe7f5 100%);
         }
-        body { font-size: ${16 * fontScale}px; }
+        html, body { min-height: 100%; }
+        body { font-size: ${16 * fontScale}px; background: var(--app-gradient) fixed; background-attachment: fixed; }
         .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
-        button { cursor: pointer; transition: box-shadow 0.16s ease, transform 0.1s ease, filter 0.16s ease; display: flex; align-items: center; justify-content: center; border: none; }
-        button:hover { filter: brightness(1.03); }
-        button:active { transform: translateY(1px); box-shadow: var(--raise-sm) !important; }
-        input, select, textarea { outline: none; transition: box-shadow 0.16s ease; }
-        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--accent-soft), var(--inset) !important; }
+        /* 유리 표면 유틸리티 */
+        .glass { background: var(--panel-bg); -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); border: 1px solid var(--panel-border); box-shadow: var(--glass-edge), var(--glass-shadow); }
+        button { cursor: pointer; transition: box-shadow 0.18s ease, transform 0.12s ease, filter 0.18s ease; display: flex; align-items: center; justify-content: center; border: none; }
+        button:hover { filter: brightness(1.05); }
+        button:active { transform: translateY(1px) scale(0.995); }
+        input, select, textarea { outline: none; transition: box-shadow 0.18s ease; }
+        input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--accent-soft) !important; }
         :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         ::-webkit-scrollbar { width: 10px; height: 10px; }
-        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; border: 2px solid transparent; background-clip: padding-box; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); background-clip: padding-box; }
+        ::-webkit-scrollbar-thumb { background: rgba(140,150,175,0.4); border-radius: 20px; border: 2px solid transparent; background-clip: padding-box; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(140,150,175,0.65); background-clip: padding-box; }
         ::-webkit-scrollbar-track { background: transparent; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px var(--accent-soft); } 100% { box-shadow: 0 0 0 14px rgba(37,99,235,0); } }
+        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px var(--accent-soft); } 100% { box-shadow: 0 0 0 14px rgba(47,107,255,0); } }
         .canvas-bg { user-select: none; }
       `}</style>
 
@@ -1768,6 +1771,8 @@ export default function App() {
         style={{
           width: sidebarCollapsed ? 64 : 232,
           background: "var(--header-bg, #1e293b)",
+          backdropFilter: "var(--glass-blur)",
+          WebkitBackdropFilter: "var(--glass-blur)",
           borderRight: "1px solid var(--panel-border, #334155)",
           display: "flex",
           flexDirection: "column",
@@ -1775,7 +1780,7 @@ export default function App() {
           flexShrink: 0,
           zIndex: 110,
           transition: "width 0.2s ease",
-        }}
+        } as React.CSSProperties}
       >
         {/* 상단 로고 영역 */}
         {sidebarCollapsed ? (
@@ -2083,10 +2088,12 @@ export default function App() {
           justifyContent: "space-between",
           padding: "0 24px",
           background: "var(--header-bg, #1e293b)",
+          backdropFilter: "var(--glass-blur)",
+          WebkitBackdropFilter: "var(--glass-blur)",
           borderBottom: "1px solid var(--panel-border, #334155)",
           zIndex: 100,
           flexShrink: 0,
-        }}
+        } as React.CSSProperties}
       >
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -2189,6 +2196,8 @@ export default function App() {
                 left: 0,
                 right: 0,
                 background: "var(--panel-bg, #1e293b)",
+                backdropFilter: "var(--glass-blur)",
+                WebkitBackdropFilter: "var(--glass-blur)",
                 border: "1px solid var(--panel-border, #334155)",
                 borderRadius: 8,
                 boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
@@ -2503,6 +2512,8 @@ export default function App() {
                       onClick={regenerateFromInventory}
                       style={{
                         background: "var(--panel-bg, #1e293b)",
+                backdropFilter: "var(--glass-blur)",
+                WebkitBackdropFilter: "var(--glass-blur)",
                         border: "1px solid var(--panel-border, #334155)",
                         color: "var(--text-main, #f1f5f9)",
                         padding: "8px 14px",
@@ -2587,6 +2598,8 @@ export default function App() {
                       onClick={addManualRack}
                       style={{
                         background: "var(--panel-bg, #1e293b)",
+                backdropFilter: "var(--glass-blur)",
+                WebkitBackdropFilter: "var(--glass-blur)",
                         border: "1px solid var(--panel-border, #334155)",
                         color: "var(--text-main, #f1f5f9)",
                         padding: "10px 18px",

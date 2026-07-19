@@ -22,12 +22,12 @@ type EditForm = Partial<ScenarioObjectAdmin> & { rowIndex?: number };
 export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, showToast }: Props) {
   const C = {
     bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#fbfcfd" : "#262a33",
-    cardSub: isLightMode ? "#eef1f4" : "#1e2128",
-    border: isLightMode ? "#dfe3e9" : "#333844",
-    text: isLightMode ? "#23272f" : "#e8eaed",
+    card: isLightMode ? "rgba(255,255,255,0.55)" : "rgba(36,44,66,0.5)",
+    cardSub: isLightMode ? "rgba(255,255,255,0.35)" : "rgba(20,26,42,0.4)",
+    border: isLightMode ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.12)",
+    text: isLightMode ? "#1a2233" : "#eef2fb",
     label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2563eb",
+    accent: "#2f6bff",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#3f4756" : "#c2c7d0",
     success: isLightMode ? "#047857" : "#34d399",
