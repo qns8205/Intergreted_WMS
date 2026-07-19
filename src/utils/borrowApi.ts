@@ -121,14 +121,31 @@ export function nowString(): string {
 }
 
 /* ---------------- API 호출 (WMS callScript와 동일한 CORS 회피 패턴) ---------------- */
+// 연동 URL과 쿼리스트링을 안전하게 합친다.
+// scriptUrl에 이미 '?'(예: ...exec?usp=sharing)나 fragment('#'), 공백이 들어와도
+// action 파라미터가 묻히지 않도록 정규화한다. (특히 모바일에서 URL이 잘못 저장된 경우 방어)
+function normalizeScriptUrl(raw: string): string {
+  let u = String(raw || "").trim();
+  const hashIdx = u.indexOf("#");
+  if (hashIdx !== -1) u = u.slice(0, hashIdx); // fragment 제거
+  return u.trim();
+}
+
+function buildUrl(scriptUrl: string, qs: string): string {
+  const base = normalizeScriptUrl(scriptUrl);
+  if (!qs) return base;
+  return base + (base.indexOf("?") !== -1 ? "&" : "?") + qs;
+}
+
 async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}) {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
   const qs = new URLSearchParams({ action, ...params }).toString();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃 (무한로딩 방지)
+  const url = buildUrl(scriptUrl, qs);
   let res: Response;
   try {
-    res = await fetch(`${scriptUrl}?${qs}`, { signal: controller.signal });
+    res = await fetch(url, { signal: controller.signal });
   } catch (e: any) {
     if (e?.name === "AbortError") throw new Error("서버 응답이 지연되어 요청을 취소했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
     throw new Error(e?.message || "네트워크 오류가 발생했습니다.");
@@ -148,7 +165,7 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
 
 async function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
-  const res = await fetch(scriptUrl, {
+  const res = await fetch(normalizeScriptUrl(scriptUrl), {
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ action, payload }),
