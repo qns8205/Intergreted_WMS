@@ -272,8 +272,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   <div style={{ fontWeight: 700, fontSize: "14px" }}>{g.borrower} {g.scenarioId ? <span style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>· {g.scenarioId}</span> : null}</div>
                   <div style={{ fontSize: "11px", color: C.label }}>{g.kind} · {g.date}{g.purpose ? ` · ${g.purpose}` : ""}</div>
                 </div>
-                {g.allReturned ? <span style={{ fontSize: "11px", fontWeight: 700, color: C.success, background: C.successSoft, padding: "3px 10px", borderRadius: "20px", flexShrink: 0 }}>반납완료</span>
-                  : <span style={{ fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, padding: "3px 10px", borderRadius: "20px", flexShrink: 0 }}>미반납 포함</span>}
+                {g.allReturned ? <span style={{ fontSize: "11px", fontWeight: 700, color: C.success, background: C.successSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>반납완료</span>
+                  : <span style={{ fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>미반납 포함</span>}
               </div>
               <div style={{ padding: "8px 12px" }}>
                 {g.items.map((it) => {

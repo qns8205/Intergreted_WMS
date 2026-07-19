@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   ArrowLeft, Search, User, IdCard, Boxes, Fingerprint, ChevronRight,
   Plus, Minus, X, ShoppingCart, Warehouse, MapPin, Trash2, HandHelping,
@@ -315,6 +315,26 @@ export default function BrowsePage({
     : step === "warehouse" ? "창고 물품 열람"
     : step === "mylookup" ? "내 대여 조회" : "열람 조회";
 
+  /* ── 브라우저 뒤로가기로 처음으로 튀지 않고 이전 단계로만 이동 ── */
+  const topBackRef = useRef(topBack);
+  topBackRef.current = topBack;
+  const stepRef = useRef(step);
+  stepRef.current = step;
+  useEffect(() => {
+    try { window.history.pushState({ browseGuard: true }, ""); } catch {}
+    const onPop = () => {
+      if (stepRef.current !== "identity") {
+        topBackRef.current();
+        try { window.history.pushState({ browseGuard: true }, ""); } catch {}
+      } else {
+        onBack();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
       <style>{`@keyframes bsp-spin { to { transform: rotate(360deg); } }`}</style>
@@ -351,7 +371,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>성함</label>
                 <div style={{ position: "relative", marginBottom: "16px" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={name} onChange={(e) => setName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={name} onChange={(e) => setName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
               </>
             ) : (
@@ -359,7 +379,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>이름</label>
                 <div style={{ position: "relative", marginBottom: "8px" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginBottom: "16px", lineHeight: 1.5 }}>기타 소속은 성함만 입력합니다. (사번·Slack 멘션 없음)</div>
               </>
@@ -369,7 +389,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>사번</label>
                 <div style={{ position: "relative", marginBottom: "24px" }}>
                   <IdCard size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={empId} onChange={(e) => setEmpId(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="사번을 입력해주세요 (숫자만)" inputMode="numeric" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={empId} onChange={(e) => setEmpId(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="사번을 입력해주세요 (숫자만)" inputMode="numeric" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
               </>
             ) : <div style={{ height: "8px" }} />}

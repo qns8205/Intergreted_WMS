@@ -1983,7 +1983,7 @@ export default function MobileViewPage({
                     style={{
                       width: "100%",
                       aspectRatio: "1.4 / 1",
-                      borderRadius: "18px",
+                      borderRadius: "14px",
                       overflow: "hidden",
                       background: isLightMode ? "#f1f5f9" : "#0f172a",
                       display: "flex",

@@ -394,9 +394,7 @@ export default function App() {
     });
   };
   useEffect(() => {
-    // 루트 폰트 크기에 배율 적용 (rem 기반이 아니어도 body font-size로 전반 확대)
     document.documentElement.style.setProperty("--wms-font-scale", String(fontScale));
-    document.body.style.fontSize = `${16 * fontScale}px`;
   }, [fontScale]);
 
   const [toast, setToast] = useState<{ msg: string; type: "info" | "ok" | "warn" | "error" } | null>(null);
@@ -1702,30 +1700,50 @@ export default function App() {
         * { box-sizing: border-box; }
         .wms-dark {
           --app-bg: #0f172a;
-          --canvas-bg: #020617;
-          --header-bg: #1e293b;
-          --panel-bg: #1e293b;
-          --panel-border: #334155;
+          --canvas-bg: #0b1120;
+          --header-bg: #161f30;
+          --panel-bg: #161f30;
+          --panel-border: #26324a;
           --text-main: #f1f5f9;
-          --text-dim: #94a3b8;
+          --text-dim: #8b98ac;
           --input-bg: #0f172a;
+          --accent: #6366f1;
+          --accent-soft: rgba(99,102,241,0.14);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
+          --shadow: 0 4px 12px rgba(0,0,0,0.22);
         }
         .wms-light {
-          --app-bg: #f8fafc;
-          --canvas-bg: #e2e8f0;
+          --app-bg: #f7f8fa;
+          --canvas-bg: #eef1f5;
           --header-bg: #ffffff;
           --panel-bg: #ffffff;
-          --panel-border: #cbd5e1;
-          --text-main: #0f172a;
-          --text-dim: #475569;
-          --input-bg: #f1f5f9;
+          --panel-border: #e6e9ef;
+          --text-main: #111827;
+          --text-dim: #626c7d;
+          --input-bg: #f4f6f9;
+          --accent: #6366f1;
+          --accent-soft: rgba(99,102,241,0.10);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
+          --shadow: 0 4px 14px rgba(15,23,42,0.08);
         }
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        button { cursor: pointer; transition: all 0.15s ease-in-out; display: flex; align-items: center; justify-content: center; border: none; }
-        button:hover { opacity: 0.9; transform: scale(1.01); }
-        button:active { transform: scale(0.99); }
-        input, select { outline: none; transition: border-color 0.15s ease-in-out; }
-        input:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 2px rgba(99,102,241,0.2) !important; }
+        body { font-size: ${16 * fontScale}px; }
+        .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
+        button { cursor: pointer; transition: background 0.14s ease, opacity 0.14s ease, transform 0.08s ease; display: flex; align-items: center; justify-content: center; border: none; }
+        button:hover { opacity: 0.92; }
+        button:active { transform: scale(0.98); }
+        input, select, textarea { outline: none; transition: border-color 0.14s ease, box-shadow 0.14s ease; }
+        input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-soft) !important; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
         @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(99,102,241,0.4); } 100% { box-shadow: 0 0 0 14px rgba(99,102,241,0); } }
         .canvas-bg {
@@ -1736,7 +1754,7 @@ export default function App() {
       {/* ===== 1. 좌측 사이드바 ===== */}
       <aside
         style={{
-          width: sidebarCollapsed ? 72 : 260,
+          width: sidebarCollapsed ? 64 : 232,
           background: "var(--header-bg, #1e293b)",
           borderRight: "1px solid var(--panel-border, #334155)",
           display: "flex",
@@ -1751,7 +1769,7 @@ export default function App() {
         {sidebarCollapsed ? (
           <div
             style={{
-              height: 64,
+              height: 56,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1779,7 +1797,7 @@ export default function App() {
         ) : (
           <div
             style={{
-              height: 64,
+              height: 56,
               padding: "0 16px 0 20px",
               display: "flex",
               alignItems: "center",
@@ -1867,7 +1885,7 @@ export default function App() {
         <div
           style={{
             flex: 1,
-            padding: sidebarCollapsed ? "24px 8px" : "24px 16px",
+            padding: sidebarCollapsed ? "16px 8px" : "16px 12px",
             display: "flex",
             flexDirection: "column",
             gap: 8,
@@ -1878,7 +1896,7 @@ export default function App() {
             title={sidebarCollapsed ? "창고물품" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
@@ -1901,7 +1919,7 @@ export default function App() {
             title={sidebarCollapsed ? "시나리오 물품" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
@@ -1924,7 +1942,7 @@ export default function App() {
             title={sidebarCollapsed ? "대여/반납 대장" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
@@ -1946,7 +1964,7 @@ export default function App() {
             title={sidebarCollapsed ? "불량로그" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,

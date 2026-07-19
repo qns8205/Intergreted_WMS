@@ -40,7 +40,7 @@ export default function LandingPage({
           ? "radial-gradient(circle at top, #f8fafc 0%, #e2e8f0 100%)"
           : "radial-gradient(circle at top, #0f172a 0%, #020617 100%)",
         color: isLightMode ? "#0f172a" : "#f1f5f9",
-        padding: "40px 20px",
+        padding: "32px 20px",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
       }}
     >
@@ -59,7 +59,7 @@ export default function LandingPage({
             justifyContent: "center",
             width: "64px",
             height: "64px",
-            borderRadius: "20px",
+            borderRadius: "16px",
             background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
             color: "#ffffff",
             marginBottom: "20px",
@@ -70,7 +70,7 @@ export default function LandingPage({
         </div>
         <h1
           style={{
-            fontSize: "36px",
+            fontSize: "30px",
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
@@ -124,37 +124,37 @@ export default function LandingPage({
             style={{
               background: isLightMode ? "#ffffff" : "#1e293b",
               border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-              borderRadius: "24px",
-              padding: "28px 24px",
+              borderRadius: "16px",
+              padding: "20px 20px",
               cursor: "pointer",
-              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+              transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
+              boxShadow: "var(--shadow-sm)",
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-start",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)";
-              e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(99, 102, 241, 0.25)";
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(99, 102, 241, 0.28)";
               e.currentTarget.style.borderColor = "#6366f1";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "0 4px 6px -1px rgba(0, 0, 0, 0.1)";
+              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
               e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
             }}
           >
             <div
               style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "14px",
-                background: "rgba(99, 102, 241, 0.15)",
+                width: "40px",
+                height: "40px",
+                borderRadius: "11px",
+                background: "rgba(99, 102, 241, 0.13)",
                 color: "#818cf8",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                marginBottom: "18px",
+                marginBottom: "14px",
               }}
             >
               {c.icon}

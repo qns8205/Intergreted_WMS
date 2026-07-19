@@ -355,7 +355,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       <div style={{ marginBottom: "14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
           <span style={{ fontSize: "13px", color: C.label }}>선택된 물품</span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{list.length}개</span>
+          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{list.length}개</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
           {list.length === 0 ? (
@@ -467,6 +467,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!isKoreanName(v)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return false; }
     if (affiliation === "cfgw" && !/^\d+$/.test(employeeId.trim())) { showToast("사번은 숫자만 입력할 수 있습니다.", "warn"); return false; }
     return true;
+  }
+
+  // Enter 키로 다음 단계로 넘어가기 위한 헬퍼. (한글 조합 중 Enter는 무시)
+  function onEnter(fn: () => void) {
+    return (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) {
+        e.preventDefault();
+        fn();
+      }
+    };
   }
 
   async function step1Next() {
@@ -727,7 +737,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <span style={{ flex: 1, fontWeight: 700, fontSize: level === 1 ? "14px" : "13px", color: C.text, display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
             {icon}{title}
           </span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accentSoft, color: C.accentText, borderRadius: "20px", padding: "2px 9px", flexShrink: 0 }}>{sumQty(items)}개</span>
+          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accentSoft, color: C.accentText, borderRadius: "14px", padding: "2px 9px", flexShrink: 0 }}>{sumQty(items)}개</span>
         </div>
         {isOpen ? <div style={{ padding: "8px 8px 2px" }}>{children}</div> : null}
       </div>
@@ -956,6 +966,29 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" ? 3 : mode === "b4g" || mode === "b4s" ? 4 : 0;
 
+  /* ── 브라우저 뒤로가기(제스처/버튼)로 처음 화면으로 튀지 않고 이전 '단계'로만 이동 ── */
+  const goPrevRef = useRef(goPrev);
+  goPrevRef.current = goPrev;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  useEffect(() => {
+    // 진입 시 방어용 히스토리 항목을 하나 쌓아, 첫 뒤로가기가 페이지를 벗어나지 않게 한다.
+    try { window.history.pushState({ borrowGuard: true }, ""); } catch {}
+    const onPop = (e: PopStateEvent) => {
+      // 루트 단계가 아니면: 단계만 한 칸 뒤로 이동하고, 히스토리는 다시 채워서 페이지 이탈을 막는다.
+      if (modeRef.current !== rootMode) {
+        goPrevRef.current();
+        try { window.history.pushState({ borrowGuard: true }, ""); } catch {}
+      } else {
+        // 루트 단계에서의 뒤로가기는 정상적으로 이전 화면으로 나간다.
+        onBack();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ══════════════════════ 렌더 ══════════════════════ */
 
   return (
@@ -1037,6 +1070,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   <input
                     value={borrowerName}
                     onChange={(e) => setBorrowerName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
+                    onKeyDown={onEnter(step1Next)}
                     placeholder="성함을 입력해주세요"
                     style={{ ...inputStyle, paddingLeft: "40px" }}
                   />
@@ -1059,6 +1093,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   onChange={(e) => setEmployeeId(e.target.value.replace(/\D/g, ""))}
                   placeholder="사번을 입력해주세요 (숫자만)"
                   inputMode="numeric"
+                  onKeyDown={onEnter(step1Next)}
                   style={{ ...inputStyle, paddingLeft: "40px" }}
                 />
               </div>
@@ -1069,7 +1104,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <label style={labelStyle}>이름</label>
                 <div style={{ position: "relative" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={onEnter(step1Next)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
                   기타 소속은 Slack 이메일 없이 성함만 입력합니다. (Slack 멘션은 제공되지 않습니다)
@@ -1152,7 +1187,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ marginBottom: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <span style={{ fontSize: "13px", color: C.label }}>추가된 SID</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{sidCart.length}개</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{sidCart.length}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "220px", overflowY: "auto" }}>
                   {sidCart.map((entry, idx) => (
@@ -1326,7 +1361,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ marginBottom: "14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <span style={{ fontSize: "13px", color: C.label }}>담은 창고 물품</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{whCartCount}개</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{whCartCount}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
                   {whCart.map((item, idx) => (
