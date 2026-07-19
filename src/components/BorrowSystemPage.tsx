@@ -80,7 +80,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
-  const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string }>({ ok: true, title: "", sub: "" });
+  const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
   const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
@@ -129,6 +129,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whRack, setWhRack] = useState("");
   const [whSlot, setWhSlot] = useState("");
   const [whPurpose, setWhPurpose] = useState("");
+  const [whDueDate, setWhDueDate] = useState("");
   const [whReturnItems, setWhReturnItems] = useState<any[]>([]);
   const [whReturnLoading, setWhReturnLoading] = useState(false);
   const [whReturnSel, setWhReturnSel] = useState<Record<string, number>>({});
@@ -817,7 +818,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     try {
       if (connected && scriptUrl) {
         for (const c of whCart) {
-          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청") });
+          const dueTag = actionType === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
+          const baseNote = whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청");
+          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
         }
         clearWarehouseCart(user, whEmpId.trim());
       }
@@ -828,6 +831,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         sub: actionType === "소모"
           ? `${total}개 물품을 소모 처리했습니다. (재고에서 차감되며 반납 대상이 아닙니다)`
           : `${total}개 물품을 대여 처리했습니다.`,
+        receipt: {
+          borrower: user,
+          date: nowString(),
+          due: actionType === "대여" && whDueDate ? whDueDate : undefined,
+          action: actionType,
+          items: whCart.map((c) => ({ name: c.name, qty: c.quantity, location: c.location })),
+        },
       });
       setMode("result");
     } catch (e: any) {
@@ -912,7 +922,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
-    setWhCart([]); setWhSearch(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhReturnSel({});
+    setWhCart([]); setWhSearch(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhDueDate(""); setWhReturnSel({});
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
@@ -1381,6 +1391,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
               <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
             </div>
+            <div style={{ marginTop: "12px" }}>
+              <label style={labelStyle}>반납 예정일 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(대여 시 선택 · 연체 관리에 사용)</span></label>
+              <input type="date" value={whDueDate} onChange={(e) => setWhDueDate(e.target.value)} style={{ ...inputStyle }} />
+              {whDueDate ? <div style={{ fontSize: "11px", color: C.accentText, marginTop: "5px", fontWeight: 600 }}>이 예정일이 지나면 대여 대장에서 연체로 표시됩니다.</div> : null}
+            </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={goPrev} style={secondaryBtn}>이전</button>
               <button onClick={() => handleWarehouseBorrow("소모")} disabled={submitting} style={{ flex: 1, padding: "14px", borderRadius: "12px", border: "none", cursor: "pointer", background: C.warn, color: "#fff", fontSize: "15px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", opacity: submitting ? 0.7 : 1 }}>
@@ -1484,6 +1499,34 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             )}
             <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>{resultInfo.title}</div>
             <div style={{ fontSize: "13px", color: C.label, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{resultInfo.sub}</div>
+
+            {resultInfo.ok && resultInfo.receipt ? (
+              <div style={{ maxWidth: "360px", margin: "24px auto 0", textAlign: "left", border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `1px dashed ${C.border}`, background: C.cardSub, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 800 }}>📋 {resultInfo.receipt.action} 내역</span>
+                  <span style={{ fontSize: "11px", color: C.label }}>{resultInfo.receipt.date}</span>
+                </div>
+                <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                    <span style={{ color: C.label }}>대여자</span><span style={{ fontWeight: 700 }}>{resultInfo.receipt.borrower}</span>
+                  </div>
+                  {resultInfo.receipt.due ? (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                      <span style={{ color: C.label }}>반납 예정일</span><span style={{ fontWeight: 700, color: C.accentText }}>{resultInfo.receipt.due}</span>
+                    </div>
+                  ) : null}
+                </div>
+                <div style={{ padding: "0 16px 12px" }}>
+                  {resultInfo.receipt.items.map((it, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: `1px solid ${C.border}`, fontSize: "12px" }}>
+                      <span style={{ flex: 1, fontWeight: 600, wordBreak: "break-word" }}>{it.name}{it.location ? <span style={{ color: C.label, fontWeight: 400 }}> · {it.location}</span> : null}</span>
+                      <span style={{ fontWeight: 800, marginLeft: "8px" }}>{it.qty}개</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", gap: "10px", marginTop: "32px", maxWidth: "320px", margin: "32px auto 0" }}>
               <button onClick={resetAll} style={secondaryBtn}>처음으로 돌아가기</button>
             </div>

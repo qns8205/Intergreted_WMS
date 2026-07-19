@@ -122,6 +122,8 @@ export default function RentLogsPage({
   // Search and Filter states
   const [filterQuery, setFilterQuery] = useState("");
   const [filterType, setFilterType] = useState("전체");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   // Collapsible Registration Form State (Guest Mode defaults to true)
   const [showAddForm, setShowAddForm] = useState(isGuestMode);
@@ -403,7 +405,16 @@ export default function RentLogsPage({
 
       const matchesType = filterType === "전체" || log.type === filterType;
 
-      return matchesQuery && matchesType;
+      // 날짜 범위 필터 (기록 시간 기준)
+      let matchesDate = true;
+      if (dateFrom || dateTo) {
+        const ts = String(log.timestamp || "").slice(0, 10); // YYYY-MM-DD
+        if (dateFrom && ts && ts < dateFrom) matchesDate = false;
+        if (dateTo && ts && ts > dateTo) matchesDate = false;
+        if (!ts) matchesDate = false;
+      }
+
+      return matchesQuery && matchesType && matchesDate;
     });
 
     // Sort by timestamp descending (newest first)
@@ -417,7 +428,7 @@ export default function RentLogsPage({
       const rowB = b.rowIndex || 0;
       return rowB - rowA; // Higher row index (newer) first
     });
-  }, [rentLogs, filterQuery, filterType]);
+  }, [rentLogs, filterQuery, filterType, dateFrom, dateTo]);
 
   return (
     <div
@@ -903,6 +914,16 @@ export default function RentLogsPage({
                 </button>
               ))}
             </div>
+
+            {/* 날짜 범위 필터 */}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--panel-bg, #0f172a)", padding: "3px 8px", borderRadius: 6, border: `1px solid ${PANEL_BORDER}` }}>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="시작일" style={{ background: "transparent", border: "none", color: TEXT_MAIN, fontSize: 11, outline: "none" }} />
+              <span style={{ color: TEXT_DIM, fontSize: 11 }}>~</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="종료일" style={{ background: "transparent", border: "none", color: TEXT_MAIN, fontSize: 11, outline: "none" }} />
+              {(dateFrom || dateTo) ? (
+                <button onClick={() => { setDateFrom(""); setDateTo(""); }} title="날짜 필터 해제" style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>
+              ) : null}
+            </div>
           </div>
 
           {/* Table Container */}
@@ -954,12 +975,18 @@ export default function RentLogsPage({
                         );
                       }
 
+                      // 반납 예정일 파싱 및 연체 판단 (대여 건이고, 미반납이며, 예정일이 오늘보다 이전)
+                      const dueMatch = log.note ? log.note.match(/\[반납예정:(\d{4}-\d{2}-\d{2})\]/) : null;
+                      const dueDate = dueMatch ? dueMatch[1] : "";
+                      const todayStr = new Date().toISOString().slice(0, 10);
+                      const isOverdue = log.type === "대여" && !isReturned && dueDate && dueDate < todayStr;
+
                       return (
                         <tr
                           key={index}
                           style={{
                             borderBottom: `1px solid ${PANEL_BORDER}`,
-                            background: index % 2 === 1 ? "rgba(255,255,255,0.01)" : "transparent",
+                            background: isOverdue ? "rgba(239,68,68,0.10)" : index % 2 === 1 ? "rgba(255,255,255,0.01)" : "transparent",
                           }}
                         >
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, whiteSpace: "nowrap" }}>
@@ -995,7 +1022,12 @@ export default function RentLogsPage({
                             {log.user}
                           </td>
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.note}>
-                            {log.note || "-"}
+                            {dueDate ? (
+                              <span style={{ display: "inline-block", marginRight: 6, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "rgba(239,68,68,0.2)" : "rgba(99,102,241,0.15)", color: isOverdue ? "#f87171" : ACCENT }}>
+                                {isOverdue ? `연체 (예정 ${dueDate})` : `예정 ${dueDate}`}
+                              </span>
+                            ) : null}
+                            {(log.note || "-").replace(/\s*\[반납예정:\d{4}-\d{2}-\d{2}\]/, "") || "-"}
                           </td>
                           <td style={{ padding: "11px 14px", textAlign: "center" }}>
                             {log.type === "대여" ? (

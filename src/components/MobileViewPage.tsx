@@ -89,6 +89,7 @@ export default function MobileViewPage({
   const [formUser, setFormUser] = useState("");
   const [formQty, setFormQty] = useState(1);
   const [formNote, setFormNote] = useState("");
+  const [formDueDate, setFormDueDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Current logged in user name or default
@@ -124,6 +125,28 @@ export default function MobileViewPage({
   // --- 이미지 업로드 상태 및 헬퍼 ---
   const [isRegUploadingImage, setIsRegUploadingImage] = useState(false);
   const [isDefUploadingImage, setIsDefUploadingImage] = useState(false);
+
+  // 바텀시트가 열려 있는 동안 뒤쪽 본문이 스크롤되지 않도록 body 스크롤을 잠근다.
+  // (모바일에서 시트/키보드가 뜰 때 배경이 아래로 밀려 내려가는 문제 방지)
+  useEffect(() => {
+    if (sheetMode) {
+      const prevOverflow = document.body.style.overflow;
+      const prevPosition = document.body.style.position;
+      const prevWidth = document.body.style.width;
+      const scrollY = window.scrollY;
+      document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.width = "100%";
+      document.body.style.top = `-${scrollY}px`;
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        document.body.style.position = prevPosition;
+        document.body.style.width = prevWidth;
+        document.body.style.top = "";
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [sheetMode]);
 
   const handleRegPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -399,6 +422,7 @@ export default function MobileViewPage({
       setFormQty(1);
     }
     setFormNote("");
+    setFormDueDate("");
     const base = window.location.hash.split("/")[1] || "monitor";
     window.location.hash = `#/${base}/form`;
   };
@@ -436,6 +460,7 @@ export default function MobileViewPage({
 
     setSubmitting(true);
     try {
+      const dueTag = actionType === "대여" && formDueDate ? ` [반납예정:${formDueDate}]` : "";
       const log: RentLog = {
         timestamp: formatTimestampLocal(),
         location: selectedItem.location,
@@ -443,7 +468,7 @@ export default function MobileViewPage({
         type: actionType,
         qty: formQty,
         user: formUser.trim(),
-        note: formNote.trim() || `${actionType} 처리 (모바일 관리자)`,
+        note: (formNote.trim() || `${actionType} 처리 (모바일 관리자)`) + dueTag,
       };
       await onAddRentLog(log);
       notify(
@@ -793,7 +818,7 @@ export default function MobileViewPage({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr" : "1fr 1fr",
+            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr",
             gap: "6px",
             background: isLightMode ? "#f1f5f9" : "#111827",
             padding: "4px",
@@ -892,6 +917,24 @@ export default function MobileViewPage({
                 }}
               >
                 ⚠️ 불량
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={() => onOpenScenario && onOpenScenario()}
+                style={{
+                  padding: "10px 4px",
+                  borderRadius: "11px",
+                  fontSize: "12px",
+                  fontWeight: 800,
+                  background: "transparent",
+                  color: "#818cf8",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "4px",
+                }}
+              >
+                🧩 물품
               </button>
             </>
           )}
@@ -2513,6 +2556,19 @@ export default function MobileViewPage({
                         style={{ ...inputBaseStyle, fontSize: "14px" }}
                       />
                     </div>
+
+                    {mode === "대여" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>반납 예정일 (선택 · 연체 관리)</label>
+                        <input
+                          className="mvp-input"
+                          type="date"
+                          value={formDueDate}
+                          onChange={(e) => setFormDueDate(e.target.value)}
+                          style={{ ...inputBaseStyle, fontSize: "14px" }}
+                        />
+                      </div>
+                    ) : null}
 
                     <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
                       {mode === "대여" && isAdmin ? (

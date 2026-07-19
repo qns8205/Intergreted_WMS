@@ -48,6 +48,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [submitting, setSubmitting] = useState(false);
   const [reborrowing, setReborrowing] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(30);
+
+  // 필터가 바뀌면 페이지를 처음으로 되돌린다.
+  useEffect(() => { setVisibleCount(30); }, [search, kindFilter, statusFilter, borrowerFilter]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -260,7 +264,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {groups.map((g) => (
+          {groups.slice(0, visibleCount).map((g) => (
             <div key={g.key} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", opacity: g.allReturned ? 0.85 : 1 }}>
               <div onClick={() => isAdmin && toggleGroup(g)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.cardSub, cursor: isAdmin ? "pointer" : "default" }}>
                 <div style={{ width: 34, height: 34, borderRadius: "9px", background: g.allReturned ? C.successSoft : C.accentSoft, color: g.allReturned ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><User size={17} /></div>
@@ -293,6 +297,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               </div>
             </div>
           ))}
+          {groups.length > visibleCount ? (
+            <button onClick={() => setVisibleCount((n) => n + 30)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+              더 보기 ({visibleCount} / {groups.length}건 표시 중)
+            </button>
+          ) : null}
         </div>
       )}
 

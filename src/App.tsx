@@ -379,6 +379,26 @@ export default function App() {
     });
   };
 
+  // 글자 크기 배율 (0.9 ~ 1.3), 접근성/현장 가독성용
+  const [fontScale, setFontScale] = useState<number>(() => {
+    const saved = parseFloat(localStorage.getItem("wms_font_scale") || "1");
+    return isNaN(saved) ? 1 : Math.min(1.3, Math.max(0.9, saved));
+  });
+  const cycleFontScale = () => {
+    setFontScale((prev) => {
+      const steps = [0.9, 1, 1.1, 1.2, 1.3];
+      const idx = steps.findIndex((s) => Math.abs(s - prev) < 0.001);
+      const next = steps[(idx + 1) % steps.length];
+      safeSetLocalStorage("wms_font_scale", String(next));
+      return next;
+    });
+  };
+  useEffect(() => {
+    // 루트 폰트 크기에 배율 적용 (rem 기반이 아니어도 body font-size로 전반 확대)
+    document.documentElement.style.setProperty("--wms-font-scale", String(fontScale));
+    document.body.style.fontSize = `${16 * fontScale}px`;
+  }, [fontScale]);
+
   const [toast, setToast] = useState<{ msg: string; type: "info" | "ok" | "warn" | "error" } | null>(null);
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -1619,11 +1639,37 @@ export default function App() {
     }
     return (
       <div style={{ minHeight: "100vh", background: "var(--canvas-bg, #020617)", color: "var(--text-main, #f1f5f9)" }}>
-        <div style={{ position: "sticky", top: 0, zIndex: 20, display: "flex", alignItems: "center", gap: "10px", padding: "14px 16px", borderBottom: "1px solid var(--panel-border, #334155)", background: "var(--panel-bg, #1e293b)" }}>
-          <button onClick={() => setCurrentView("landing")} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)", background: "transparent", color: "var(--text-dim, #94a3b8)", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-            <Home size={15} /> 처음
-          </button>
-          <h1 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>🧩 시나리오 물품 관리</h1>
+        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "var(--panel-bg, #1e293b)", borderBottom: "1px solid var(--panel-border, #334155)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px 8px" }}>
+            <button onClick={() => setCurrentView("landing")} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)", background: "transparent", color: "var(--text-dim, #94a3b8)", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+              <Home size={15} /> 처음
+            </button>
+            <h1 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>🧩 시나리오 물품 관리</h1>
+          </div>
+          {/* 창고 탭들로 바로 전환 (탭 넘기기 방식) */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: "6px", padding: "0 12px 10px" }}>
+            {[
+              { label: "📥 대여", view: "monitor" },
+              { label: "🔄 반납", view: "rent" },
+              { label: "📦 등록", view: "monitor" },
+              { label: "⚠️ 불량", view: "defect" },
+              { label: "🧩 물품", view: "scenario" },
+            ].map((t, i) => (
+              <button
+                key={i}
+                onClick={() => { if (t.view !== "scenario") setCurrentView(t.view as any); }}
+                style={{
+                  padding: "10px 2px", borderRadius: "11px", fontSize: "12px", fontWeight: 800, border: "none",
+                  background: t.view === "scenario" ? "#6366f1" : "transparent",
+                  color: t.view === "scenario" ? "#ffffff" : "var(--text-dim, #94a3b8)",
+                  cursor: "pointer",
+                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(99,102,241,0.3)" : "none",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div style={{ padding: "16px" }}>
           <ScenarioAdminPage
@@ -2189,6 +2235,30 @@ export default function App() {
           <ConnectionBadge connected={connected} dirty={dirty} saving={saving} lastSync={lastSync} />
 
           <button
+            onClick={cycleFontScale}
+            style={{
+              height: 34,
+              minWidth: 44,
+              padding: "0 8px",
+              borderRadius: 6,
+              border: "1px solid var(--panel-border, #334155)",
+              background: "var(--input-bg, #0f172a)",
+              color: "var(--text-main, #f1f5f9)",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 3,
+            }}
+            title={`글자 크기 (현재 ${Math.round(fontScale * 100)}%) · 눌러서 변경`}
+          >
+            <span style={{ fontSize: 11 }}>가</span>
+            <span style={{ fontSize: 15 }}>가</span>
+          </button>
+
+          <button
             onClick={toggleLightMode}
             style={{
               width: 34,
@@ -2573,7 +2643,7 @@ export default function App() {
       </div>
 
       {/* ===== 3. 설정 모달 ===== */}
-      {showSetup && (
+      {showSetup && isAdmin && (
         <SetupModal
           scriptUrl={scriptUrl}
           setScriptUrl={setScriptUrl}
@@ -2591,6 +2661,16 @@ export default function App() {
             showToast("스프레드시트 연동이 해제되었습니다. 가상 데모 모드로 동작합니다.", "info");
           }}
         />
+      )}
+      {showSetup && !isAdmin && (
+        // 비관리자가 연동 설정에 접근하면 잠금 안내만 표시 (URL 변경 방지)
+        <div onClick={() => setShowSetup(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, background: "var(--panel-bg, #1e293b)", border: "1px solid var(--panel-border, #334155)", borderRadius: 16, padding: 24, textAlign: "center", color: "var(--text-main, #f1f5f9)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>🔒 연동 설정은 관리자 전용입니다</div>
+            <div style={{ fontSize: 13, color: "var(--text-dim, #94a3b8)", lineHeight: 1.6, marginBottom: 16 }}>서버 연동 주소는 관리자만 변경할 수 있습니다. 변경이 필요하면 관리자에게 요청하세요.</div>
+            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#6366f1", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
+          </div>
+        </div>
       )}
 
       {/* ===== 4. 품목 팝업 폼 ===== */}
