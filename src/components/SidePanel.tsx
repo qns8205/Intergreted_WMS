@@ -846,27 +846,37 @@ export default function SidePanel({
                                               onClick={() => onEditItem(item)}
                                               title="수정"
                                               style={{
-                                                background: "transparent",
-                                                border: "none",
-                                                color: TEXT_DIM,
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 5,
+                                                background: "rgba(99, 102, 241, 0.15)",
+                                                border: "1px solid rgba(99, 102, 241, 0.3)",
+                                                color: "#818cf8",
                                                 cursor: "pointer",
-                                                padding: 2,
+                                                padding: "7px 12px",
+                                                borderRadius: 8,
+                                                fontSize: 13,
+                                                fontWeight: 700,
                                               }}
                                             >
-                                              <Edit3 size={12} />
+                                              <Edit3 size={15} /> 편집
                                             </button>
                                             <button
                                               onClick={() => onDeleteItem(item.rowIndex)}
                                               title="삭제"
                                               style={{
-                                                background: "transparent",
-                                                border: "none",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                background: "rgba(239, 68, 68, 0.12)",
+                                                border: "1px solid rgba(239, 68, 68, 0.25)",
                                                 color: DANGER,
                                                 cursor: "pointer",
-                                                padding: 2,
+                                                padding: "7px 10px",
+                                                borderRadius: 8,
                                               }}
                                             >
-                                              <Trash2 size={12} />
+                                              <Trash2 size={15} />
                                             </button>
                                           </div>
                                         </div>

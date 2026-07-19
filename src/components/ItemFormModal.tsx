@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { InventoryItem, Rack } from "../types";
 import { parseLocation, resizeAndCompressImage } from "../utils/drive";
 import { Upload, X, Camera, ImageIcon } from "lucide-react";
@@ -140,7 +141,7 @@ export default function ItemFormModal({
     }
   }, [existingSubcategories.length]);
 
-  return (
+  return createPortal(
     <div
       style={{
         position: "fixed",
@@ -149,7 +150,7 @@ export default function ItemFormModal({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 50,
+        zIndex: 2000,
         backdropFilter: "blur(2px)",
       }}
       onPointerDown={(e) => {
@@ -159,9 +160,9 @@ export default function ItemFormModal({
       <div
         className="item-modal"
         style={{
-          width: 480,
-          maxWidth: "92vw",
-          maxHeight: "86vh",
+          width: 540,
+          maxWidth: "94vw",
+          maxHeight: "88vh",
           overflowY: "auto",
           background: PANEL,
           border: `1px solid ${PANEL_BORDER}`,
@@ -569,7 +570,8 @@ export default function ItemFormModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

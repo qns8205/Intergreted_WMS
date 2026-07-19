@@ -534,6 +534,11 @@ export default function BrowsePage({
               <button onClick={() => setCartOpen(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+              {cartOpen === "warehouse" ? (
+                <div style={{ marginBottom: "12px", padding: "10px 12px", background: C.warnSoft, borderRadius: "10px", fontSize: "12px", color: C.text, lineHeight: 1.5 }}>
+                  다음 화면에서 <b>대여</b> 또는 <b>소모</b>를 선택할 수 있습니다. 소모는 재고에서 차감되며 반납 대상이 아닙니다.
+                </div>
+              ) : null}
               {cartOpen === "scenario" ? (
                 sciCart.length === 0 ? <EmptyCart C={C} /> : sciCart.map((item, idx) => (
                   <CartRow key={item.id} C={C} name={item.name} sub={`ID: ${item.id}`} qty={item.quantity} onMinus={() => chgSci(idx, -1)} onPlus={() => chgSci(idx, 1)} onRemove={() => setSciCart(sciCart.filter((_, i) => i !== idx))} />
@@ -551,7 +556,7 @@ export default function BrowsePage({
                 disabled={(cartOpen === "scenario" ? sciCart : whCart).length === 0}
                 style={{ ...primaryBtn, opacity: (cartOpen === "scenario" ? sciCart : whCart).length === 0 ? 0.5 : 1 }}
               >
-                <HandHelping size={15} /> 대여 신청하기
+                <HandHelping size={15} /> {cartOpen === "warehouse" ? "대여 / 소모하기" : "대여 신청하기"}
               </button>
             </div>
           </div>

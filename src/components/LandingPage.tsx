@@ -79,91 +79,16 @@ export default function LandingPage({
             WebkitTextFillColor: "transparent",
           }}
         >
-          스마트 WMS 자재 자율 대여 및 관리 시스템
+          자재 대여 · 반납 · 관리
         </h1>
-        <p
-          style={{
-            fontSize: "15px",
-            color: isLightMode ? "#475569" : "#94a3b8",
-            lineHeight: 1.6,
-          }}
-        >
-          실시간 구글 스프레드시트 연동 기반 of 자재 관리 플랫폼입니다.<br />
-          대여·반납·열람·내 대여조회는 아래 네 가지 모드를 이용하세요. 창고 배치 및 재고 수정은 관리 모드에서 가능합니다.
-        </p>
-
-        {/* 구글 시트 연동 상태 인디케이터 */}
-        <div
-          style={{
-            marginTop: "20px",
-            display: "inline-flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: "8px",
-            padding: "12px 24px",
-            borderRadius: "16px",
-            background: connected ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.08)",
-            border: connected ? "1px solid rgba(16, 185, 129, 0.2)" : "1px solid rgba(245, 158, 11, 0.2)",
-            maxWidth: "600px",
-            margin: "20px auto 0 auto",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
-            <span
-              style={{
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                background: connected ? "#10b981" : "#f59e0b",
-                boxShadow: connected ? "0 0 8px #10b981" : "0 0 8px #f59e0b",
-              }}
-            />
-            <span style={{ fontWeight: 600, color: connected ? (isLightMode ? "#047857" : "#34d399") : (isLightMode ? "#b45309" : "#fbbf24") }}>
-              {connected ? "구글 스프레드시트 연동 상태 (실시간 동기화)" : "데모 가상 모드 (구글 시트 미연동)"}
-            </span>
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8", textAlign: "center" }}>
-              {connected 
-                ? `연동 주소: ${scriptUrl.substring(0, 35)}...`
-                : "타 기기/동료와 실시간으로 데이터를 공유하려면 구글 시트 연동을 마쳐야 합니다."}
-            </span>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenSetup();
-              }}
-              style={{
-                background: connected ? "rgba(99, 102, 241, 0.15)" : "#f59e0b",
-                color: connected ? "#6366f1" : "#ffffff",
-                border: "none",
-                borderRadius: "6px",
-                padding: "4px 10px",
-                fontSize: "11px",
-                fontWeight: 700,
-                cursor: "pointer",
-                transition: "all 0.2s",
-                boxShadow: connected ? "none" : "0 2px 4px rgba(0,0,0,0.1)",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = "scale(1.02)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = "scale(1)";
-              }}
-            >
-              {connected ? "연동 주소 변경" : "구글 시트 연동하기"}
-            </button>
-          </div>
-        </div>
       </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gridTemplateColumns: "repeat(2, 1fr)",
           gap: "16px",
-          maxWidth: "800px",
+          maxWidth: "620px",
           width: "100%",
         }}
       >
@@ -278,7 +203,7 @@ export default function LandingPage({
       <div
         onClick={() => onNavigate("login")}
         style={{
-          maxWidth: "800px",
+          maxWidth: "620px",
           width: "100%",
           marginTop: "16px",
           background: isLightMode ? "#ffffff" : "#1e293b",

@@ -9,6 +9,7 @@ import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import SidePanel from "./components/SidePanel";
 import ScenarioAdminPage from "./components/ScenarioAdminPage";
+import ScenarioLogsPage from "./components/ScenarioLogsPage";
 import DefectLogsPage from "./components/DefectLogsPage";
 import RentLogsPage from "./components/RentLogsPage";
 import LandingPage from "./components/LandingPage";
@@ -26,6 +27,7 @@ import {
   RefreshCw,
   Settings,
   Grid,
+  Home,
   MapPin,
   ChevronRight,
   ChevronLeft,
@@ -149,6 +151,7 @@ export default function App() {
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
+  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("warehouse");
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -380,6 +383,12 @@ export default function App() {
   const [defaultLocationForNewItem, setDefaultLocationForNewItem] = useState<string | null>(null);
   const [defaultSpecForNewItem, setDefaultSpecForNewItem] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+
+  // 탭(뷰)을 전환하면 열려 있던 품목 편집/추가 모달을 닫는다.
+  useEffect(() => {
+    setEditingItem(null);
+    setShowAddForm(false);
+  }, [currentView]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [highlightShelf, setHighlightShelf] = useState<string | null>(null);
@@ -1702,24 +1711,27 @@ export default function App() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div
-                className="mono"
+              <button
+                onClick={() => setCurrentView("landing")}
+                title="초기 화면으로"
                 style={{
-                  fontWeight: 900,
-                  fontSize: 16,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontWeight: 800,
+                  fontSize: 14,
                   color: "#ffffff",
-                  letterSpacing: "0.05em",
                   background: "#4f46e5",
-                  padding: "6px 12px",
-                  borderRadius: 4,
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  cursor: "pointer",
                   boxShadow: "0 2px 4px rgba(0,0,0,0.2)",
                 }}
               >
-                LOGISTIX™
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 15, color: "var(--text-main, #f8fafc)", letterSpacing: "-0.01em" }}>
-                WMS PRO
-              </div>
+                <Home size={16} />
+                {!sidebarCollapsed && <span>초기 화면</span>}
+              </button>
             </div>
             <button
               onClick={() => setSidebarCollapsed(true)}
@@ -1972,7 +1984,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여/반납 대장" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여/반납 대장 관리" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2256,6 +2268,55 @@ export default function App() {
             isLightMode={isLightMode}
           />
         ) : currentView === "rent" ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            {/* 시나리오 / 창고 전환 탭 */}
+            <div style={{ display: "flex", gap: "8px", padding: "16px 24px 0", background: "var(--canvas-bg, #020617)" }}>
+              {[
+                { key: "warehouse" as const, label: "창고 물품 대장" },
+                { key: "scenario" as const, label: "시나리오 물품 대장" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setRentLogTab(t.key)}
+                  style={{
+                    padding: "10px 18px",
+                    borderRadius: "10px 10px 0 0",
+                    border: "none",
+                    borderBottom: rentLogTab === t.key ? "2px solid #6366f1" : "2px solid transparent",
+                    background: rentLogTab === t.key ? (isLightMode ? "rgba(99,102,241,0.08)" : "rgba(99,102,241,0.15)") : "transparent",
+                    color: rentLogTab === t.key ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            {rentLogTab === "scenario" ? (
+              <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+                <ScenarioLogsPage
+                  scriptUrl={scriptUrl}
+                  connected={connected}
+                  isLightMode={isLightMode}
+                  isAdmin={isAdmin}
+                  showToast={showToast}
+                />
+              </div>
+            ) : (
+              <RentLogsPage
+                rentLogs={rentLogs}
+                inventory={inventory}
+                onAddRentLog={handleAddRentLog}
+                onClose={() => setCurrentView("monitor")}
+                isLightMode={isLightMode}
+                isAdmin={isAdmin}
+                showToast={showToast}
+              />
+            )}
+          </div>
+        ) : currentView === "__never_rent__" ? (
           <RentLogsPage
             rentLogs={rentLogs}
             inventory={inventory}
