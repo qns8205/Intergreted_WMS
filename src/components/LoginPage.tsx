@@ -52,10 +52,10 @@ export default function LoginPage({
     }
   };
 
-  const ACCENT = "#475569";
-  const ACCENT_LIGHT = "rgba(71, 85, 105, 0.08)";
+  const ACCENT = "#2563eb";
+  const ACCENT_LIGHT = "rgba(37, 99, 235, 0.08)";
   const TEXT_MAIN = isLightMode ? "#0f172a" : "#f1f5f9";
-  const TEXT_DIM = isLightMode ? "#475569" : "#94a3b8";
+  const TEXT_DIM = isLightMode ? "#2563eb" : "#94a3b8";
   const PANEL_BG = isLightMode ? "#ffffff" : "#1e293b";
   const INPUT_BG = isLightMode ? "#f8fafc" : "#0f172a";
   const BORDER_COLOR = isLightMode ? "#cbd5e1" : "#334155";
@@ -97,7 +97,7 @@ export default function LoginPage({
               width: "56px",
               height: "56px",
               borderRadius: "16px",
-              background: "rgba(71, 85, 105, 0.12)",
+              background: "rgba(37, 99, 235, 0.12)",
               color: ACCENT,
               marginBottom: "16px",
             }}
@@ -188,7 +188,7 @@ export default function LoginPage({
             }}
             style={{
               background: selectedMode === "admin"
-                ? (isLightMode ? "rgba(71, 85, 105, 0.05)" : "rgba(71, 85, 105, 0.15)")
+                ? (isLightMode ? "rgba(37, 99, 235, 0.05)" : "rgba(37, 99, 235, 0.15)")
                 : "transparent",
               border: `2px solid ${selectedMode === "admin" ? ACCENT : BORDER_COLOR}`,
               borderRadius: "20px",
@@ -201,12 +201,12 @@ export default function LoginPage({
               gap: "14px",
               transition: "all 0.2s ease-in-out",
               opacity: 1,
-              boxShadow: selectedMode === "admin" ? `0 10px 25px ${isLightMode ? "rgba(71, 85, 105, 0.15)" : "rgba(71, 85, 105, 0.3)"}` : "none",
+              boxShadow: selectedMode === "admin" ? `0 10px 25px ${isLightMode ? "rgba(37, 99, 235, 0.15)" : "rgba(37, 99, 235, 0.3)"}` : "none",
             }}
             onMouseEnter={(e) => {
               if (selectedMode === "admin") return;
               e.currentTarget.style.borderColor = ACCENT;
-              e.currentTarget.style.background = isLightMode ? "rgba(71, 85, 105, 0.02)" : "rgba(255, 255, 255, 0.03)";
+              e.currentTarget.style.background = isLightMode ? "rgba(37, 99, 235, 0.02)" : "rgba(255, 255, 255, 0.03)";
             }}
             onMouseLeave={(e) => {
               if (selectedMode === "admin") return;
@@ -257,8 +257,8 @@ export default function LoginPage({
             style={{
               fontSize: "12px",
               color: selectedMode === "admin" ? ACCENT : "#10b981",
-              background: selectedMode === "admin" ? "rgba(71, 85, 105, 0.08)" : "rgba(16, 185, 129, 0.08)",
-              border: selectedMode === "admin" ? "1px solid rgba(71, 85, 105, 0.2)" : "1px solid rgba(16, 185, 129, 0.2)",
+              background: selectedMode === "admin" ? "rgba(37, 99, 235, 0.08)" : "rgba(16, 185, 129, 0.08)",
+              border: selectedMode === "admin" ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(16, 185, 129, 0.2)",
               borderRadius: "12px",
               padding: "12px 14px",
               marginBottom: "24px",
@@ -279,8 +279,8 @@ export default function LoginPage({
             style={{
               fontSize: "12px",
               color: ACCENT,
-              background: "rgba(71, 85, 105, 0.08)",
-              border: "1px solid rgba(71, 85, 105, 0.2)",
+              background: "rgba(37, 99, 235, 0.08)",
+              border: "1px solid rgba(37, 99, 235, 0.2)",
               borderRadius: "12px",
               padding: "12px 14px",
               marginBottom: "20px",
@@ -410,7 +410,7 @@ export default function LoginPage({
                 fontWeight: 700,
                 cursor: "pointer",
                 transition: "background 0.2s",
-                boxShadow: "0 4px 12px rgba(71, 85, 105, 0.25)",
+                boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
                 marginTop: "4px",
               }}
               onMouseEnter={(e) => (e.currentTarget.style.background = "#334155")}

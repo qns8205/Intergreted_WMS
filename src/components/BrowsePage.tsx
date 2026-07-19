@@ -14,6 +14,7 @@ import {
   DEMO_OBJECT_ITEMS,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 
 type Affiliation = "cfgw" | "configds" | "other";
 type Step = "identity" | "menu" | "scenario" | "warehouse" | "mylookup";
@@ -51,10 +52,10 @@ export default function BrowsePage({
     cardSub: isLightMode ? "#f8fafc" : "#151d30",
     border: isLightMode ? "#e2e8f0" : "#334155",
     text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#475569",
-    accentSoft: "rgba(71, 85, 105, 0.15)",
-    accentText: isLightMode ? "#334155" : "#94a3b8",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: "rgba(37, 99, 235, 0.13)",
+    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -155,16 +156,13 @@ export default function BrowsePage({
   const sciSubs = sciCat && sciCatMap[sciCat] ? Array.from<string>(sciCatMap[sciCat]).sort() : [];
 
   const sciFiltered = useMemo(() => {
-    const q = sciSearch.trim().toLowerCase();
+    const q = sciSearch.trim();
     return sciItems.filter((it) => {
       if (sciCat && it.category !== sciCat) return false;
       if (sciSub && it.subcategory !== sciSub) return false;
       if (!q) return true;
       const slotPad = padSlot(it.rootSlot);
-      const qTrim = q.replace(/^0+/, "");
-      const slotHit = slotPad.includes(q) || (!!qTrim && slotPad.replace(/^0+/, "") === qTrim);
-      return it.name.toLowerCase().includes(q) || it.id.includes(q) ||
-        (it.category || "").toLowerCase().includes(q) || (it.subcategory || "").toLowerCase().includes(q) || slotHit;
+      return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
     });
   }, [sciItems, sciSearch, sciCat, sciSub]);
 
@@ -182,13 +180,13 @@ export default function BrowsePage({
   const whSlots = whRack && whRackMap[whRack] ? Array.from<string>(whRackMap[whRack]).sort() : [];
 
   const whFiltered = useMemo(() => {
-    const q = whSearch.trim().toLowerCase();
+    const q = whSearch.trim();
     return whItems.filter((it) => {
       const { rack, slot } = parseRackSlot(it.location);
       if (whRack && rack !== whRack) return false;
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
-      return it.name.toLowerCase().includes(q);
+      return smartMatch([it.name, it.location, it.keywords], q);
     }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
 
@@ -560,7 +558,7 @@ export default function BrowsePage({
       {(step === "scenario" || step === "warehouse") && (step === "scenario" ? sciCartCount : whCartCount) > 0 ? (
         <button
           onClick={() => setCartOpen(step as Kind)}
-          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(71, 85, 105,0.5)" }}
+          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(37, 99, 235,0.5)" }}
         >
           <ShoppingCart size={18} /> 장바구니
           <span style={{ background: "#fff", color: C.accent, borderRadius: "999px", padding: "1px 9px", fontSize: "12px", fontWeight: 800 }}>{step === "scenario" ? sciCartCount : whCartCount}</span>
@@ -661,7 +659,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
 
 function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus }: any) {
   return (
-    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(71, 85, 105,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
+    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
         {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>

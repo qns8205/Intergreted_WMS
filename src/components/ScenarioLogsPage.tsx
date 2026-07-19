@@ -7,6 +7,7 @@ import {
   ScenarioLogEntry, ReturnRequest, padSlot,
   fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
 } from "../utils/borrowApi";
+import { smartMatch } from "../utils/search";
 
 interface Props {
   scriptUrl: string;
@@ -24,10 +25,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     cardSub: isLightMode ? "#f8fafc" : "#151d30",
     border: isLightMode ? "#e2e8f0" : "#334155",
     text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#475569",
-    accentSoft: "rgba(71, 85, 105, 0.15)",
-    accentText: isLightMode ? "#334155" : "#94a3b8",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: "rgba(37, 99, 235, 0.13)",
+    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -84,18 +85,14 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   }, [logs]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     return logs.filter((it) => {
       if (kindFilter !== "all" && it.sheetType !== kindFilter) return false;
       if (statusFilter === "unreturned" && it.returned) return false;
       if (statusFilter === "returned" && !it.returned) return false;
       if (borrowerFilter && it.borrowerName !== borrowerFilter) return false;
       if (!q) return true;
-      return it.itemLabel.toLowerCase().includes(q) ||
-        it.borrowerName.toLowerCase().includes(q) ||
-        (it.scenarioId || "").toLowerCase().includes(q) ||
-        (it.borrowPurpose || "").toLowerCase().includes(q) ||
-        padSlot(it.location).includes(q);
+      return smartMatch([it.itemLabel, it.borrowerName, it.scenarioId, it.borrowPurpose, it.location, padSlot(it.location)], q);
     });
   }, [logs, search, kindFilter, statusFilter, borrowerFilter]);
 

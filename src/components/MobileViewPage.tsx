@@ -21,6 +21,7 @@ import {
   Upload,
 } from "lucide-react";
 import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
 import { compareRackSlot } from "../utils/borrowApi";
 
@@ -105,6 +106,7 @@ export default function MobileViewPage({
   const [regStock, setRegStock] = useState<string>("0");
   const [regManager, setRegManager] = useState(defaultManagerName);
   const [regNote, setRegNote] = useState("");
+  const [regKeywords, setRegKeywords] = useState("");
   const [regPhoto, setRegPhoto] = useState("");
   const [regLink, setRegLink] = useState("N/A");
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -234,8 +236,8 @@ export default function MobileViewPage({
   }, []);
 
   // ---------- 색상 토큰 (기존 데스크탑 배색과 동일하게 유지) ----------
-  const ACCENT = "#334155";
-  const ACCENT_LIGHT = "#94a3b8";
+  const ACCENT = "#2563eb";
+  const ACCENT_LIGHT = "#60a5fa";
   const GREEN = "#10b981";
   const GREEN_LIGHT = "#34d399";
   const DANGER = "#ef4444";
@@ -247,7 +249,7 @@ export default function MobileViewPage({
   const TEXT_MAIN = isLightMode ? "#0f172a" : "#f1f5f9";
   const TEXT_DIM = isLightMode ? "#64748b" : "#94a3b8";
   const INPUT_BG = isLightMode ? "#f8fafc" : "#0f172a";
-  const MODE_COLOR = mode === "대여" ? ACCENT : mode === "반납" ? GREEN : mode === "등록" ? "#475569" : AMBER;
+  const MODE_COLOR = mode === "대여" ? ACCENT : mode === "반납" ? GREEN : mode === "등록" ? "#2563eb" : AMBER;
   const MODE_COLOR_LIGHT = mode === "대여" ? ACCENT_LIGHT : mode === "반납" ? GREEN_LIGHT : mode === "등록" ? "#94a3b8" : "#fbbf24";
 
   // ---------- 대여 가능 여부: 숫자 재고가 0 이하일 때만 차단, N/A(문자/없음)는 항상 대여 가능 ----------
@@ -257,10 +259,7 @@ export default function MobileViewPage({
   // ---------- 대여 탭: 전체 재고 검색 (랙 순서 정렬) ----------
   const filteredInventory = useMemo(() => {
     const base = !searchQuery.trim() ? inventory : inventory.filter(
-      (item) =>
-        isFuzzyMatch(item.name || "", searchQuery) ||
-        isFuzzyMatch(item.location || "", searchQuery) ||
-        (item.spec && isFuzzyMatch(item.spec, searchQuery))
+      (item) => smartMatch([item.name, item.location, item.spec, item.keywords], searchQuery)
     );
     return [...base].sort((a, b) => compareRackSlot(a.location, b.location));
   }, [inventory, searchQuery]);
@@ -269,12 +268,7 @@ export default function MobileViewPage({
   const filteredDefectLogs = useMemo(() => {
     if (!searchQuery.trim()) return defectLogs;
     return defectLogs.filter(
-      (log) =>
-        isFuzzyMatch(log.name || "", searchQuery) ||
-        isFuzzyMatch(log.defectType || "", searchQuery) ||
-        isFuzzyMatch(log.note || "", searchQuery) ||
-        isFuzzyMatch(log.actionTaken || "", searchQuery) ||
-        isFuzzyMatch(log.manager || "", searchQuery)
+      (log) => smartMatch([log.name, log.defectType, log.note, log.actionTaken, log.manager], searchQuery)
     );
   }, [defectLogs, searchQuery]);
 
@@ -315,10 +309,7 @@ export default function MobileViewPage({
   const filteredOutstanding = useMemo(() => {
     if (!searchQuery.trim()) return outstandingRentals;
     return outstandingRentals.filter(
-      (o) =>
-        isFuzzyMatch(o.name, searchQuery) ||
-        isFuzzyMatch(o.location, searchQuery) ||
-        isFuzzyMatch(o.user, searchQuery)
+      (o) => smartMatch([o.name, o.location, o.user], searchQuery)
     );
   }, [outstandingRentals, searchQuery]);
 
@@ -519,6 +510,7 @@ export default function MobileViewPage({
         stock: numericStock,
         manager: regManager.trim(),
         note: regNote.trim(),
+        keywords: regKeywords.trim(),
         photo: regPhoto.trim(),
         link: regLink.trim() || "N/A",
         updatedAt: formatTimestampLocal(),
@@ -534,6 +526,7 @@ export default function MobileViewPage({
         setRegSpec("");
         setRegStock("0");
         setRegNote("");
+        setRegKeywords("");
         setRegPhoto("");
         setRegLink("N/A");
       } else {
@@ -771,8 +764,8 @@ export default function MobileViewPage({
                 height: "36px",
                 padding: "0 12px",
                 borderRadius: "10px",
-                background: "rgba(71, 85, 105,0.15)",
-                border: "1px solid rgba(71, 85, 105,0.3)",
+                background: "rgba(37, 99, 235,0.15)",
+                border: "1px solid rgba(37, 99, 235,0.3)",
                 color: "#94a3b8",
                 display: "flex",
                 alignItems: "center",
@@ -888,13 +881,13 @@ export default function MobileViewPage({
                   borderRadius: "11px",
                   fontSize: "12px",
                   fontWeight: 800,
-                  background: mode === "등록" ? "#475569" : "transparent",
+                  background: mode === "등록" ? "#2563eb" : "transparent",
                   color: mode === "등록" ? "#ffffff" : TEXT_DIM,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "4px",
-                  boxShadow: mode === "등록" ? "0 6px 14px rgba(71, 85, 105,0.3)" : "none",
+                  boxShadow: mode === "등록" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
                 }}
               >
                 📦 등록
@@ -1227,7 +1220,7 @@ export default function MobileViewPage({
              ========================================================= */
           <form onSubmit={handleRegisterItemSubmit} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-              <Package size={20} color="#475569" />
+              <Package size={20} color="#2563eb" />
               <div style={{ fontSize: "16px", fontWeight: 800, color: TEXT_MAIN }}>
                 📦 신규 물품 등록하기
               </div>
@@ -1256,7 +1249,7 @@ export default function MobileViewPage({
                   onClick={() => setRegIsCustomLoc(!regIsCustomLoc)}
                   style={{
                     fontSize: "11px",
-                    color: "#475569",
+                    color: "#2563eb",
                     background: "transparent",
                     border: "none",
                     cursor: "pointer",
@@ -1341,7 +1334,7 @@ export default function MobileViewPage({
                     onClick={() => setRegStock("N/A")}
                     style={{
                       padding: "0 12px",
-                      background: regStock === "N/A" ? "#475569" : "rgba(255,255,255,0.05)",
+                      background: regStock === "N/A" ? "#2563eb" : "rgba(255,255,255,0.05)",
                       color: regStock === "N/A" ? "#ffffff" : TEXT_DIM,
                       border: `1px solid ${BORDER}`,
                       borderRadius: "12px",
@@ -1378,6 +1371,18 @@ export default function MobileViewPage({
                   placeholder="비고"
                   value={regNote}
                   onChange={(e) => setRegNote(e.target.value)}
+                  style={inputBaseStyle}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>🔎 한글 검색어 (선택)</label>
+                <input
+                  className="mvp-input"
+                  type="text"
+                  placeholder="예: 물병, 생수 (영어 품목의 한글 별칭)"
+                  value={regKeywords}
+                  onChange={(e) => setRegKeywords(e.target.value)}
                   style={inputBaseStyle}
                 />
               </div>
@@ -1426,7 +1431,7 @@ export default function MobileViewPage({
                       style={{ width: "38px", height: "38px", borderRadius: "6px", objectFit: "cover" }}
                     />
                     <div style={{ textAlign: "left" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#475569", display: "block" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#2563eb", display: "block" }}>
                         📸 이미지 업로드 준비 완료
                       </span>
                       <span style={{ fontSize: "10px", color: TEXT_DIM, display: "block" }}>
@@ -1491,12 +1496,12 @@ export default function MobileViewPage({
                 width: "100%",
                 padding: "15px",
                 borderRadius: "14px",
-                background: "#475569",
+                background: "#2563eb",
                 color: "#ffffff",
                 fontSize: "15px",
                 fontWeight: 800,
                 marginTop: "10px",
-                boxShadow: "0 6px 20px rgba(71, 85, 105,0.25)",
+                boxShadow: "0 6px 20px rgba(37, 99, 235,0.25)",
               }}
             >
               {regSubmitting ? "실시간 클라우드 등록 중..." : "📦 신규 물품 정식 등록"}
@@ -2019,7 +2024,7 @@ export default function MobileViewPage({
                         fontSize: "11.5px",
                         fontWeight: 700,
                         color: ACCENT_LIGHT,
-                        background: "rgba(71, 85, 105,0.12)",
+                        background: "rgba(37, 99, 235,0.12)",
                         padding: "4px 10px",
                         borderRadius: "999px",
                         display: "inline-flex",

@@ -16,6 +16,7 @@ import {
   loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 
 /* ══════════════════════════════ 타입 ══════════════════════════════ */
 
@@ -61,10 +62,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     cardSub: isLightMode ? "#f8fafc" : "#151d30",
     border: isLightMode ? "#e2e8f0" : "#334155",
     text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#475569",
-    accentSoft: "rgba(71, 85, 105, 0.15)",
-    accentText: isLightMode ? "#334155" : "#94a3b8",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: "rgba(37, 99, 235, 0.13)",
+    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -235,17 +236,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (cat && it.category !== cat) return false;
     if (sub && it.subcategory !== sub) return false;
     if (!q) return true;
-    const query = q.toLowerCase();
-    const slotRaw = String(it.rootSlot ?? "");
-    const slotPad = padSlot(slotRaw);
-    const slotTrim = slotPad.replace(/^0+/, "");
-    const qTrim = query.replace(/^0+/, "");
-    const slotHit = !!slotRaw && (slotRaw.toLowerCase().includes(query) || slotPad.includes(query) || (!!qTrim && slotTrim === qTrim));
-    return (
-      it.name.toLowerCase().includes(query) || it.id.includes(query) ||
-      (it.category || "").toLowerCase().includes(query) ||
-      (it.subcategory || "").toLowerCase().includes(query) || slotHit
-    );
+    const slotPad = padSlot(String(it.rootSlot ?? ""));
+    return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
   }
 
   /* ══════════════════════ 공용 스타일/서브컴포넌트 ══════════════════════ */
@@ -653,12 +645,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const normalizeSearch = (s: string) => s.normalize("NFC").replace(/\s+/g, "").toLowerCase();
 
   function itemMatchesQuery(it: UnreturnedItem, query: string): boolean {
-    if (normalizeSearch(it.itemLabel || "").includes(query)) return true;
-    const slotRaw = String(it.location ?? "");
-    if (!slotRaw) return false;
-    const slotPad = padSlot(slotRaw);
-    const qTrim = query.replace(/^0+/, "");
-    return slotPad.includes(query) || (!!qTrim && slotPad.replace(/^0+/, "") === qTrim);
+    const slotPad = padSlot(String(it.location ?? ""));
+    return smartMatch([it.itemLabel, it.location, slotPad], query);
   }
 
   const sumQty = (items: UnreturnedItem[]) => items.reduce((n, it) => n + (Math.max(1, parseInt(String(it.quantity), 10) || 1)), 0);
@@ -678,13 +666,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   const returnTree = useMemo(() => {
-    const query = normalizeSearch(returnSearch.trim());
+    const query = returnSearch.trim();
     const sorted = unreturned.slice().sort((a, b) => (a.borrowDate || "") < (b.borrowDate || "") ? -1 : (a.borrowDate || "") > (b.borrowDate || "") ? 1 : 0);
     const byBorrower = groupBy<UnreturnedItem>(sorted, (it) => it.borrowerName || "(이름 없음)");
     const visible: { borrower: string; items: UnreturnedItem[] }[] = [];
     byBorrower.forEach(({ key: borrower, items }) => {
       if (!query) { visible.push({ borrower, items }); return; }
-      const borrowerMatch = normalizeSearch(borrower).includes(query);
+      const borrowerMatch = smartMatch([borrower], query);
       const matched = borrowerMatch ? items : items.filter((it) => itemMatchesQuery(it, query));
       if (borrowerMatch || matched.length) visible.push({ borrower, items: matched });
     });
@@ -892,13 +880,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const whRacks = useMemo(() => Object.keys(whCatMapRacks).sort(), [whCatMapRacks]);
   const whSlots = whRack && whCatMapRacks[whRack] ? Array.from<string>(whCatMapRacks[whRack]).sort() : [];
   const whFiltered = useMemo(() => {
-    const q = whSearch.trim().toLowerCase();
+    const q = whSearch.trim();
     return whItems.filter((it) => {
       const { rack, slot } = parseRackSlot(it.location);
       if (whRack && rack !== whRack) return false;
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
-      return it.name.toLowerCase().includes(q);
+      return smartMatch([it.name, it.location, it.keywords], q);
     }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
   const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);

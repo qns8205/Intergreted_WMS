@@ -270,7 +270,7 @@ export default function RentalPage({
             gap: "6px",
             background: isLightMode ? "#ffffff" : "#1e293b",
             border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-            color: isLightMode ? "#475569" : "#94a3b8",
+            color: isLightMode ? "#2563eb" : "#94a3b8",
             fontSize: "13px",
             fontWeight: 700,
             cursor: "pointer",
@@ -323,7 +323,7 @@ export default function RentalPage({
             <span style={{ fontWeight: 700, color: connected ? (isLightMode ? "#047857" : "#34d399") : (isLightMode ? "#b45309" : "#fbbf24"), marginRight: "8px" }}>
               {connected ? "구글 시트 실시간 연동 활성화" : "데모 가상 모드 작동 중"}
             </span>
-            <span style={{ color: isLightMode ? "#475569" : "#94a3b8", fontSize: "12px" }}>
+            <span style={{ color: isLightMode ? "#2563eb" : "#94a3b8", fontSize: "12px" }}>
               {connected 
                 ? `(10초 주기 실시간 자동 동기화 중 | 최근 동기화: ${lastSync ? lastSync.toLocaleTimeString() : "진행 중..."})`
                 : "(스프레드시트 미연동 상태로, 기록이 파일에 보존되지 않습니다)"}
@@ -333,8 +333,8 @@ export default function RentalPage({
         <button
           onClick={onOpenSetup}
           style={{
-            background: connected ? "rgba(71, 85, 105, 0.15)" : "#f59e0b",
-            color: connected ? "#475569" : "#ffffff",
+            background: connected ? "rgba(37, 99, 235, 0.15)" : "#f59e0b",
+            color: connected ? "#2563eb" : "#ffffff",
             border: "none",
             borderRadius: "8px",
             padding: "6px 14px",
@@ -380,7 +380,7 @@ export default function RentalPage({
             
             {/* 대여 / 반납 / 소모 토글 */}
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
                 구분
               </label>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", background: isLightMode ? "#f1f5f9" : "#0f172a", padding: "4px", borderRadius: "10px" }}>
@@ -395,7 +395,7 @@ export default function RentalPage({
                     border: "none",
                     cursor: "pointer",
                     background: actionType === "대여" ? "#334155" : "transparent",
-                    color: actionType === "대여" ? "#ffffff" : (isLightMode ? "#475569" : "#94a3b8"),
+                    color: actionType === "대여" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
                     transition: "all 0.2s",
                   }}
                 >
@@ -412,7 +412,7 @@ export default function RentalPage({
                     border: "none",
                     cursor: "pointer",
                     background: actionType === "반납" ? "#10b981" : "transparent",
-                    color: actionType === "반납" ? "#ffffff" : (isLightMode ? "#475569" : "#94a3b8"),
+                    color: actionType === "반납" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
                     transition: "all 0.2s",
                   }}
                 >
@@ -429,7 +429,7 @@ export default function RentalPage({
                     border: "none",
                     cursor: "pointer",
                     background: actionType === "소모" ? "#f59e0b" : "transparent",
-                    color: actionType === "소모" ? "#ffffff" : (isLightMode ? "#475569" : "#94a3b8"),
+                    color: actionType === "소모" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
                     transition: "all 0.2s",
                   }}
                 >
@@ -440,7 +440,7 @@ export default function RentalPage({
 
             {/* 대여자 / 반납자 / 소모자 이름 */}
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
                 {actionType === "대여" ? "대여자" : actionType === "반납" ? "반납자" : "소모자"} <span style={{ color: "#ef4444" }}>*</span>
               </label>
               <div style={{ position: "relative" }}>
@@ -467,7 +467,7 @@ export default function RentalPage({
             {/* 대여 품목 선택 드롭다운 및 검색창 */}
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
                   품목 검색 및 선택 <span style={{ color: "#ef4444" }}>*</span>
                 </label>
                 <button
@@ -479,7 +479,7 @@ export default function RentalPage({
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#475569",
+                    color: "#2563eb",
                     fontSize: "11px",
                     fontWeight: 700,
                     cursor: "pointer",
@@ -492,9 +492,9 @@ export default function RentalPage({
               </div>
               
               {isCustomMode ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px", background: isLightMode ? "rgba(71, 85, 105, 0.03)" : "rgba(71, 85, 105, 0.05)", padding: "14px", borderRadius: "12px", border: `1px dashed ${isLightMode ? "#cbd5e1" : "#334155"}` }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px", background: isLightMode ? "rgba(37, 99, 235, 0.03)" : "rgba(37, 99, 235, 0.05)", padding: "14px", borderRadius: "12px", border: `1px dashed ${isLightMode ? "#cbd5e1" : "#334155"}` }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>임시 품목명</span>
+                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>임시 품목명</span>
                     <input
                       type="text"
                       placeholder="예: 특수 고정용 고무 밴드"
@@ -513,7 +513,7 @@ export default function RentalPage({
                     />
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>보관 위치</span>
+                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>보관 위치</span>
                     <input
                       type="text"
                       placeholder="예: 기타, N/A, A-1-1"
@@ -602,8 +602,8 @@ export default function RentalPage({
                             width: "30px",
                             height: "30px",
                             borderRadius: "6px",
-                            background: "rgba(71, 85, 105,0.1)",
-                            color: "#475569",
+                            background: "rgba(37, 99, 235,0.1)",
+                            color: "#2563eb",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -667,8 +667,8 @@ export default function RentalPage({
                           padding: "10px 12px",
                           borderBottom: `1px solid ${isLightMode ? "#cbd5e1" : "#334155"}`,
                           cursor: "pointer",
-                          background: isLightMode ? "rgba(71, 85, 105, 0.05)" : "rgba(71, 85, 105, 0.12)",
-                          color: "#475569",
+                          background: isLightMode ? "rgba(37, 99, 235, 0.05)" : "rgba(37, 99, 235, 0.12)",
+                          color: "#2563eb",
                         }}
                       >
                         <div
@@ -676,8 +676,8 @@ export default function RentalPage({
                             width: "36px",
                             height: "36px",
                             borderRadius: "8px",
-                            background: "rgba(71, 85, 105, 0.15)",
-                            color: "#475569",
+                            background: "rgba(37, 99, 235, 0.15)",
+                            color: "#2563eb",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
@@ -718,7 +718,7 @@ export default function RentalPage({
                               borderBottom: `1px solid ${isLightMode ? "#f1f5f9" : "#222f4b"}`,
                               cursor: "pointer",
                               background: isSelected
-                                ? "rgba(71, 85, 105,0.08)"
+                                ? "rgba(37, 99, 235,0.08)"
                                 : "transparent",
                               transition: "background 0.2s",
                             }}
@@ -749,8 +749,8 @@ export default function RentalPage({
                                     width: "36px",
                                     height: "36px",
                                     borderRadius: "8px",
-                                    background: "rgba(71, 85, 105,0.08)",
-                                    color: "#475569",
+                                    background: "rgba(37, 99, 235,0.08)",
+                                    color: "#2563eb",
                                     display: "flex",
                                     alignItems: "center",
                                     justifyContent: "center",
@@ -762,11 +762,11 @@ export default function RentalPage({
                               <div style={{ textAlign: "left" }}>
                                 <div style={{ fontSize: "13px", fontWeight: 700, color: isLightMode ? "#1e293b" : "#f1f5f9" }}>{item.name}</div>
                                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                                  위치: <span style={{ color: "#475569", fontWeight: 600 }}>{item.location}</span> | 재고: <span style={{ color: "#10b981", fontWeight: 600 }}>{item.stock ?? 0}개</span>
+                                  위치: <span style={{ color: "#2563eb", fontWeight: 600 }}>{item.location}</span> | 재고: <span style={{ color: "#10b981", fontWeight: 600 }}>{item.stock ?? 0}개</span>
                                 </div>
                               </div>
                             </div>
-                            {isSelected && <Check size={16} style={{ color: "#475569" }} />}
+                            {isSelected && <Check size={16} style={{ color: "#2563eb" }} />}
                           </div>
                         );
                       })
@@ -779,7 +779,7 @@ export default function RentalPage({
 
             {/* 수량 입력 */}
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
                 대여/반납 수량 <span style={{ color: "#ef4444" }}>*</span>
               </label>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -791,7 +791,7 @@ export default function RentalPage({
                     borderRadius: "10px",
                     background: isLightMode ? "#f1f5f9" : "#0f172a",
                     border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    color: isLightMode ? "#475569" : "#f1f5f9",
+                    color: isLightMode ? "#2563eb" : "#f1f5f9",
                     cursor: "pointer",
                     fontSize: "14px",
                     fontWeight: "bold",
@@ -831,7 +831,7 @@ export default function RentalPage({
                     borderRadius: "10px",
                     background: isLightMode ? "#f1f5f9" : "#0f172a",
                     border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    color: isLightMode ? "#475569" : "#f1f5f9",
+                    color: isLightMode ? "#2563eb" : "#f1f5f9",
                     cursor: "pointer",
                     fontSize: "14px",
                     fontWeight: "bold",
@@ -865,7 +865,7 @@ export default function RentalPage({
                 fontWeight: 700,
                 cursor: "pointer",
                 transition: "all 0.2s",
-                boxShadow: `0 4px 14px ${actionType === "대여" ? "rgba(79, 70, 229, 0.3)" : actionType === "소모" ? "rgba(245, 158, 11, 0.3)" : "rgba(16, 185, 129, 0.3)"}`,
+                boxShadow: `0 4px 14px ${actionType === "대여" ? "rgba(37, 99, 235, 0.3)" : actionType === "소모" ? "rgba(245, 158, 11, 0.3)" : "rgba(16, 185, 129, 0.3)"}`,
                 opacity: submitting ? 0.5 : 1,
                 marginTop: "10px",
                 display: "flex",
@@ -925,7 +925,7 @@ export default function RentalPage({
                   borderRadius: "16px",
                   padding: "40px 20px",
                   textAlign: "center",
-                  color: isLightMode ? "#94a3b8" : "#475569",
+                  color: isLightMode ? "#94a3b8" : "#2563eb",
                   fontSize: "13px",
                 }}
               >
@@ -997,7 +997,7 @@ export default function RentalPage({
           {/* 최종 제출 폼 */}
           <form onSubmit={handleSubmit} style={{ marginTop: "auto", borderTop: `1px solid ${isLightMode ? "#e2e8f0" : "#222f4b"}`, paddingTop: "24px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", fontSize: "14px" }}>
-              <span style={{ fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>총 대기 품목</span>
+              <span style={{ fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>총 대기 품목</span>
               <span style={{ fontWeight: 800, color: "#334155" }}>{cart.length}개 건</span>
             </div>
 
@@ -1014,7 +1014,7 @@ export default function RentalPage({
                 fontSize: "15px",
                 fontWeight: 800,
                 cursor: (submitting || cart.length === 0) ? "not-allowed" : "pointer",
-                boxShadow: "0 10px 15px -3px rgba(79, 70, 229, 0.3)",
+                boxShadow: "0 10px 15px -3px rgba(37, 99, 235, 0.3)",
                 opacity: (submitting || cart.length === 0) ? 0.5 : 1,
                 display: "flex",
                 alignItems: "center",
@@ -1070,7 +1070,7 @@ export default function RentalPage({
                 </div>
               )}
               <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: "11px", color: "#475569", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
+                <div style={{ fontSize: "11px", color: "#2563eb", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
                 <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedItem.name}</div>
                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
                   위치: {selectedItem.location} | 현재고: {selectedItem.stock ?? 0}개
@@ -1078,7 +1078,7 @@ export default function RentalPage({
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#475569", textAlign: "center" }}>
+            <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#2563eb", textAlign: "center" }}>
               품목을 선택하면 해당 자재 정보의 요약이 여기에 표출됩니다.
             </div>
           )}

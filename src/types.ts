@@ -9,6 +9,8 @@ export interface InventoryItem {
   manager: string;
   note: string;
   spec: string; // Column I - 규격 및 추가 정보
+  keywords?: string; // Column K - 한글 검색어 (검색 보조용)
+  manager2?: string; // Column J - 담당자 2 (보존용)
 }
 
 export interface DefectLog {

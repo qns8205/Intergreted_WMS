@@ -285,6 +285,7 @@ export interface WarehouseItem {
   spec: string;
   note: string;
   manager: string;
+  keywords?: string; // 한글 검색어 (검색 보조)
 }
 
 // 위치 문자열 "A-01" → { rack: "A", slot: "01" }

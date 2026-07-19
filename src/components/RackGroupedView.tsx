@@ -2,6 +2,7 @@ import React, { useState, useMemo } from "react";
 import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
+import { smartMatch } from "../utils/search";
 import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes } from "lucide-react";
 
 interface Props {
@@ -19,9 +20,9 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     border: isLightMode ? "#e6e9ef" : "#26324a",
     text: isLightMode ? "#111827" : "#f1f5f9",
     label: isLightMode ? "#626c7d" : "#8b98ac",
-    accent: "#475569",
-    accentSoft: "rgba(71,85,105,0.14)",
-    accentText: isLightMode ? "#334155" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: "rgba(37, 99, 235, 0.13)",
+    accentText: isLightMode ? "#1d4ed8" : "#60a5fa",
     warn: isLightMode ? "#b45309" : "#fbbf24",
     warnSoft: "rgba(245,158,11,0.12)",
   };
@@ -34,10 +35,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((it) => {
       if (q) {
-        const hit = (it.name || "").toLowerCase().includes(q) ||
-          (it.location || "").toLowerCase().includes(q) ||
-          (it.spec || "").toLowerCase().includes(q);
-        if (!hit) return;
+        if (!smartMatch([it.name, it.location, it.spec, it.keywords], q)) return;
       }
       const { rack } = parseLocation(it.location);
       const key = rack || "미지정";

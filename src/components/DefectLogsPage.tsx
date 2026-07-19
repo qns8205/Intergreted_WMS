@@ -3,6 +3,7 @@ import { InventoryItem, DefectLog } from "../types";
 import { AlertTriangle, Calendar, User, MapPin, Clipboard, Plus, Search, ArrowLeft, FileText, Check, Camera, Upload, X, ImageIcon } from "lucide-react";
 
 import { isFuzzyMatch, resizeAndCompressImage } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 import { parseDateString } from "../utils/date";
 
 interface DefectLogsPageProps {
@@ -17,7 +18,7 @@ interface DefectLogsPageProps {
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#475569";
+const ACCENT = "#2563eb";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 
@@ -303,11 +304,7 @@ export default function DefectLogsPage({
       .filter((log) => {
         const matchesQuery =
           !filterQuery.trim() ||
-          isFuzzyMatch(log.name || "", filterQuery) ||
-          isFuzzyMatch(log.location || "", filterQuery) ||
-          isFuzzyMatch(log.manager || "", filterQuery) ||
-          isFuzzyMatch(log.note || "", filterQuery) ||
-          (log.actionTaken && isFuzzyMatch(log.actionTaken, filterQuery));
+          smartMatch([log.name, log.location, log.manager, log.note, log.defectType, log.actionTaken], filterQuery);
 
         const matchesType = filterType === "전체" || log.defectType === filterType;
 
@@ -785,7 +782,7 @@ export default function DefectLogsPage({
                     height: "90px",
                     border: `1px dashed ${isDragging ? ACCENT : PANEL_BORDER}`,
                     borderRadius: "8px",
-                    background: isDragging ? "rgba(71, 85, 105, 0.05)" : "var(--input-bg, #0f172a)",
+                    background: isDragging ? "rgba(37, 99, 235, 0.05)" : "var(--input-bg, #0f172a)",
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
@@ -1093,7 +1090,7 @@ export default function DefectLogsPage({
                               bg = "rgba(245, 158, 11, 0.15)";
                               color = "#f59e0b";
                             } else if (typeVal === "기능 오작동" || typeVal === "기능 이상") {
-                              bg = "rgba(71, 85, 105, 0.15)";
+                              bg = "rgba(37, 99, 235, 0.15)";
                               color = ACCENT;
                             } else if (typeVal === "수량 상이") {
                               bg = "rgba(16, 185, 129, 0.15)";

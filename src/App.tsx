@@ -1661,10 +1661,10 @@ export default function App() {
                 onClick={() => { if (t.view !== "scenario") setCurrentView(t.view as any); }}
                 style={{
                   padding: "10px 2px", borderRadius: "11px", fontSize: "12px", fontWeight: 800, border: "none",
-                  background: t.view === "scenario" ? "#475569" : "transparent",
+                  background: t.view === "scenario" ? "#2563eb" : "transparent",
                   color: t.view === "scenario" ? "#ffffff" : "var(--text-dim, #94a3b8)",
                   cursor: "pointer",
-                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(71, 85, 105,0.3)" : "none",
+                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
                 }}
               >
                 {t.label}
@@ -1710,8 +1710,8 @@ export default function App() {
           --text-main: #f1f5f9;
           --text-dim: #8b98ac;
           --input-bg: #0f172a;
-          --accent: #475569;
-          --accent-soft: rgba(71, 85, 105,0.14);
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.16);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
@@ -1727,8 +1727,8 @@ export default function App() {
           --text-main: #111827;
           --text-dim: #626c7d;
           --input-bg: #f4f6f9;
-          --accent: #475569;
-          --accent-soft: rgba(71, 85, 105,0.10);
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.10);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
@@ -1748,7 +1748,7 @@ export default function App() {
         ::-webkit-scrollbar-track { background: transparent; }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(71, 85, 105,0.4); } 100% { box-shadow: 0 0 0 14px rgba(71, 85, 105,0); } }
+        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(37, 99, 235,0.4); } 100% { box-shadow: 0 0 0 14px rgba(37, 99, 235,0); } }
         .canvas-bg {
           user-select: none;
         }
@@ -1904,12 +1904,12 @@ export default function App() {
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "monitor" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(71, 85, 105, 0.15)") : "transparent",
-              color: currentView === "monitor" ? (isLightMode ? "#334155" : "#94a3b8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "monitor" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "monitor" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "monitor" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(71, 85, 105, 0.3)") : "1px solid transparent",
+              border: currentView === "monitor" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <Package size={18} />
@@ -1927,12 +1927,12 @@ export default function App() {
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "scenario" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(71, 85, 105, 0.15)") : "transparent",
-              color: currentView === "scenario" ? (isLightMode ? "#334155" : "#94a3b8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "scenario" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "scenario" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(71, 85, 105, 0.3)") : "1px solid transparent",
+              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <Grid size={18} />
@@ -1950,12 +1950,12 @@ export default function App() {
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "rent" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(71, 85, 105, 0.15)") : "transparent",
-              color: currentView === "rent" ? (isLightMode ? "#334155" : "#94a3b8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "rent" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "rent" ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "rent" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(71, 85, 105, 0.3)") : "1px solid transparent",
+              border: currentView === "rent" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <ClipboardList size={18} />
@@ -2090,9 +2090,9 @@ export default function App() {
               fontWeight: 700,
               padding: "4px 10px",
               borderRadius: "12px",
-              background: isAdmin ? "rgba(16, 185, 129, 0.12)" : "rgba(71, 85, 105, 0.12)",
+              background: isAdmin ? "rgba(16, 185, 129, 0.12)" : "rgba(37, 99, 235, 0.12)",
               color: isAdmin ? "#10b981" : "#94a3b8",
-              border: `1px solid ${isAdmin ? "rgba(16, 185, 129, 0.25)" : "rgba(71, 85, 105, 0.25)"}`,
+              border: `1px solid ${isAdmin ? "rgba(16, 185, 129, 0.25)" : "rgba(37, 99, 235, 0.25)"}`,
               display: "flex",
               alignItems: "center",
               gap: 4
@@ -2109,8 +2109,8 @@ export default function App() {
                 setCurrentView("login");
               }}
               style={{
-                background: "rgba(71, 85, 105, 0.08)",
-                border: "1px solid rgba(71, 85, 105, 0.25)",
+                background: "rgba(37, 99, 235, 0.08)",
+                border: "1px solid rgba(37, 99, 235, 0.25)",
                 borderRadius: "6px",
                 padding: "3px 10px",
                 fontSize: "11px",
@@ -2123,10 +2123,10 @@ export default function App() {
                 transition: "all 0.2s",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(71, 85, 105, 0.18)";
+                e.currentTarget.style.background = "rgba(37, 99, 235, 0.18)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(71, 85, 105, 0.08)";
+                e.currentTarget.style.background = "rgba(37, 99, 235, 0.08)";
               }}
             >
               🔐 관리자 로그인
@@ -2141,7 +2141,7 @@ export default function App() {
               display: "flex",
               alignItems: "center",
               background: "var(--input-bg, #0f172a)",
-              border: "1px solid var(--panel-border, #475569)",
+              border: "1px solid var(--panel-border, #2563eb)",
               borderRadius: 9999,
               padding: "0 16px",
             }}
@@ -2404,9 +2404,9 @@ export default function App() {
                     padding: "10px 18px",
                     borderRadius: "10px 10px 0 0",
                     border: "none",
-                    borderBottom: rentLogTab === t.key ? "2px solid #475569" : "2px solid transparent",
-                    background: rentLogTab === t.key ? (isLightMode ? "rgba(71, 85, 105,0.08)" : "rgba(71, 85, 105,0.15)") : "transparent",
-                    color: rentLogTab === t.key ? (isLightMode ? "#334155" : "#94a3b8") : "var(--text-dim, #94a3b8)",
+                    borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
+                    background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
+                    color: rentLogTab === t.key ? (isLightMode ? "#1d4ed8" : "#60a5fa") : "var(--text-dim, #94a3b8)",
                     fontSize: "14px",
                     fontWeight: 700,
                     cursor: "pointer",
@@ -2479,7 +2479,7 @@ export default function App() {
                       onClick={() => { setMonitorView(v); if (v === "grouped") setSelectedRackId(null); }}
                       style={{
                         padding: "7px 14px", borderRadius: "7px", border: "none", fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
-                        background: monitorView === v ? "var(--accent, #475569)" : "transparent",
+                        background: monitorView === v ? "var(--accent, #2563eb)" : "transparent",
                         color: monitorView === v ? "#ffffff" : "var(--text-dim, #94a3b8)",
                       }}
                     >
@@ -2719,7 +2719,7 @@ export default function App() {
           <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, background: "var(--panel-bg, #1e293b)", border: "1px solid var(--panel-border, #334155)", borderRadius: 16, padding: 24, textAlign: "center", color: "var(--text-main, #f1f5f9)" }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>🔒 연동 설정은 관리자 전용입니다</div>
             <div style={{ fontSize: 13, color: "var(--text-dim, #94a3b8)", lineHeight: 1.6, marginBottom: 16 }}>서버 연동 주소는 관리자만 변경할 수 있습니다. 변경이 필요하면 관리자에게 요청하세요.</div>
-            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#475569", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
+            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
           </div>
         </div>
       )}
@@ -2856,7 +2856,7 @@ export default function App() {
                   borderRadius: "8px",
                   fontSize: "13px",
                   fontWeight: 700,
-                  boxShadow: "0 4px 12px rgba(79, 70, 229, 0.25)",
+                  boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
                 }}
               >
                 설계 및 배치 시작

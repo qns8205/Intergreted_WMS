@@ -60,10 +60,10 @@ export default function LandingPage({
             width: "64px",
             height: "64px",
             borderRadius: "16px",
-            background: "linear-gradient(135deg, #475569 0%, #334155 100%)",
+            background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
             color: "#ffffff",
             marginBottom: "20px",
-            boxShadow: "0 10px 25px -5px rgba(79, 70, 229, 0.4)",
+            boxShadow: "0 10px 25px -5px rgba(37, 99, 235, 0.4)",
           }}
         >
           <PackageCheck size={32} />
@@ -74,7 +74,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            background: "linear-gradient(to right, #94a3b8, #475569, #334155)",
+            background: "linear-gradient(to right, #60a5fa, #2563eb, #1d4ed8)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
           }}
@@ -135,8 +135,8 @@ export default function LandingPage({
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(71, 85, 105, 0.28)";
-              e.currentTarget.style.borderColor = "#475569";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
+              e.currentTarget.style.borderColor = "#2563eb";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
@@ -149,7 +149,7 @@ export default function LandingPage({
                 width: "40px",
                 height: "40px",
                 borderRadius: "11px",
-                background: "rgba(71, 85, 105, 0.13)",
+                background: "rgba(37, 99, 235, 0.13)",
                 color: "#94a3b8",
                 display: "flex",
                 alignItems: "center",
@@ -173,7 +173,7 @@ export default function LandingPage({
               style={{
                 fontSize: "13px",
                 lineHeight: 1.6,
-                color: isLightMode ? "#475569" : "#94a3b8",
+                color: isLightMode ? "#2563eb" : "#94a3b8",
                 marginBottom: "20px",
               }}
             >
@@ -218,7 +218,7 @@ export default function LandingPage({
           boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#475569";
+          e.currentTarget.style.borderColor = "#2563eb";
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
@@ -232,7 +232,7 @@ export default function LandingPage({
             width: "44px",
             height: "44px",
             borderRadius: "12px",
-            background: "rgba(71, 85, 105, 0.15)",
+            background: "rgba(37, 99, 235, 0.15)",
             color: "#94a3b8",
             display: "flex",
             alignItems: "center",
@@ -252,7 +252,7 @@ export default function LandingPage({
           >
             🛠️ 관리 모드
           </div>
-          <div style={{ fontSize: "12px", color: isLightMode ? "#475569" : "#94a3b8" }}>
+          <div style={{ fontSize: "12px", color: isLightMode ? "#2563eb" : "#94a3b8" }}>
             창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
           </div>
         </div>
@@ -275,7 +275,7 @@ export default function LandingPage({
         style={{
           marginTop: "48px",
           fontSize: "11px",
-          color: isLightMode ? "#94a3b8" : "#475569",
+          color: isLightMode ? "#94a3b8" : "#2563eb",
           display: "flex",
           alignItems: "center",
           gap: "4px",

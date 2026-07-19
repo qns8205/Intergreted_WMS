@@ -303,7 +303,15 @@ function getInventoryData(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   
-  const range = sheet.getRange(2, 1, lastRow - 1, 9);
+  // 시트에 11번째 열(한글 검색어)이 없으면 자동 생성해 안전하게 읽는다.
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  // K열 헤더가 비어 있으면 라벨을 넣어준다.
+  if (!String(sheet.getRange(1, 11).getValue() || "").trim()) {
+    sheet.getRange(1, 11).setValue("검색어(한글)");
+  }
+  const range = sheet.getRange(2, 1, lastRow - 1, 11);
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
   const richTextValues = range.getRichTextValues();
@@ -376,7 +384,8 @@ function getInventoryData(sheet) {
       updatedAt: displayValues[i][5] || "",
       manager: String(row[6] || "").trim(),
       note: String(row[7] || "").trim(),
-      spec: String(row[1] || "").trim() // Column B (서브 분류)
+      spec: String(row[1] || "").trim(), // Column B (서브 분류)
+      keywords: String(row[10] || "").trim() // Column K (한글 검색어)
     });
   }
   return inventory;
@@ -724,10 +733,15 @@ function addInventoryItem(sheet, item) {
     nowStr,
     item.manager || "",
     item.note || "",
-    photoVal // Column I (사진 링크용)
+    photoVal, // Column I (사진 링크용)
+    item.manager2 || "", // Column J (담당자 2) — 보존
+    item.keywords || "" // Column K (한글 검색어)
   ];
   
-  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  sheet.getRange(nextRow, 1, 1, 11).setValues([rowValues]);
   return nextRow;
 }
 
@@ -736,7 +750,10 @@ function updateInventoryItem(sheet, item) {
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
   
   const nowStr = formatDate(new Date());
-  const range = sheet.getRange(rowIndex, 1, 1, 9);
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  const range = sheet.getRange(rowIndex, 1, 1, 11);
   const currentValues = range.getValues()[0];
   
   if (item.location !== undefined) currentValues[0] = item.location;
@@ -760,6 +777,7 @@ function updateInventoryItem(sheet, item) {
   currentValues[5] = nowStr;
   if (item.manager !== undefined) currentValues[6] = item.manager;
   if (item.note !== undefined) currentValues[7] = item.note;
+  if (item.keywords !== undefined) currentValues[10] = item.keywords; // Column K (한글 검색어)
   
   range.setValues([currentValues]);
 }
