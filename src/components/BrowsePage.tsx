@@ -74,7 +74,8 @@ export default function BrowsePage({
   const [sciLoaded, setSciLoaded] = useState(false);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [sciLoading, setSciLoading] = useState(false);
+  const [whLoading, setWhLoading] = useState(false);
   const [sciErr, setSciErr] = useState("");
   const [whErr, setWhErr] = useState("");
 
@@ -111,8 +112,7 @@ export default function BrowsePage({
   }, [whCart, identName, identEmp, step]);
 
   const loadScenario = useCallback(async () => {
-    if (sciLoaded) return;
-    setLoading(true);
+    setSciLoading(true);
     try {
       setSciItems(connected && scriptUrl ? await fetchObjectItems(scriptUrl) : DEMO_OBJECT_ITEMS);
       setSciErr("");
@@ -120,12 +120,11 @@ export default function BrowsePage({
       setSciErr(e?.message || "불러오기에 실패했습니다.");
       showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
     }
-    finally { setSciLoaded(true); setLoading(false); }
-  }, [connected, scriptUrl, sciLoaded, showToast]);
+    finally { setSciLoaded(true); setSciLoading(false); }
+  }, [connected, scriptUrl, showToast]);
 
   const loadWarehouse = useCallback(async () => {
-    if (whLoaded) return;
-    setLoading(true);
+    setWhLoading(true);
     try {
       setWhItems(connected && scriptUrl ? await fetchWarehouseInventory(scriptUrl) : DEMO_WAREHOUSE);
       setWhErr("");
@@ -133,14 +132,15 @@ export default function BrowsePage({
       setWhErr(e?.message || "불러오기에 실패했습니다.");
       showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error");
     }
-    finally { setWhLoaded(true); setLoading(false); }
-  }, [connected, scriptUrl, whLoaded, showToast]);
+    finally { setWhLoaded(true); setWhLoading(false); }
+  }, [connected, scriptUrl, showToast]);
 
+  // step이 scenario/warehouse가 되면 (아직 미로드·비로딩일 때) 자동 로드.
+  // 클릭 핸들러에서 직접 호출하지 않고 effect로 처리하여 클로저/중복호출 문제를 원천 차단.
   useEffect(() => {
-    if (initialStep === "warehouse") loadWarehouse();
-    if (initialStep === "scenario") loadScenario();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (step === "scenario" && !sciLoaded && !sciLoading) loadScenario();
+    if (step === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
+  }, [step, sciLoaded, sciLoading, whLoaded, whLoading, loadScenario, loadWarehouse]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -390,7 +390,7 @@ export default function BrowsePage({
             ].map((m) => (
               <div
                 key={m.key}
-                onClick={() => { setStep(m.key); m.key === "scenario" ? loadScenario() : loadWarehouse(); }}
+                onClick={() => setStep(m.key)}
                 style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}
@@ -407,7 +407,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "scenario" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={loading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciLoaded(false); setSciErr(""); loadScenario(); }}
+          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -445,7 +445,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "warehouse" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={loading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhLoaded(false); setWhErr(""); loadWarehouse(); }}
+          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={whLoading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhErr(""); loadWarehouse(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -588,6 +588,15 @@ function Chip({ C, icon, text, tone }: { C: any; icon?: React.ReactNode; text: s
 }
 
 function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, children, error, onRetry }: any) {
+  const [showManual, setShowManual] = React.useState(false);
+  React.useEffect(() => {
+    // 로딩도 아니고 로드도 안 된 어정쩡한 상태가 6초 이상 지속되면 수동 버튼 노출 (무한로딩 안전장치)
+    if (!loaded && !loading && !error) {
+      const t = setTimeout(() => setShowManual(true), 6000);
+      return () => clearTimeout(t);
+    }
+    setShowManual(false);
+  }, [loaded, loading, error]);
   return (
     <div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>{filterRow}</div>
@@ -601,7 +610,12 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
           {onRetry ? <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>다시 시도</button> : null}
         </div>
       ) : !loaded ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "56px 0", color: C.label }}>
+          <Spinner size={30} /> 물품을 불러오는 중입니다...
+          {showManual && onRetry ? (
+            <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: `1px solid ${C.accent}`, background: "transparent", color: C.accent, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>불러오기가 지연됩니다. 수동으로 다시 불러오기</button>
+          ) : null}
+        </div>
       ) : count === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>검색 결과가 없습니다.</div>
       ) : (
@@ -615,7 +629,7 @@ function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock
   return (
     <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(99,102,241,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
-        {image ? <img src={getGoogleDriveImageUrl(image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
+        {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>
       <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
         <div style={{ fontWeight: 700, fontSize: "14px", lineHeight: 1.35, wordBreak: "break-word" }}>{title}</div>
