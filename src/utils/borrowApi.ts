@@ -159,7 +159,14 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
   } catch {
     throw new Error("서버가 올바르지 않은 응답을 반환했습니다. 웹앱 배포 상태를 확인하세요.");
   }
-  if (!data.success) throw new Error(data.error || "요청 실패");
+  if (!data.success) {
+    // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
+    if (data.error && String(data.error).indexOf("알 수 없는") !== -1) {
+      const shown = normalizeScriptUrl(scriptUrl);
+      throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
+    }
+    throw new Error(data.error || "요청 실패");
+  }
   return data;
 }
 
