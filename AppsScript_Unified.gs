@@ -146,7 +146,18 @@ function doGet(e) {
       return responseJSON({ success: true, items: getScenarioObjectsForAdmin_() });
     }
     if (action === "getScenarioDefinition") {
-      return responseJSON({ success: true, scenario: getScenarioDefinition(e.parameter.sid) });
+      // 이 조회는 시트를 무겁게 읽는 작업이라, 짧은 캐시로 반복 요청 부담을 크게 줄인다.
+      var sidKey = "scenarioDef_" + normalizeSid_(e.parameter.sid);
+      try {
+        var cachedScenario = CacheService.getScriptCache().get(sidKey);
+        if (cachedScenario) {
+          return ContentService.createTextOutput(cachedScenario).setMimeType(ContentService.MimeType.JSON);
+        }
+      } catch (scCacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
+
+      var scenarioPayload = JSON.stringify({ success: true, scenario: getScenarioDefinition(e.parameter.sid) });
+      try { CacheService.getScriptCache().put(sidKey, scenarioPayload, 20); } catch (scCachePutErr) { /* 무시 */ }
+      return ContentService.createTextOutput(scenarioPayload).setMimeType(ContentService.MimeType.JSON);
     }
     if (action === "getUnreturnedItems") {
       return responseJSON({ success: true, items: getUnreturnedItems() });
@@ -1345,7 +1356,7 @@ var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-VNe3oBXp0vtfSfXFjqFYTms
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
-var APP_VERSION = "2026-07-20-sid-simple-05";
+var APP_VERSION = "2026-07-20-sid-cache-06";
 var PROP_LATEST_VERSION_ = "LATEST_APP_VERSION";
 var PROP_LATEST_URL_ = "LATEST_APP_URL";
 
