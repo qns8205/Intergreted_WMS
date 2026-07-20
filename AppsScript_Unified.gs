@@ -1,2673 +1,450 @@
-// AppsScript_Code.gs
-// 이 코드를 구글 스프레드시트의 [확장 프로그램] -> [Apps Script]에 붙여넣고 웹앱으로 배포하세요.
+// 대여 시스템(구 BorrowForm) API 헬퍼 및 공용 타입/유틸
+// 통합 GAS(AppsScript_Unified.gs)의 대여 액션들을 호출합니다.
 
-const DEFECT_SHEET_NAME = "불량로그";
-const RENT_SHEET_NAME = "창고물품 대여로그"; // (통합 시트) 기존 "대여로그"
-const USERS_SHEET_NAME = "Admin"; // (통합 시트) 기존 "Users" — ID와 패스워드가 저장될 시트 탭 이름입니다.
-
-// ─────────────────────────────────────────────────────────────
-// 사진 업로드 폴더 ID 설정 (한 곳에서 관리)
-// 기존 사진들이 있는 폴더와 새 업로드가 같은 폴더로 가도록, 여기서 폴더 ID를 맞추세요.
-// 스크립트 속성(Script Properties)에 같은 이름의 키가 있으면 그 값이 우선 적용됩니다.
-//   - INVENTORY_IMAGE_FOLDER_ID : 창고물품 사진 폴더
-//   - DEFECT_IMAGE_FOLDER_ID    : 불량 제품 사진 폴더
-// ─────────────────────────────────────────────────────────────
-var INVENTORY_IMAGE_FOLDER_ID_DEFAULT = "1YsDpExU4ojeOJM5EiL07cveZs7Ojtasz";
-var DEFECT_IMAGE_FOLDER_ID_DEFAULT = "1gs7NcJWgFY37OZ4aEuG6Z-PNlmAfz6_R";
-
-function getFolderIdSetting_(key, fallback) {
-  try {
-    var v = PropertiesService.getScriptProperties().getProperty(key);
-    if (v && String(v).trim()) return String(v).trim();
-  } catch (e) {}
-  return fallback;
-}
-function getInventoryImageFolderId_() {
-  return getFolderIdSetting_("INVENTORY_IMAGE_FOLDER_ID", INVENTORY_IMAGE_FOLDER_ID_DEFAULT);
-}
-function getDefectImageFolderId_() {
-  return getFolderIdSetting_("DEFECT_IMAGE_FOLDER_ID", DEFECT_IMAGE_FOLDER_ID_DEFAULT);
+export interface ObjectItem {
+  id: string;
+  name: string;
+  sector: string;
+  rootSlot: string;
+  category: string;
+  subcategory: string;
+  image: string;
+  stock: number;
+  rented: number;
 }
 
-// 스마트 시트 찾기 함수: "관리시트", "시트1", "Sheet1" 순서로 시트를 시도하고,
-// 검색어가 매칭되는 시트가 없으면 첫 번째 시트를 자동으로 매칭하여 오류를 예방합니다.
-function getInventorySheet(ss) {
-  if (!ss) {
-    ss = SpreadsheetApp.getActiveSpreadsheet();
-  }
-  if (!ss) return null;
-  
-  // 0. (통합 시트) "창고물품" 검색
-  var sheet = ss.getSheetByName("창고물품");
-  if (sheet) return sheet;
-
-  // 1. "관리시트" 검색
-  sheet = ss.getSheetByName("관리시트");
-  if (sheet) return sheet;
-  
-  // 2. "시트1" 검색
-  sheet = ss.getSheetByName("시트1");
-  if (sheet) return sheet;
-  
-  // 3. "Sheet1" 검색
-  sheet = ss.getSheetByName("Sheet1");
-  if (sheet) return sheet;
-  
-  // 4. "재고", "인벤토리", "물품", "관리", "품목", "inventory" 단어가 들어간 시트 찾기
-  var sheets = ss.getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    var name = sheets[i].getName().toLowerCase();
-    if (name.indexOf("재고") !== -1 || name.indexOf("인벤토리") !== -1 || 
-        name.indexOf("물품") !== -1 || name.indexOf("관리") !== -1 || 
-        name.indexOf("품목") !== -1 || name.indexOf("inventory") !== -1) {
-      return sheets[i];
-    }
-  }
-  
-  // 5. 첫 번째 시트 반환
-  if (sheets.length > 0) {
-    return sheets[0];
-  }
-  return null;
+export interface ScenarioItem {
+  id: string;
+  name: string;
+  quantity: number;
+  rootSlot?: string;
+  category?: string;
+  subcategory?: string;
+  image?: string;
+  stock?: number;
+  rented?: number;
 }
 
-function doGet(e) {
-  try {
-    const action = e && e.parameter && e.parameter.action;
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getInventorySheet(ss);
-    if (!sheet) {
-      return responseJSON({ success: false, error: "스프레드시트에서 데이터를 저장/조회할 시트 탭을 찾을 수 없습니다. 시트가 비어있는지 확인하세요." });
-    }
-    
-    // 대여/반납 외부인용 웹 신청 폼 (파라미터가 없거나 action이 비어있으면 이 HTML 페이지를 띄워줍니다)
-    if (!action) {
-      return serveExternalForm(ss, sheet);
-    }
-    
-    // 불량로그 시트 가져오거나 없으면 자동 생성
-    let defectSheet = ss.getSheetByName(DEFECT_SHEET_NAME);
-    if (!defectSheet) {
-      defectSheet = ss.insertSheet(DEFECT_SHEET_NAME);
-      defectSheet.getRange(1, 1, 1, 7).setValues([["제품명", "개수", "기록 시간", "불량 유형", "세부 사항", "대처 방안", "사진"]]);
-    }
-    
-    // 대여로그 시트 가져오거나 없으면 자동 생성
-    let rentSheet = ss.getSheetByName(RENT_SHEET_NAME);
-    if (!rentSheet) {
-      rentSheet = ss.insertSheet(RENT_SHEET_NAME);
-      rentSheet.getRange(1, 1, 1, 7).setValues([["기록 시간", "구분", "위치", "제품명", "수량", "대여자 성함", "메모"]]);
-    }
-    
-    if (action === "getAll") {
-      // 성능 최적화: 짧은 시간(4초) 내 반복 요청은 캐시된 응답을 그대로 반환한다.
-      // (여러 화면이 동시에 마운트되며 getAll을 중복 호출하는 경우, 매번 시트 전체를
-      //  다시 읽지 않고 캐시를 재사용해 체감 속도를 크게 높인다. 새로고침/재접속 시에는
-      //  캐시 만료 후 최신 데이터를 다시 읽으므로 데이터 정확성에 지장이 없다.)
-      try {
-        var cache = CacheService.getScriptCache();
-        var cached = cache.get("getAll_cache_v2");
-        if (cached) {
-          return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
-        }
-      } catch (cacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
-
-      const inventory = getInventoryData(sheet);
-      const sectors = getSectorLayout();
-      const users = getUsersData(ss);
-      const defectLogs = getDefectLogs(defectSheet);
-      const rentLogs = getRentLogs(rentSheet);
-      let robotObjects = [];
-      try {
-        robotObjects = getRobotObjects(ss);
-      } catch (err) {
-        // '로봇 오브젝트' 시트가 없거나 오류 시 빈 배열
-      }
-      var getAllPayload = JSON.stringify({
-        success: true,
-        inventory: inventory,
-        sectors: sectors,
-        users: users,
-        defectLogs: defectLogs,
-        rentLogs: rentLogs,
-        robotObjects: robotObjects
-      });
-      try {
-        CacheService.getScriptCache().put("getAll_cache_v2", getAllPayload, 4);
-      } catch (cachePutErr) { /* 캐시 저장 실패해도 응답은 정상 반환 */ }
-      return ContentService.createTextOutput(getAllPayload).setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    // ─────────────── 대여 시스템(구 BorrowForm) GET 액션 ───────────────
-    if (action === "getObjectItems") {
-      return responseJSON({ success: true, items: getObjectItems() });
-    }
-    if (action === "getScenarioObjectsForAdmin") {
-      return responseJSON({ success: true, items: getScenarioObjectsForAdmin_() });
-    }
-    if (action === "getScenarioDefinition") {
-      return responseJSON({ success: true, scenario: getScenarioDefinition(e.parameter.sid) });
-    }
-    if (action === "getUnreturnedItems") {
-      return responseJSON({ success: true, items: getUnreturnedItems() });
-    }
-    if (action === "getScenarioAllLogs") {
-      return responseJSON({ success: true, items: getScenarioAllLogs_() });
-    }
-    if (action === "getMyBorrowedItems") {
-      return responseJSON({ success: true, items: getMyBorrowedItems(e.parameter.name, e.parameter.employeeId) });
-    }
-    if (action === "isConfigDsRegistered") {
-      return responseJSON({ success: true, registered: isConfigDsRegistered(e.parameter.name) });
-    }
-    if (action === "getBorrowAppInfo") {
-      return responseJSON({ success: true, version: APP_VERSION });
-    }
-    if (action === "getWarehouseBorrowedItems") {
-      return responseJSON({ success: true, items: getWarehouseBorrowedItems_(e.parameter.name || "") });
-    }
-
-    return responseJSON({ success: false, error: "알 수 없는 GET 액션입니다." });
-  } catch (err) {
-    return responseJSON({ success: false, error: err.toString() });
-  }
+export interface ScenarioDefinition {
+  sid: string;
+  found: boolean;
+  syncNeeded: boolean;
+  blocked: boolean;
+  blockReason: string;
+  highLevelEn: string;
+  highLevelKo: string;
+  items: ScenarioItem[];
+  errorMessage?: string; // 진단용: 서버 처리 중 문제가 있었다면 이유가 담긴다.
+  rowsScanned?: number;  // 진단용: Scenario 시트에서 실제로 읽은 행 수
+  fetchError?: string;   // 프론트 전용: 네트워크/파싱 등 요청 자체가 실패했을 때의 이유
 }
 
-function doPost(e) {
-  try {
-    const requestData = JSON.parse(e.postData.contents);
-    const action = requestData.action;
-    const payload = requestData.payload;
-
-    // ─────────────── 스크래퍼 하위 호환 (action 없이 sid+items가 오면 Scenario 시트 upsert) ───────────────
-    if (!action && requestData.sid && Array.isArray(requestData.items)) {
-      return handleScenarioUpsertPost_(requestData);
-    }
-
-    // ─────────────── 대여 시스템(구 BorrowForm) POST 액션 ───────────────
-    if (action === "recordBorrow") {
-      const recordBorrowResult = recordBorrow(payload.borrowList, payload.clientVersion);
-      invalidateGetAllCache_();
-      return responseJSON(recordBorrowResult);
-    }
-    if (action === "processReturn") {
-      const processReturnResult = processReturn(payload.returnRequests, payload.clientVersion);
-      invalidateGetAllCache_();
-      return responseJSON(processReturnResult);
-    }
-    if (action === "upsertScenario") {
-      return handleScenarioUpsertPost_(payload);
-    }
-    if (action === "updateScenarioObject") {
-      return responseJSON({ success: true, item: updateScenarioObject_(payload) });
-    }
-    if (action === "addScenarioObject") {
-      return responseJSON({ success: true, item: addScenarioObject_(payload) });
-    }
-    if (action === "deleteScenarioObject") {
-      deleteScenarioObject_(payload.rowIndex);
-      return responseJSON({ success: true });
-    }
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getInventorySheet(ss);
-    if (!sheet) {
-      return responseJSON({ success: false, error: "스프레드시트에서 데이터를 저장/조회할 시트 탭을 찾을 수 없습니다. 시트가 비어있는지 확인하세요." });
-    }
-    
-    if (action === "addInventoryItem") {
-      const newRowIndex = addInventoryItem(sheet, payload);
-      invalidateGetAllCache_();
-      return responseJSON({ success: true, rowIndex: newRowIndex });
-    }
-    
-    if (action === "updateInventoryItem") {
-      updateInventoryItem(sheet, payload);
-      invalidateGetAllCache_();
-      return responseJSON({ success: true });
-    }
-
-    if (action === "updateMultipleInventoryItems") {
-      const items = payload.items;
-      if (items && Array.isArray(items)) {
-        for (let i = 0; i < items.length; i++) {
-          updateInventoryItem(sheet, items[i]);
-        }
-      }
-      invalidateGetAllCache_();
-      return responseJSON({ success: true });
-    }
-    
-    if (action === "deleteInventoryItem") {
-      deleteInventoryItem(sheet, payload.rowIndex);
-      invalidateGetAllCache_();
-      return responseJSON({ success: true });
-    }
-    
-    if (action === "saveSectorLayout") {
-      saveSectorLayout(payload.sectors);
-      return responseJSON({ success: true });
-    }
-    
-    if (action === "deleteSector") {
-      deleteSector(payload.sectorId);
-      return responseJSON({ success: true });
-    }
-
-    if (action === "addDefectLog") {
-      let defectSheet = ss.getSheetByName(DEFECT_SHEET_NAME);
-      if (!defectSheet) {
-        defectSheet = ss.insertSheet(DEFECT_SHEET_NAME);
-        defectSheet.getRange(1, 1, 1, 7).setValues([["제품명", "개수", "기록 시간", "불량 유형", "세부 사항", "대처 방안", "사진"]]);
-      }
-      const result = addDefectLog(defectSheet, payload);
-      invalidateGetAllCache_();
-      return responseJSON({ success: true, rowIndex: result.rowIndex, photo: result.photo });
-    }
-
-    if (action === "rentInventoryItem") {
-      let rentSheet = ss.getSheetByName(RENT_SHEET_NAME);
-      if (!rentSheet) {
-        rentSheet = ss.insertSheet(RENT_SHEET_NAME);
-        rentSheet.getRange(1, 1, 1, 7).setValues([["기록 시간", "구분", "위치", "제품명", "수량", "대여자 성함", "메모"]]);
-      }
-      const newRowIndex = addRentLog(rentSheet, payload);
-      
-      // Update inventory stock count
-      const lastRow = sheet.getLastRow();
-      if (lastRow >= 2) {
-        const values = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
-        for (let i = 0; i < values.length; i++) {
-          // Compare location (Col 1) and name (Col 3) to find unique match
-          if (String(values[i][0]).trim() === String(payload.location).trim() && 
-              String(values[i][2]).trim() === String(payload.name).trim()) {
-            const rowIdx = i + 2;
-            const rawStock = values[i][4]; // index 4 is Column E (Stock)
-            const isNaValue = rawStock === "" || rawStock === null || rawStock === undefined || rawStock === "N/A" || isNaN(Number(rawStock));
-            
-            let nextStock = rawStock;
-            if (!isNaValue) {
-              let currentStock = Number(rawStock || 0);
-              const qtyChange = Number(payload.qty || 0);
-              
-              if (payload.type === "대여" || payload.type === "소모") {
-                nextStock = Math.max(0, currentStock - qtyChange);
-              } else if (payload.type === "반납" && String(payload.note || "").indexOf("[소모완료]") !== -1) {
-                // 반납 화면에서 "소모로 처리"한 경우: 대여 시 이미 재고가 차감됐으므로 재고를 다시 늘리지 않는다.
-                nextStock = currentStock;
-              } else if (payload.type === "반납") {
-                nextStock = currentStock + qtyChange;
-              }
-            }
-            
-            // Batch update E, F columns in 1 single write (leave G column/manager untouched)
-            sheet.getRange(rowIdx, 5, 1, 2).setValues([[
-              nextStock === "" || nextStock == null ? "" : nextStock,
-              formatDate(new Date())
-            ]]);
-            break;
-          }
-        }
-      }
-      invalidateGetAllCache_();
-      return responseJSON({ success: true, rowIndex: newRowIndex });
-    }
-    
-    return responseJSON({ success: false, error: "알 수 없는 POST 액션입니다." });
-  } catch (err) {
-    return responseJSON({ success: false, error: err.toString() });
-  }
+export interface UnreturnedItem {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  borrowerName: string;
+  scenarioId?: string;
+  itemLabel: string;
+  itemKind?: string;
+  location: string;
+  quantity: number;
+  borrowDate: string;
+  submitGroupKey?: string;
+  submitDisplay?: string;
+  borrowPurpose: string;
+  email: string;
+  batchId: string;
+  generalOption?: string;
+  image: string;
+  stock: number;
+  rented: number;
 }
 
-function getUsersData(ss) {
-  if (!ss) {
-    ss = SpreadsheetApp.getActiveSpreadsheet();
-  }
-  if (!ss) return [];
-  let userSheet = ss.getSheetByName(USERS_SHEET_NAME);
-  if (!userSheet) {
-    // Users 시트가 없다면 기본 어드민 정보로 자동 생성해 줍니다.
-    userSheet = ss.insertSheet(USERS_SHEET_NAME);
-    userSheet.getRange(1, 1, 1, 3).setValues([["ID", "PASSWORD", "NAME"]]);
-    userSheet.getRange(2, 1, 1, 3).setValues([["admin", "1234", "관리자"]]);
-    SpreadsheetApp.flush();
-  }
-  
-  const lastRow = userSheet.getLastRow();
-  if (lastRow < 2) {
-    return [{ id: "admin", password: "1234", name: "관리자" }];
-  }
-  
-  const range = userSheet.getRange(2, 1, lastRow - 1, 3);
-  const values = range.getValues();
-  const users = [];
-  
-  for (let i = 0; i < values.length; i++) {
-    const id = String(values[i][0] || "").trim();
-    const password = String(values[i][1] || "").trim();
-    const name = String(values[i][2] || "").trim();
-    if (id) {
-      users.push({ id: id, password: password, name: name || id });
-    }
-  }
-  return users;
+export interface BorrowEntry {
+  itemType: "scenario" | "general";
+  borrowerName: string;
+  affiliation: string;
+  employeeId: string;
+  borrowDate: string;
+  borrowPurpose: string;
+  scenarioId?: string;
+  requiredObjects?: ScenarioItem[];
+  additionalItems?: ScenarioItem[];
+  syncNeeded?: boolean;
+  borrowedItems?: { id: string; name: string; quantity: number }[];
+  generalOption?: string;
 }
 
-function getInventoryData(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  
-  // 시트에 11번째 열(한글 검색어)이 없으면 자동 생성해 안전하게 읽는다.
-  if (sheet.getMaxColumns() < 11) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
-  }
-  // K열 헤더가 비어 있으면 라벨을 넣어준다.
-  if (!String(sheet.getRange(1, 11).getValue() || "").trim()) {
-    sheet.getRange(1, 11).setValue("검색어(한글)");
-  }
-  const range = sheet.getRange(2, 1, lastRow - 1, 11);
-  const values = range.getValues();
-  // 성능 최적화: getRichTextValues()/getDisplayValues()는 셀당 비용이 커서
-  // 11개 열 전체가 아니라 실제로 필요한 열(D열=링크, F열=업데이트일자, I열=사진)만 좁혀서 읽는다.
-  const linkRichText = sheet.getRange(2, 4, lastRow - 1, 1).getRichTextValues();   // D열 (index 3)
-  const updatedAtDisplay = sheet.getRange(2, 6, lastRow - 1, 1).getDisplayValues(); // F열 (index 5)
-  const photoRichText = sheet.getRange(2, 9, lastRow - 1, 1).getRichTextValues();   // I열 (index 8)
-  const inventory = [];
-  
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    const rowIndex = i + 2;
-    
-    // I열 (index 8, 사진 링크용)에서 이미지 주소 추출 (B열은 참고하지 않음)
-    let photoUrl = "";
-    const photoRich = photoRichText[i] && photoRichText[i][0];
-    if (photoRich && typeof photoRich.getLinkUrl === "function") {
-      photoUrl = photoRich.getLinkUrl() || "";
-      if (!photoUrl && typeof photoRich.getRuns === "function") {
-        const runs = photoRich.getRuns();
-        for (let r = 0; r < runs.length; r++) {
-          if (runs[r] && typeof runs[r].getLinkUrl === "function") {
-            const runUrl = runs[r].getLinkUrl();
-            if (runUrl) {
-              photoUrl = runUrl;
-              break;
-            }
-          }
-        }
-      }
-    }
-    if (!photoUrl) {
-      photoUrl = String(row[8] || "").trim();
-    }
-    if (photoUrl === "undefined") {
-      photoUrl = "";
-    }
-    
-    // 스마트 칩 링크 주소 추출 (D열 / index 3)
-    let itemLink = "";
-    const linkRich = linkRichText[i] && linkRichText[i][0];
-    if (linkRich && typeof linkRich.getLinkUrl === "function") {
-      itemLink = linkRich.getLinkUrl() || "";
-      if (!itemLink && typeof linkRich.getRuns === "function") {
-        const runs = linkRich.getRuns();
-        for (let r = 0; r < runs.length; r++) {
-          if (runs[r] && typeof runs[r].getLinkUrl === "function") {
-            const runUrl = runs[r].getLinkUrl();
-            if (runUrl) {
-              itemLink = runUrl;
-              break;
-            }
-          }
-        }
-      }
-    }
-    if (!itemLink) {
-      itemLink = String(row[3] || "").trim();
-    }
-    
-    let itemStock = null;
-    if (String(row[4]).trim().toUpperCase() === "N/A") {
-      itemStock = "N/A";
-    } else if (row[4] !== "" && !isNaN(Number(row[4]))) {
-      itemStock = Number(row[4]);
-    }
-
-    inventory.push({
-      rowIndex: rowIndex,
-      location: String(row[0] || "").trim(),
-      photo: photoUrl,
-      name: String(row[2] || "").trim(),
-      link: itemLink,
-      stock: itemStock,
-      updatedAt: updatedAtDisplay[i][0] || "",
-      manager: String(row[6] || "").trim(),
-      note: String(row[7] || "").trim(),
-      spec: String(row[1] || "").trim(), // Column B (서브 분류)
-      keywords: String(row[10] || "").trim() // Column K (한글 검색어)
-    });
-  }
-  return inventory;
+export interface ReturnRequest {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  quantity: number;
 }
 
-function getDefectLogs(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  
-  const lastCol = Math.min(sheet.getLastColumn(), 7);
-  const range = sheet.getRange(2, 1, lastRow - 1, lastCol);
-  const values = range.getValues();
-  const displayValues = range.getDisplayValues();
-  const logs = [];
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    const rawTs = displayValues[i][2] ? String(displayValues[i][2]).trim() : (row[2] instanceof Date ? formatDate(row[2]) : String(row[2] || "").trim());
-    const photoUrl = lastCol >= 7 ? String(row[6] || "").trim() : "";
-    
-    logs.push({
-      rowIndex: i + 2,
-      timestamp: rawTs.replace(/^'/, ""),
-      location: "",
-      name: String(row[0] || "").trim(),
-      qty: row[1] === "" ? null : Number(row[1]),
-      defectType: String(row[3] || "").trim(),
-      manager: "",
-      note: String(row[4] || "").trim(),
-      actionTaken: String(row[5] || "").trim(),
-      photo: photoUrl
-    });
-  }
-  return logs;
+export interface BorrowResult {
+  success: boolean;
+  message: string;
 }
 
-// ── 진단용: 기존 창고물품 사진들이 실제로 어느 드라이브 폴더에 있는지 알려준다.
-// Apps Script 편집기에서 이 함수(창고사진폴더찾기)를 직접 실행하면 로그에 폴더 ID가 출력된다.
-// 그 값을 스크립트 속성 INVENTORY_IMAGE_FOLDER_ID 에 넣으면 새 업로드도 같은 폴더로 간다.
-function 창고사진폴더찾기() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = getInventorySheet(ss);
-  if (!sheet) { Logger.log("창고물품 시트를 찾지 못했습니다."); return; }
-  var lastRow = sheet.getLastRow();
-  var values = sheet.getRange(2, 9, Math.max(0, lastRow - 1), 1).getValues(); // I열(사진)
-  var counts = {};
-  for (var i = 0; i < values.length; i++) {
-    var link = String(values[i][0] || "").trim();
-    if (!link) continue;
-    var id = extractDriveFileId_(link);
-    if (!id) continue;
-    try {
-      var file = DriveApp.getFileById(id);
-      var parents = file.getParents();
-      while (parents.hasNext()) {
-        var f = parents.next();
-        var key = f.getId() + " (" + f.getName() + ")";
-        counts[key] = (counts[key] || 0) + 1;
-      }
-    } catch (e) { /* 접근 불가 파일은 건너뜀 */ }
-  }
-  Logger.log("=== 기존 창고물품 사진이 들어있는 폴더 (많은 순) ===");
-  var arr = Object.keys(counts).map(function (k) { return [k, counts[k]]; });
-  arr.sort(function (a, b) { return b[1] - a[1]; });
-  for (var j = 0; j < arr.length; j++) { Logger.log(arr[j][1] + "개 -> " + arr[j][0]); }
-  if (arr.length) {
-    var topId = arr[0][0].split(" ")[0];
-    Logger.log("\n> 가장 많은 폴더 ID: " + topId);
-    Logger.log("  이 값을 스크립트 속성 INVENTORY_IMAGE_FOLDER_ID 에 저장하면 새 업로드도 같은 폴더로 갑니다.");
-  } else {
-    Logger.log("사진 링크에서 폴더를 확인하지 못했습니다.");
-  }
-}
-
-// 드라이브 링크에서 파일 ID 추출 (open?id=, /d/ID 등 지원)
-function extractDriveFileId_(link) {
-  if (!link) return "";
-  var m = link.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (m) return m[1];
-  m = link.match(/\/d\/([a-zA-Z0-9_-]+)/);
-  if (m) return m[1];
-  return "";
-}
-
-function uploadImageToDrive(photoVal, fileName, folderId, fallbackFolderName) {
-  if (!photoVal || String(photoVal).indexOf("data:image/") !== 0) {
-    return photoVal || "";
-  }
-  try {
-    const parts = photoVal.split(",");
-    const mimeType = parts[0].split(";")[0].split(":")[1];
-    const base64Data = parts[1];
-    const decoded = Utilities.base64Decode(base64Data);
-    const ext = mimeType.split("/")[1] || "jpeg";
-    
-    let folder;
-    try {
-      folder = DriveApp.getFolderById(folderId);
-    } catch (fErr) {
-      const folders = DriveApp.getFoldersByName(fallbackFolderName);
-      if (folders.hasNext()) {
-        folder = folders.next();
-      } else {
-        folder = DriveApp.createFolder(fallbackFolderName);
-      }
-    }
-
-    const fullFilename = fileName + "." + ext;
-    const blob = Utilities.newBlob(decoded, mimeType, fullFilename);
-    
-    let file;
-    try {
-      if (!folder) throw new Error("Folder is null");
-      file = folder.createFile(blob);
-    } catch (createErr) {
-      // If folderId is invalid, deleted, or not a real folder (e.g., throwing parent.mimeType exception),
-      // we fallback to creating/locating the fallback folder.
-      const folders = DriveApp.getFoldersByName(fallbackFolderName);
-      if (folders.hasNext()) {
-        folder = folders.next();
-      } else {
-        folder = DriveApp.createFolder(fallbackFolderName);
-      }
-      file = folder.createFile(blob);
-    }
-    
-    try {
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    } catch (shareErr) {
-      try {
-        file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (domainShareErr) {
-        // Keep private if locked down
-      }
-    }
-    
-    return "https://lh3.googleusercontent.com/d/" + file.getId();
-  } catch (e) {
-    return "업로드 실패: " + e.toString();
-  }
-}
-
-function addDefectLog(sheet, log) {
-  const lastRow = sheet.getLastRow();
-  const nextRow = lastRow + 1;
-  
-  if (sheet.getLastColumn() < 7) {
-    sheet.getRange(1, 7).setValue("사진");
-  }
-  
-  // Use original log name exactly as-is (parentheses processing is removed)
-  let pName = String(log.name || "알수없음").trim();
-  
-  // Determine file name format: "제품명_기록 시간_불량 유형"
-  const pType = String(log.defectType || "기타불량").trim();
-  const rawTs = String(log.timestamp || formatDate(new Date())).replace(/'/g, "").trim();
-  const safeTs = rawTs.replace(/[:\/]/g, "-");
-  const filename = pName + "_" + safeTs + "_" + pType;
-
-  let photoVal = log.photo || "";
-  if (photoVal.indexOf("data:image/") === 0) {
-    photoVal = uploadImageToDrive(photoVal, filename, getDefectImageFolderId_(), "Image for Broken Item");
-  }
-  
-  const nowStr = formatDate(new Date());
-  const ts = log.timestamp || nowStr;
-  const rowValues = [
-    pName,
-    log.qty === "" || log.qty == null ? "" : Number(log.qty),
-    ts.indexOf("'") === 0 ? ts : "'" + ts,
-    log.defectType || "",
-    log.note || "",
-    log.actionTaken || "",
-    photoVal
-  ];
-  
-  sheet.getRange(nextRow, 1, 1, 7).setValues([rowValues]);
-  return { rowIndex: nextRow, photo: photoVal };
-}
-
-function getRobotObjects(ss) {
-  if (!ss) {
-    ss = SpreadsheetApp.getActiveSpreadsheet();
-  }
-  if (!ss) return [];
-  // (통합 시트) "시나리오 오브젝트"가 기존 "로봇 오브젝트"를 대체 (9열: id~대여)
-  const sheet = ss.getSheetByName("시나리오 오브젝트") || ss.getSheetByName("로봇 오브젝트");
-  if (!sheet) return [];
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  
-  const lastCol = Math.max(sheet.getLastColumn(), 5);
-  const range = sheet.getRange(1, 1, lastRow, lastCol); // Row 1 onwards to read headers dynamically
-  const values = range.getValues();
-  
-  // Dynamic header parsing to identify the correct column index for each property
-  const headers = values[0].map(function(h) {
-    return String(h || "").trim().toLowerCase();
-  });
-  
-  var nameColIdx = -1;
-  var idColIdx = -1;
-  var locColIdx = -1;
-  var specColIdx = -1;
-  var noteColIdx = -1;
-  
-  for (var j = 0; j < headers.length; j++) {
-    var h = headers[j];
-    if (!h) continue;
-    // Look for name/품목명/제품명 column
-    if (h === "name" || h.indexOf("품목") !== -1 || h.indexOf("제품") !== -1 || h === "이름" || h === "오브젝트" || h === "명칭") {
-      nameColIdx = j;
-    } else if (h === "id" || h === "코드" || h === "번호" || h.indexOf("아이디") !== -1) {
-      idColIdx = j;
-    } else if (h.indexOf("위치") !== -1 || h.indexOf("구역") !== -1 || h.indexOf("장소") !== -1 || h.indexOf("location") !== -1) {
-      locColIdx = j;
-    } else if (h.indexOf("규격") !== -1 || h.indexOf("서브") !== -1 || h.indexOf("spec") !== -1) {
-      specColIdx = j;
-    } else if (h.indexOf("비고") !== -1 || h.indexOf("메모") !== -1 || h.indexOf("note") !== -1 || h.indexOf("설명") !== -1) {
-      noteColIdx = j;
-    }
-  }
-  
-  // Fallback default indices if header name did not match
-  if (nameColIdx === -1) {
-    nameColIdx = (idColIdx === 0) ? 1 : 0;
-  }
-  if (idColIdx === -1) {
-    idColIdx = (nameColIdx === 0) ? 1 : 0;
-  }
-  if (locColIdx === -1) locColIdx = 2;
-  if (specColIdx === -1) specColIdx = 3;
-  if (noteColIdx === -1) noteColIdx = 4;
-
-  const objects = [];
-  // Row indices are 1-based, starting with row 2 (index 1 of values array)
-  for (var i = 1; i < values.length; i++) {
-    const row = values[i];
-    const rawName = nameColIdx < row.length ? String(row[nameColIdx] || "").trim() : "";
-    const rawId = idColIdx < row.length ? String(row[idColIdx] || "").trim() : "";
-    if (!rawName && !rawId) continue;
-    
-    objects.push({
-      rowIndex: i + 1,
-      name: rawName || rawId, // fallback to ID if name is empty
-      id: rawId,
-      location: locColIdx < row.length ? String(row[locColIdx] || "로봇 구역").trim() : "로봇 구역",
-      spec: specColIdx < row.length ? String(row[specColIdx] || "").trim() : "",
-      note: noteColIdx < row.length ? String(row[noteColIdx] || "").trim() : "",
-      stock: "N/A"
-    });
-  }
-  return objects;
-}
-
-function getRentLogs(sheet) {
-  const lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  
-  const range = sheet.getRange(2, 1, lastRow - 1, 7);
-  const values = range.getValues();
-  const displayValues = range.getDisplayValues();
-  const logs = [];
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    logs.push({
-      rowIndex: i + 2,
-      timestamp: displayValues[i][0] || "",
-      type: String(row[1] || "대여").trim(),
-      location: String(row[2] || "").trim(),
-      name: String(row[3] || "").trim(),
-      qty: row[4] === "" ? 0 : Number(row[4]),
-      user: String(row[5] || "").trim(),
-      note: String(row[6] || "").trim()
-    });
-  }
-  return logs;
-}
-
-// 창고물품 대여로그에서 (위치, 품명)별 순 대여량(대여-반납)을 집계.
-// - 이 시트는 헤더 없이 1행부터 데이터이므로 1행부터 직접 읽습니다.
-// - 이름 필터는 적용하지 않고 전체 미반납 목록을 반환합니다 (WMS 대여/반납과 동일).
-// - name 인자는 하위호환용으로 받되 무시합니다.
-function getWarehouseBorrowedItems_(name) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(RENT_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 1) return [];
-  var lastRow = sheet.getLastRow();
-  var values = sheet.getRange(1, 1, lastRow, 7).getValues();
-  var display = sheet.getRange(1, 1, lastRow, 7).getDisplayValues();
-  var map = {}; var order = [];
-  for (var i = 0; i < values.length; i++) {
-    var row = values[i];
-    var typ = String(row[1] || "").trim();
-    var loc = String(row[2] || "").trim();
-    var nm = String(row[3] || "").trim();
-    if (!loc && !nm) continue; // 빈 줄/실수로 남은 헤더 방어
-    var q = (row[4] === "" || row[4] == null) ? 0 : Number(row[4]);
-    if (isNaN(q)) q = 0;
-    var user = String(row[5] || "").trim();
-    var note = String(row[6] || "").trim();
-    var ts = display[i][0] || "";
-    var key = loc + "||" + nm;
-    if (!map[key]) { map[key] = { location: loc, name: nm, net: 0, lastDate: "", borrowers: {} }; order.push(key); }
-
-    // 소모: 반납 대상이 아님. 재고에서 영구 차감된 것이므로 미반납 목록의 대여량에서 제외한다.
-    //  - 직접 소모(type === "소모"): 미반납으로 잡지 않음 → net에 더하지 않음
-    //  - 즉시 소모([소모완료] note가 붙은 반납 로그): 해당 대여 건을 닫는 것 → net에서 차감 (반납과 동일)
-    var isConsumeNote = note.indexOf("[소모완료]") !== -1 || note.indexOf("[즉시반납]") !== -1;
-    if (typ === "소모") {
-      // 소모는 대여도 반납도 아님: net 불변 (미반납 목록에서 완전히 배제)
-    } else if (typ === "반납" || isConsumeNote) {
-      map[key].net -= q;
-    } else {
-      // 대여
-      map[key].net += q; if (user) map[key].borrowers[user] = true;
-    }
-    if (ts) map[key].lastDate = ts;
-  }
-  var result = [];
-  order.forEach(function (k) {
-    var e = map[k];
-    if (e.net <= 0) return;
-    var borrowerList = Object.keys(e.borrowers);
-    result.push({
-      sheetType: "warehouse",
-      borrowerName: borrowerList.length === 1 ? borrowerList[0] : (borrowerList.join(", ") || ""),
-      location: e.location,
-      name: e.name,
-      quantity: e.net,
-      itemLabel: (e.location ? "[" + e.location + "] " : "") + e.name + (e.net > 1 ? " x " + e.net : ""),
-      borrowDate: e.lastDate,
-      borrowPurpose: ""
-    });
-  });
-  result.sort(function (a, b) { return compareRackSlot_(a.location, b.location); });
-  return result;
-}
-
-// 위치 "A-01" 를 랙(A~) → 슬롯 숫자 순으로 정렬 비교
-function compareRackSlot_(la, lb) {
-  var pa = String(la || "").toUpperCase().split("-");
-  var pb = String(lb || "").toUpperCase().split("-");
-  var ra = pa[0] || "", rb = pb[0] || "";
-  if (ra !== rb) return ra < rb ? -1 : 1;
-  var sa = parseInt(String(pa[1] || "").replace(/\D/g, ""), 10);
-  var sb = parseInt(String(pb[1] || "").replace(/\D/g, ""), 10);
-  if (isNaN(sa)) sa = 999999;
-  if (isNaN(sb)) sb = 999999;
-  return sa - sb;
-}
-
-function addRentLog(sheet, log) {  const lastRow = sheet.getLastRow();
-  const nextRow = lastRow + 1;
-  
-  const nowStr = formatDate(new Date());
-  const ts = log.timestamp || nowStr;
-  const rowValues = [
-    ts.indexOf("'") === 0 ? ts : "'" + ts,
-    log.type || "대여",
-    log.location || "",
-    log.name || "",
-    log.qty === "" || log.qty == null ? 0 : Number(log.qty),
-    log.user || "",
-    log.note || ""
-  ];
-  
-  sheet.getRange(nextRow, 1, 1, 7).setValues([rowValues]);
-  return nextRow;
-}
-
-function addInventoryItem(sheet, item) {
-  const lastRow = sheet.getLastRow();
-  const nextRow = lastRow + 1;
-  const nowStr = formatDate(new Date());
-  
-  const rawStock = (item.stock === "N/A" || String(item.stock).toUpperCase() === "N/A") 
-    ? "N/A" 
-    : (item.stock === "" || item.stock == null ? "" : Number(item.stock));
-
-  // 물품 등록 이미지 드라이브 업로드 처리 (이름은 오브젝트 이름으로 지정, 폴더 ID: 1B8VRL7T9cuQIuiSU08ToZnJis576z_wY)
-  let photoVal = item.photo || "";
-  if (photoVal.indexOf("data:image/") === 0) {
-    const fileName = String(item.name || "물품이미지").trim();
-    photoVal = uploadImageToDrive(photoVal, fileName, getInventoryImageFolderId_(), "Inventory Images");
-  }
-
-  const rowValues = [
-    item.location || "",
-    item.spec || "", // Column B (서브 분류)
-    item.name || "",
-    item.link || "",
-    rawStock,
-    nowStr,
-    item.manager || "",
-    item.note || "",
-    photoVal, // Column I (사진 링크용)
-    item.manager2 || "", // Column J (담당자 2) — 보존
-    item.keywords || "" // Column K (한글 검색어)
-  ];
-  
-  if (sheet.getMaxColumns() < 11) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
-  }
-  sheet.getRange(nextRow, 1, 1, 11).setValues([rowValues]);
-  return nextRow;
-}
-
-function updateInventoryItem(sheet, item) {
-  const rowIndex = Number(item.rowIndex);
-  if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
-  
-  const nowStr = formatDate(new Date());
-  if (sheet.getMaxColumns() < 11) {
-    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
-  }
-  const range = sheet.getRange(rowIndex, 1, 1, 11);
-  const currentValues = range.getValues()[0];
-  
-  if (item.location !== undefined) currentValues[0] = item.location;
-  if (item.spec !== undefined) currentValues[1] = item.spec; // Column B (서브 분류)
-  if (item.photo !== undefined) {
-    // 물품 수정 이미지 드라이브 업로드 처리 (이름은 오브젝트 이름으로 지정, 폴더 ID: 1B8VRL7T9cuQIuiSU08ToZnJis576z_wY)
-    let photoVal = item.photo || "";
-    if (photoVal.indexOf("data:image/") === 0) {
-      const fileName = String(item.name || currentValues[2] || "물품이미지").trim();
-      photoVal = uploadImageToDrive(photoVal, fileName, getInventoryImageFolderId_(), "Inventory Images");
-    }
-    currentValues[8] = photoVal; // Column I (사진 링크용)만 업데이트합니다.
-  }
-  if (item.name !== undefined) currentValues[2] = item.name;
-  if (item.link !== undefined) currentValues[3] = item.link;
-  if (item.stock !== undefined) {
-    currentValues[4] = (item.stock === "N/A" || String(item.stock).toUpperCase() === "N/A")
-      ? "N/A"
-      : (item.stock === "" || item.stock == null ? "" : Number(item.stock));
-  }
-  currentValues[5] = nowStr;
-  if (item.manager !== undefined) currentValues[6] = item.manager;
-  if (item.note !== undefined) currentValues[7] = item.note;
-  if (item.keywords !== undefined) currentValues[10] = item.keywords; // Column K (한글 검색어)
-  
-  range.setValues([currentValues]);
-}
-
-function deleteInventoryItem(sheet, rowIndex) {
-  const idx = Number(rowIndex);
-  if (!idx || idx < 2) throw new Error("올바르지 않은 행 인덱스: " + idx);
-  sheet.deleteRow(idx);
-}
-
-function getSectorLayout() {
-  const scriptProperties = PropertiesService.getScriptProperties();
-  const data = scriptProperties.getProperty("sector_layout");
-  if (!data) return [];
-  try {
-    return JSON.parse(data);
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveSectorLayout(sectors) {
-  const scriptProperties = PropertiesService.getScriptProperties();
-  scriptProperties.setProperty("sector_layout", JSON.stringify(sectors));
-}
-
-function deleteSector(sectorId) {
-  const scriptProperties = PropertiesService.getScriptProperties();
-  const data = scriptProperties.getProperty("sector_layout");
-  if (!data) return;
-  try {
-    let sectors = JSON.parse(data);
-    sectors = sectors.filter(function(s) { return s.id !== sectorId; });
-    scriptProperties.setProperty("sector_layout", JSON.stringify(sectors));
-  } catch (e) {}
-}
-
-function formatDate(date) {
-  const pad = function(n) { return String(n).padStart(2, "0"); };
-  return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) + " " + pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
-}
-
-function responseJSON(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// getAll 캐시를 강제로 비운다. 물품/로그 등 데이터가 바뀌는 모든 쓰기 작업 뒤에 호출해,
-// 사용자가 방금 한 변경이 캐시 만료(최대 4초)를 기다리지 않고 바로 반영되게 한다.
-function invalidateGetAllCache_() {
-  try { CacheService.getScriptCache().remove("getAll_cache_v2"); } catch (e) { /* 무시 */ }
-}
-
-function testDrivePermission() {
-  try {
-    const folders = DriveApp.getFoldersByName("Image for Broken Item");
-    if (folders.hasNext()) {
-      Logger.log("성공: 구글 드라이브 권한이 정상 승인되었습니다! 기존 폴더를 감지했습니다.");
-    } else {
-      const folder = DriveApp.createFolder("Image for Broken Item");
-      Logger.log("성공: 구글 드라이브 권한이 정상 승인되었습니다! 새 폴더를 생성했습니다.");
-    }
-  } catch (e) {
-    Logger.log("실패: 권한 승인 중 오류가 발생했습니다. 에러: " + e.toString());
-  }
-}
-
-function serveExternalForm(ss, sheet) {
-  const inventory = [];
-  const lastRow = sheet.getLastRow();
-  if (lastRow >= 2) {
-    const values = sheet.getRange(2, 1, lastRow - 1, 5).getValues();
-    for (let i = 0; i < values.length; i++) {
-      const loc = String(values[i][0] || "").trim();
-      const name = String(values[i][2] || "").trim();
-      const stock = (values[i][4] === "" || isNaN(Number(values[i][4]))) ? null : Number(values[i][4]);
-      if (loc && name) {
-        inventory.push({ location: loc, name: name, stock: stock });
-      }
-    }
-  }
-
-  // 가나다 순 정렬
-  inventory.sort(function(a, b) { return a.name.localeCompare(b.name); });
-
-  const html = getFormHtml(inventory);
-  return HtmlService.createHtmlOutput(html)
-    .setTitle("외부인 대여 및 반납 간편 신청서")
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag("viewport", "width=device-width, initial-scale=1");
-}
-
-function handleExternalFormSubmit(payload) {
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = getInventorySheet(ss);
-    if (!sheet) throw new Error("스프레드시트에서 데이터를 저장/조회할 시트 탭을 찾을 수 없습니다. 시트가 비어있는지 확인하세요.");
-    
-    let rentSheet = ss.getSheetByName(RENT_SHEET_NAME);
-    if (!rentSheet) {
-      rentSheet = ss.insertSheet(RENT_SHEET_NAME);
-      rentSheet.getRange(1, 1, 1, 7).setValues([["기록 시간", "구분", "위치", "제품명", "수량", "대여자 성함", "메모"]]);
-    }
-    
-    const log = {
-      timestamp: formatDate(new Date()),
-      type: payload.type,
-      location: payload.location,
-      name: payload.name,
-      qty: Number(payload.qty || 1),
-      user: payload.user,
-      note: payload.note || "외부인 신청"
-    };
-    
-    const newRowIndex = addRentLog(rentSheet, log);
-    
-    // 재고 반영
-    const lastRow = sheet.getLastRow();
-    if (lastRow >= 2) {
-      const values = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
-      for (let i = 0; i < values.length; i++) {
-        if (String(values[i][0]).trim() === String(log.location).trim() && 
-            String(values[i][2]).trim() === String(log.name).trim()) {
-          const rowIdx = i + 2;
-          const rawStock = values[i][4];
-          const isNaValue = rawStock === "" || rawStock === null || rawStock === undefined || rawStock === "N/A" || isNaN(Number(rawStock));
-          
-          let nextStock = rawStock;
-          if (!isNaValue) {
-            let currentStock = Number(rawStock || 0);
-            const qtyChange = Number(log.qty || 0);
-            if (log.type === "대여") {
-              nextStock = Math.max(0, currentStock - qtyChange);
-            } else if (log.type === "반납") {
-              nextStock = currentStock + qtyChange;
-            }
-          }
-          
-          sheet.getRange(rowIdx, 5, 1, 2).setValues([[
-            nextStock === "" || nextStock == null ? "" : nextStock,
-            formatDate(new Date())
-          ]]);
-          break;
-        }
-      }
-    }
-    
-    return { success: true, rowIndex: newRowIndex };
-  } catch (err) {
-    return { success: false, error: err.toString() };
-  }
-}
-
-function getFormHtml(inventory) {
-  const inventoryJson = JSON.stringify(inventory);
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>외부인 대여 및 반납 간편 신청서</title>
-  <style>
-    :root {
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --text-main: #0f172a;
-      --text-dim: #475569;
-      --border: #e2e8f0;
-      --accent: #4f46e5;
-      --accent-hover: #4338ca;
-      --rent: #3b82f6;
-      --return: #10b981;
-      --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    body { background-color: var(--bg); color: var(--text-main); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .container { width: 100%; max-width: 480px; background: var(--card-bg); border-radius: 16px; border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; padding: 28px 24px; transition: all 0.3s; }
-    .header { text-align: center; margin-bottom: 24px; }
-    .header h1 { font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 8px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-    .header p { font-size: 13px; color: var(--text-dim); line-height: 1.5; }
-    
-    .form-group { margin-bottom: 20px; position: relative; }
-    .form-group label { display: block; font-size: 12.5px; font-weight: 700; color: var(--text-dim); margin-bottom: 6px; }
-    
-    /* Type Selector Cards */
-    .type-container { display: flex; gap: 12px; margin-bottom: 20px; }
-    .type-card { flex: 1; border: 2px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; cursor: pointer; font-weight: 800; font-size: 14px; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
-    .type-card.active-rent { border-color: var(--rent); background: rgba(59, 130, 246, 0.08); color: var(--rent); }
-    .type-card.active-return { border-color: var(--return); background: rgba(16, 185, 129, 0.08); color: var(--return); }
-    
-    /* Dropdown search */
-    .search-input { width: 100%; padding: 11px 14px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; }
-    .search-input:focus { border-color: var(--accent); }
-    
-    .dropdown-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: white; border: 1px solid var(--border); border-radius: 8px; max-height: 200px; overflow-y: auto; z-index: 50; box-shadow: var(--shadow); display: none; }
-    .dropdown-item { padding: 10px 14px; cursor: pointer; font-size: 13.5px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
-    .dropdown-item:hover { background: #f8fafc; }
-    .dropdown-item .stock { font-size: 11px; color: var(--text-dim); background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
-    
-    /* Standard inputs */
-    input[type="text"], input[type="number"], textarea { width: 100%; padding: 11px 14px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; transition: border-color 0.2s; background: #fff; color: var(--text-main); }
-    input[type="text"]:focus, input[type="number"]:focus, textarea:focus { border-color: var(--accent); }
-    
-    /* Qty controls */
-    .qty-wrapper { display: flex; align-items: center; gap: 8px; }
-    .qty-btn { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: #f1f5f9; border: 1px solid var(--border); border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; user-select: none; transition: background 0.1s; }
-    .qty-btn:active { background: #e2e8f0; }
-    
-    .btn-submit { width: 100%; padding: 13px; background: var(--accent); color: white; border: none; border-radius: 10px; font-size: 14.5px; font-weight: 800; cursor: pointer; transition: background 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 10px; }
-    .btn-submit:hover { background: var(--accent-hover); }
-    .btn-submit:disabled { opacity: 0.5; cursor: not-allowed; }
-    
-    /* Success Screen */
-    .success-screen { display: none; text-align: center; padding: 24px 0; }
-    .success-icon { width: 64px; height: 64px; background: rgba(16, 185, 129, 0.1); color: var(--return); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; margin: 0 auto 16px; }
-    .success-screen h2 { font-size: 20px; font-weight: 800; color: var(--text-main); margin-bottom: 8px; }
-    .success-screen p { font-size: 14px; color: var(--text-dim); line-height: 1.6; margin-bottom: 24px; }
-    .btn-reset { width: 100%; padding: 11px; background: #f1f5f9; color: var(--text-main); border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; font-weight: 700; cursor: pointer; }
-    .btn-reset:hover { background: #e2e8f0; }
-    
-    /* Loading overlay */
-    .loading-spinner { border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top: 3px solid #fff; width: 18px; height: 18px; animation: spin 0.8s linear infinite; display: none; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="container" id="cardContainer">
-    <!-- Form Area -->
-    <div id="formArea">
-      <div class="header">
-        <h1>📦 외부인 대여 / 반납 신청서</h1>
-        <p>대여 또는 반납하실 품목과 성함, 수량을 입력하여 실시간 재고에 반영해 주세요.</p>
-      </div>
-      
-      <div class="type-container">
-        <div class="type-card active-rent" id="typeRent" onclick="setType('대여')">
-          🔵 대여 신청
-        </div>
-        <div class="type-card" id="typeReturn" onclick="setType('반납')">
-          🟢 반납 신청
-        </div>
-      </div>
-      
-      <div class="form-group">
-        <label>품목 검색 및 선택</label>
-        <input type="text" class="search-input" id="searchBar" placeholder="품목 이름을 입력하세요..." onfocus="showDropdown()" oninput="filterDropdown()">
-        <input type="hidden" id="selectedLocation">
-        <input type="hidden" id="selectedName">
-        
-        <div class="dropdown-list" id="dropdownList"></div>
-      </div>
-      
-      <div class="form-group">
-        <label>수량</label>
-        <div class="qty-wrapper">
-          <button type="button" class="qty-btn" onclick="adjustQty(-1)">-</button>
-          <input type="number" id="qtyInput" value="1" min="1" style="text-align: center; flex: 1;" oninput="validateForm()">
-          <button type="button" class="qty-btn" onclick="adjustQty(1)">+</button>
-        </div>
-      </div>
-      
-      <div class="form-group">
-        <label>신청자 성함</label>
-        <input type="text" id="userInput" placeholder="실명을 입력해 주세요" oninput="validateForm()">
-      </div>
-      
-      <div class="form-group">
-        <label>메모 / 용도 (선택)</label>
-        <textarea id="noteInput" rows="2" placeholder="용도나 남기실 메모를 작성해 주세요"></textarea>
-      </div>
-      
-      <button class="btn-submit" id="btnSubmit" onclick="submitForm()" disabled>
-        <div class="loading-spinner" id="btnSpinner"></div>
-        <span id="btnText">신청 완료하기</span>
-      </button>
-    </div>
-    
-    <!-- Success Area -->
-    <div class="success-screen" id="successArea">
-      <div class="success-icon">✓</div>
-      <h2 id="successTitle">신청이 완료되었습니다!</h2>
-      <p id="successMessage">스프레드시트에 정상 등록되었으며 재고 카운트가 즉시 갱신되었습니다.</p>
-      <button class="btn-reset" onclick="resetForm()">추가 신청하기</button>
-    </div>
-  </div>
-
-  <script>
-    const inventory = ${inventoryJson};
-    let currentType = "대여";
-    
-    // Initialize dropdown items
-    function showDropdown() {
-      const list = document.getElementById("dropdownList");
-      list.style.display = "block";
-      filterDropdown();
-    }
-    
-    // Close dropdown on click outside
-    document.addEventListener("click", function(e) {
-      const searchBar = document.getElementById("searchBar");
-      const list = document.getElementById("dropdownList");
-      if (e.target !== searchBar && !list.contains(e.target)) {
-        list.style.display = "none";
-      }
-    });
-    
-    function filterDropdown() {
-      const query = document.getElementById("searchBar").value.toLowerCase().trim();
-      const list = document.getElementById("dropdownList");
-      list.innerHTML = "";
-      
-      const filtered = inventory.filter(it => it.name.toLowerCase().includes(query) || it.location.toLowerCase().includes(query));
-      
-      if (filtered.length === 0) {
-        list.innerHTML = '<div style="padding: 12px; font-size: 13px; color: #94a3b8; text-align: center;">검색 결과가 없습니다.</div>';
-        return;
-      }
-      
-      filtered.forEach(it => {
-        const div = document.createElement("div");
-        div.className = "dropdown-item";
-        div.innerHTML = '<div><strong>[' + it.location + ']</strong> ' + it.name + '</div><span class="stock">현재고: ' + (it.stock === null ? 'N/A' : it.stock) + '</span>';
-        div.onclick = function() {
-          document.getElementById("searchBar").value = '[' + it.location + '] ' + it.name;
-          document.getElementById("selectedLocation").value = it.location;
-          document.getElementById("selectedName").value = it.name;
-          list.style.display = "none";
-          validateForm();
-        };
-        list.appendChild(div);
-      });
-    }
-    
-    function setType(type) {
-      currentType = type;
-      const tRent = document.getElementById("typeRent");
-      const tReturn = document.getElementById("typeReturn");
-      
-      if (type === "대여") {
-        tRent.className = "type-card active-rent";
-        tReturn.className = "type-card";
-      } else {
-        tRent.className = "type-card";
-        tReturn.className = "type-card active-return";
-      }
-      validateForm();
-    }
-    
-    function adjustQty(amount) {
-      const qtyInput = document.getElementById("qtyInput");
-      let val = parseInt(qtyInput.value) || 1;
-      val = Math.max(1, val + amount);
-      qtyInput.value = val;
-      validateForm();
-    }
-    
-    function validateForm() {
-      const location = document.getElementById("selectedLocation").value;
-      const name = document.getElementById("selectedName").value;
-      const qty = parseInt(document.getElementById("qtyInput").value) || 0;
-      const user = document.getElementById("userInput").value.trim();
-      
-      const btn = document.getElementById("btnSubmit");
-      if (location && name && qty > 0 && user) {
-        btn.disabled = false;
-      } else {
-        btn.disabled = true;
-      }
-    }
-    
-    function submitForm() {
-      const location = document.getElementById("selectedLocation").value;
-      const name = document.getElementById("selectedName").value;
-      const qty = parseInt(document.getElementById("qtyInput").value) || 1;
-      const user = document.getElementById("userInput").value.trim();
-      const note = document.getElementById("noteInput").value.trim();
-      
-      const btn = document.getElementById("btnSubmit");
-      const text = document.getElementById("btnText");
-      const spinner = document.getElementById("btnSpinner");
-      
-      btn.disabled = true;
-      text.innerText = "처리 중...";
-      spinner.style.display = "inline-block";
-      
-      const payload = {
-        type: currentType,
-        location: location,
-        name: name,
-        qty: qty,
-        user: user,
-        note: note
-      };
-      
-      google.script.run
-        .withSuccessHandler(function(res) {
-          spinner.style.display = "none";
-          if (res && res.success) {
-            document.getElementById("formArea").style.display = "none";
-            
-            // Set success text
-            const sTitle = document.getElementById("successTitle");
-            const sMsg = document.getElementById("successMessage");
-            sTitle.innerText = currentType + " 신청이 완료되었습니다!";
-            sMsg.innerText = "[" + location + "] " + name + " 품목 " + qty + "개가 성공적으로 대장 및 재고에 반영되었습니다.";
-            
-            document.getElementById("successArea").style.display = "block";
-          } else {
-            alert("신청 중 오류가 발생했습니다: " + (res ? res.error : "알 수 없는 오류"));
-            btn.disabled = false;
-            text.innerText = "신청 완료하기";
-          }
-        })
-        .withFailureHandler(function(err) {
-          spinner.style.display = "none";
-          alert("네트워크 통신 실패: " + err);
-          btn.disabled = false;
-          text.innerText = "신청 완료하기";
-        })
-        .handleExternalFormSubmit(payload);
-    }
-    
-    function resetForm() {
-      document.getElementById("searchBar").value = "";
-      document.getElementById("selectedLocation").value = "";
-      document.getElementById("selectedName").value = "";
-      document.getElementById("qtyInput").value = "1";
-      document.getElementById("userInput").value = "";
-      document.getElementById("noteInput").value = "";
-      
-      document.getElementById("successArea").style.display = "none";
-      document.getElementById("formArea").style.display = "block";
-      
-      const btn = document.getElementById("btnSubmit");
-      btn.disabled = true;
-      document.getElementById("btnText").innerText = "신청 완료하기";
-      
-      setType("대여");
-    }
-  </script>
-</body>
-</html>`;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// 대여 시스템 모듈 (구 BorrowForm/Code.gs 통합본)
-// - 시트명: 통합 스프레드시트 기준 (일반대여 / SID대여 / 시나리오 오브젝트 / ConfigDS계정 / Scenario)
-// - 기타계정 시트 제거: 기타 소속은 저장 없이 이름 그대로 Slack에 표기
-// - SID별 필요물품 시트 제거: 스크래퍼 upsert는 Scenario 시트로 직접 수행
-// - doGet/doPost 없음: 상단 통합 라우팅(doGet/doPost)에서 액션으로 호출됨
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ─── Slack 봇 설정 (Incoming Webhook 미사용: 봇 토큰 하나로 일원화) ───
-// [새 앱 전환 방법]
-//  1) api.slack.com/apps 에서 새 앱 생성 → Bot Token Scopes: chat:write, users:read, users:read.email
-//  2) Install to Workspace → 발급된 xoxb- 토큰을 아래 SLACK_BOT_TOKEN 에 붙여넣기
-//  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
-//  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
-//  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-f7Ln781J9wJTJL3C3FMFltkW";
-var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
-var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
-
-var APP_VERSION = "2026-07-20-sid-rewrite-02";
-var PROP_LATEST_VERSION_ = "LATEST_APP_VERSION";
-var PROP_LATEST_URL_ = "LATEST_APP_URL";
-
-var GENERAL_SHEET_NAME = "일반대여";
-var SCENARIO_SHEET_NAME = "SID대여";
-var OBJECT_SHEET_NAME = "시나리오 오브젝트";
-var CONFIGDS_SHEET_NAME = "ConfigDS계정";
-var SCENARIO_DEFINITION_SHEET_NAME = "Scenario";
-var OVERDUE_HOURS = 24;
-var GENERAL_COL_COUNT = 13;
-var SCENARIO_COL_COUNT = 11;
-var GENERAL_OPTION_COL = 13;
-var SCENARIO_LOG_ITEM_KIND_COL = 12;
-
-function isOutdatedVersion_() {
-  try {
-    var latest = String(PropertiesService.getScriptProperties().getProperty(PROP_LATEST_VERSION_) || "");
-    return !!latest && latest !== APP_VERSION;
-  } catch (e) { return false; }
-}
-
-function getAppVersionInfo() {
-  var info = { current: APP_VERSION, latest: "", url: "", outdated: false };
-  try {
-    var props = PropertiesService.getScriptProperties();
-    info.latest = String(props.getProperty(PROP_LATEST_VERSION_) || "");
-    info.url = String(props.getProperty(PROP_LATEST_URL_) || "");
-    info.outdated = !!info.latest && info.latest !== APP_VERSION;
-  } catch (e) {
-    info.outdated = false;
-  }
-  return info;
-}
-
-function publishCurrentVersion() {
-  var props = PropertiesService.getScriptProperties();
-  var url = "";
-  try { url = ScriptApp.getService().getUrl() || ""; } catch (e) {}
-  props.setProperty(PROP_LATEST_VERSION_, APP_VERSION);
-  if (url) props.setProperty(PROP_LATEST_URL_, url);
-  var msg = "최신 버전으로 등록했습니다.\n\n버전: " + APP_VERSION + (url ? "\n최신 주소: " + url : "");
-  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
-}
-
-function buildObjectLink_(id, name) {
-  var label = name || "";
-  var cleanId = padObjectId_(id);
-  if (cleanId) return "<" + OBJECT_DETAIL_BASE_URL + cleanId + "|" + label + ">";
-  return label;
-}
-
-function padObjectId_(id) {
-  var digits = String(id == null ? "" : id).replace(/\D/g, "");
-  if (!digits) return "";
-  return digits.length < 6 ? digits.padStart(6, "0") : digits;
-}
-
-function buildReqLinkFromLabel_(label) {
-  label = String(label || "").trim();
-  if (!label) return "";
-  var m = label.match(/^\[(\d+)\]\s*(.*)$/);
-  if (!m) return label;
-  var id = padObjectId_(m[1]);
-  var rest = m[2];
-  var qm = rest.match(/\s*[x×]\s*\d+\s*$/i);
-  var namePart = qm ? rest.substring(0, qm.index) : rest;
-  var qtyPart = qm ? qm[0] : "";
-  return buildObjectLink_(id, namePart) + qtyPart;
-}
-
-var LOCATION_SORT_BANDS_ = [
+/* ---------------- 위치 정렬 밴드 (Code.gs와 동일하게 유지할 것) ---------------- */
+const LOCATION_SORT_BANDS = [
   { start: 186, end: 251, dir: "asc" },
   { start: 120, end: 185, dir: "desc" },
   { start: 60, end: 119, dir: "asc" },
   { start: 0, end: 59, dir: "desc" },
-  { start: 100000, end: 100025, dir: "asc" }
-];
+  { start: 100000, end: 100025, dir: "asc" },
+] as const;
 
-function computeLocationSortIndex_(rootSlot) {
-  var n = parseInt(String(rootSlot == null ? "" : rootSlot).replace(/\D/g, ""), 10);
+export function computeLocationSortIndex(rootSlot: string | null | undefined): number {
+  const n = parseInt(String(rootSlot ?? "").replace(/\D/g, ""), 10);
   if (isNaN(n)) return Number.MAX_SAFE_INTEGER;
-  var offset = 0;
-  for (var i = 0; i < LOCATION_SORT_BANDS_.length; i++) {
-    var b = LOCATION_SORT_BANDS_[i];
-    var size = b.end - b.start + 1;
-    if (n >= b.start && n <= b.end) return offset + (b.dir === "asc" ? (n - b.start) : (b.end - n));
+  let offset = 0;
+  for (const b of LOCATION_SORT_BANDS) {
+    const size = b.end - b.start + 1;
+    if (n >= b.start && n <= b.end) return offset + (b.dir === "asc" ? n - b.start : b.end - n);
     offset += size;
   }
   return offset + n;
 }
 
-function getObjectItems() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-  if (!sheet) return [];
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues(); // 9 columns
-  var result = [];
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    if (!row[0] && !row[1]) continue;
-    result.push({
-      id: padSlot_(String(row[0]).trim()),
-      name: String(row[1]).trim(),
-      sector: String(row[2]).trim(),
-      rootSlot: padSlot_(String(row[3]).trim()),
-      category: String(row[4] || "").trim(),
-      subcategory: String(row[5] || "").trim(),
-      image: String(row[6] || "").trim(), // Column G (Image)
-      stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0, // Column H (재고)
-      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0 // Column I (대여)
-    });
-  }
-  result.sort(function (a, b) {
-    var na = parseInt(String(a.rootSlot || "").replace(/\D/g, ""), 10);
-    var nb = parseInt(String(b.rootSlot || "").replace(/\D/g, ""), 10);
-    if (isNaN(na)) na = Number.MAX_SAFE_INTEGER;
-    if (isNaN(nb)) nb = Number.MAX_SAFE_INTEGER;
-    return na - nb;
-  });
-  return result;
-}
-
-// ─────────────────────────────────────────────
-// 시나리오 오브젝트 관리 (WMS 관리자 모드용)
-// 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9)
-// 사진: 창고물품과 동일하게 data:image/... 가 오면 드라이브 업로드 후 링크 저장
-// ─────────────────────────────────────────────
-function getScenarioImageFolderId_() {
-  return getFolderIdSetting_("SCENARIO_IMAGE_FOLDER_ID", "1QfkmNvsj0zooH5duof1QeqkK2dTjS9Zx");
-}
-
-function getScenarioObjectsForAdmin_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-  if (!sheet) return [];
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return [];
-  var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
-  var result = [];
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    if (!row[0] && !row[1]) continue;
-    result.push({
-      rowIndex: i + 2,
-      id: padSlot_(String(row[0]).trim()),
-      name: String(row[1]).trim(),
-      sector: String(row[2] || "").trim(),
-      rootSlot: padSlot_(String(row[3]).trim()),
-      category: String(row[4] || "").trim(),
-      subcategory: String(row[5] || "").trim(),
-      image: String(row[6] || "").trim(),
-      stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0,
-      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0
-    });
-  }
-  return result;
-}
-
-function resolveScenarioImage_(photoVal, name) {
-  photoVal = photoVal || "";
-  if (photoVal.indexOf("data:image/") === 0) {
-    var fileName = String(name || "시나리오물품").trim();
-    return uploadImageToDrive(photoVal, fileName, getScenarioImageFolderId_(), "Scenario Object Images");
-  }
-  return photoVal;
-}
-
-function updateScenarioObject_(item) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
-  var rowIndex = Number(item.rowIndex);
-  if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
-  var range = sheet.getRange(rowIndex, 1, 1, 9);
-  var cur = range.getValues()[0];
-
-  if (item.id !== undefined) cur[0] = padSlot_(String(item.id).trim());
-  if (item.name !== undefined) cur[1] = item.name;
-  if (item.sector !== undefined) cur[2] = item.sector;
-  if (item.rootSlot !== undefined) cur[3] = padSlot_(String(item.rootSlot).trim());
-  if (item.category !== undefined) cur[4] = item.category;
-  if (item.subcategory !== undefined) cur[5] = item.subcategory;
-  if (item.image !== undefined) cur[6] = resolveScenarioImage_(item.image, item.name || cur[1]);
-  // 재고 열은 수식이 있을 수 있으므로 수식이 없을 때만 값 설정
-  if (item.stock !== undefined) {
-    var stockCell = sheet.getRange(rowIndex, 8);
-    if (!stockCell.getFormula()) {
-      cur[7] = (item.stock === "" || item.stock == null) ? "" : Number(item.stock);
-    }
-  }
-  range.setValues([cur]);
-  return {
-    rowIndex: rowIndex, id: padSlot_(String(cur[0]).trim()), name: String(cur[1]).trim(),
-    sector: String(cur[2] || "").trim(), rootSlot: padSlot_(String(cur[3]).trim()),
-    category: String(cur[4] || "").trim(), subcategory: String(cur[5] || "").trim(),
-    image: String(cur[6] || "").trim(),
-    stock: (cur[7] !== "" && cur[7] !== undefined) ? Number(cur[7]) : 0,
-    rented: (cur[8] !== "" && cur[8] !== undefined) ? Number(cur[8]) : 0
-  };
-}
-
-function addScenarioObject_(item) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
-  var nextRow = sheet.getLastRow() + 1;
-  var img = resolveScenarioImage_(item.image || "", item.name);
-  var rowValues = [
-    padSlot_(String(item.id || "").trim()),
-    item.name || "",
-    item.sector || "",
-    padSlot_(String(item.rootSlot || "").trim()),
-    item.category || "",
-    item.subcategory || "",
-    img,
-    (item.stock === "" || item.stock == null) ? 0 : Number(item.stock),
-    0
-  ];
-  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
-  return { rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3], category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0 };
-}
-
-function deleteScenarioObject_(rowIndex) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
-  var idx = Number(rowIndex);
-  if (!idx || idx < 2) throw new Error("올바르지 않은 행 인덱스: " + idx);
-  sheet.deleteRow(idx);
-}
-
-function padSlot_(raw) {
-  var s = String(raw).trim().replace(/\D/g, "");
-  if (!s) return raw;
+export function padSlot(raw: string | null | undefined): string {
+  const s = String(raw ?? "").trim().replace(/\D/g, "");
+  if (!s) return String(raw ?? "").trim();
   return s.length < 6 ? s.padStart(6, "0") : s;
 }
 
-function normalizeSid_(sid) { return String(sid || "").trim().toUpperCase().replace(/\s+/g, ""); }
-
-// ─────────────────────────────────────────────
-// Scenario 시트 upsert (구 SID별 필요물품 대체)
-// 스크래퍼가 보내는 {sid, high_level_en, high_level_ko, items:[{id,name,quantity}]}를
-// Scenario 시트(6열)에 직접 upsert합니다.
-// ─────────────────────────────────────────────
-var SCENARIO_HEADERS = ["SID", "High Level Instruction (EN)", "High Level Instruction (KO)", "Object ID", "Object Name", "Quantity"];
-
-function upsertScenarioRows_(normalizedSid, highLevelEn, highLevelKo, items) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = getOrCreateSheet_(ss, SCENARIO_DEFINITION_SHEET_NAME, SCENARIO_HEADERS);
-  var lastRow = sheet.getLastRow();
-  var existing = {};
-  if (lastRow >= 2) {
-    var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
-    for (var i = 0; i < data.length; i++) {
-      var key = normalizeSid_(data[i][0]) + "||" + padSlot_(String(data[i][3] || "").trim());
-      existing[key] = i + 2;
-    }
-  }
-  var added = 0, updated = 0;
-  items.forEach(function (it) {
-    var itemId = padSlot_(String(it.id || "").trim());
-    if (!itemId) return;
-    var qty = it.quantity || 1;
-    var name = it.name || "";
-    var key = normalizedSid + "||" + itemId;
-    if (existing[key]) {
-      sheet.getRange(existing[key], 1, 1, 6).setValues([[normalizedSid, highLevelEn || "", highLevelKo || "", itemId, name, qty]]);
-      updated++;
-    } else {
-      sheet.appendRow([normalizedSid, highLevelEn || "", highLevelKo || "", itemId, name, qty]);
-      existing[key] = sheet.getLastRow();
-      added++;
-    }
-  });
-  return { added: added, updated: updated };
+export function isKoreanName(v: string): boolean {
+  return /^[\uAC00-\uD7A3\u3131-\u318E\s]+$/.test(v);
 }
 
-// 통합 doPost에서 호출: 스크래퍼 하위 호환 + upsertScenario 액션
-function handleScenarioUpsertPost_(payload) {
-  var result = { success: false, message: "" };
+export function nowString(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/* ---------------- API 호출 (WMS callScript와 동일한 CORS 회피 패턴) ---------------- */
+// 연동 URL과 쿼리스트링을 안전하게 합친다.
+// scriptUrl에 이미 '?'(예: ...exec?usp=sharing)나 fragment('#'), 공백이 들어와도
+// action 파라미터가 묻히지 않도록 정규화한다. (특히 모바일에서 URL이 잘못 저장된 경우 방어)
+function normalizeScriptUrl(raw: string): string {
+  let u = String(raw || "").trim();
+  const hashIdx = u.indexOf("#");
+  if (hashIdx !== -1) u = u.slice(0, hashIdx); // fragment 제거
+  return u.trim();
+}
+
+function buildUrl(scriptUrl: string, qs: string): string {
+  const base = normalizeScriptUrl(scriptUrl);
+  if (!qs) return base;
+  return base + (base.indexOf("?") !== -1 ? "&" : "?") + qs;
+}
+
+async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}) {
+  if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
+  const qs = new URLSearchParams({ action, ...params }).toString();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃 (무한로딩 방지)
+  const url = buildUrl(scriptUrl, qs);
+  let res: Response;
   try {
-    var sid = normalizeSid_(payload.sid);
-    var items = Array.isArray(payload.items) ? payload.items : [];
-    if (!sid || items.length === 0) {
-      result.message = "sid 또는 items가 비어 있습니다.";
-      return responseJSON(result);
-    }
-    var counts = upsertScenarioRows_(sid, payload.high_level_en, payload.high_level_ko, items);
-    result.success = true;
-    result.message = sid + ": " + counts.added + "건 추가, " + counts.updated + "건 갱신";
-  } catch (err) { result.message = "오류: " + err.message; }
-  return responseJSON(result);
-}
-
-function resolveBorrowerContact_(borrowInfo) {
-  var affiliation = borrowInfo.affiliation || "";
-  var email = null;
-  if (affiliation === "cfgw") {
-    var empId = String(borrowInfo.employeeId || "").trim();
-    if (/^\d+$/.test(empId)) email = empId + "@cfgw-kr.com";
-  } else if (affiliation === "configds") {
-    var found = lookupConfigDsContact_(borrowInfo.borrowerName);
-    if (found) email = found.email;
+    res = await fetch(url, { signal: controller.signal });
+  } catch (e: any) {
+    if (e?.name === "AbortError") throw new Error("서버 응답이 지연되어 요청을 취소했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
+    throw new Error(e?.message || "네트워크 오류가 발생했습니다.");
+  } finally {
+    clearTimeout(timer);
   }
-  return { affiliation: affiliation, email: email };
-}
-
-function isConfigDsRegistered(name) {
-  return !!lookupConfigDsContact_(name);
-}
-
-function lookupConfigDsContact_(name) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = getOrCreateSheet_(ss, CONFIGDS_SHEET_NAME, ["이름", "이메일", "Slack User ID"]);
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return null;
-  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-  var target = String(name || "").trim().toLowerCase();
-  if (!target) return null;
-  for (var i = 0; i < data.length; i++) {
-    var rowName = String(data[i][0] || "").trim().toLowerCase();
-    if (rowName === target) return { email: String(data[i][1] || "").trim() || null, slackId: String(data[i][2] || "").trim() || null };
-  }
-  return null;
-}
-
-function lookupConfigDsSlackIdByEmail_(email) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(CONFIGDS_SHEET_NAME);
-  if (!sheet) return null;
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return null;
-  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-  var target = String(email || "").trim().toLowerCase();
-  if (!target) return null;
-  for (var i = 0; i < data.length; i++) {
-    var rowEmail = String(data[i][1] || "").trim().toLowerCase();
-    if (rowEmail === target) return String(data[i][2] || "").trim() || null;
-  }
-  return null;
-}
-
-function buildApplicantLine_(borrowerName, contact) {
-  var extra = "";
-  if (contact.affiliation === "cfgw") extra = " (Cfgw-kr)";
-  else if (contact.affiliation === "configds") extra = " (ConfigDS)";
-  else if (contact.affiliation === "other") extra = " (기타)";
-  if (contact.email) {
-    var slackUserId = lookupSlackIdByEmail_(contact.email);
-    if (slackUserId) return "• 대여자: <@" + slackUserId + ">" + extra;
-    return "• 대여자: " + borrowerName + extra + " (" + contact.email + ")";
-  }
-  // 기타 소속: 저장 없이 이름 그대로 표기
-  return "• 대여자: " + borrowerName + extra;
-}
-
-function buildMentionText_(borrowerName, email, prefix) {
-  prefix = (prefix === undefined) ? "반납자: " : prefix;
-  if (email) {
-    var slackUserId = lookupSlackIdByEmail_(email);
-    if (slackUserId) return prefix + "<@" + slackUserId + ">";
-    return prefix + borrowerName + " (" + email + ")";
-  }
-  return prefix + borrowerName;
-}
-
-function lookupSlackIdByEmail_(email) {
-  if (!email) return null;
-  var fromSheet = lookupConfigDsSlackIdByEmail_(email);
-  if (fromSheet) return fromSheet;
-  return lookupSlackUserId_(email);
-}
-
-function lookupSlackUserId_(email) {
-  if (!SLACK_BOT_TOKEN) return null;
-  var cache = CacheService.getScriptCache();
-  var cacheKey = "slackUid_" + email.toLowerCase();
-  var cached = cache.get(cacheKey);
-  if (cached) return cached === "null" ? null : cached;
+  const text = await res.text();
+  let data: any;
   try {
-    var response = UrlFetchApp.fetch("https://slack.com/api/users.lookupByEmail?email=" + encodeURIComponent(email), { method: "get", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, muteHttpExceptions: true });
-    var data = JSON.parse(response.getContentText());
-    if (data.ok && data.user && data.user.id) { cache.put(cacheKey, data.user.id, 21600); return data.user.id; }
-    cache.put(cacheKey, "null", 1800);
-    return null;
-  } catch (e) { return null; }
-}
-
-function getOrCreateSheet_(ss, sheetName, headers) {
-  var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) {
-    sheet = ss.insertSheet(sheetName);
-    sheet.appendRow(headers);
-    var protection = sheet.protect().setDescription(sheetName + " 수정 방지");
-    protection.removeEditors(protection.getEditors());
-    var owner = ss.getOwner();
-    if (owner) protection.addEditor(owner);
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("서버가 올바르지 않은 응답을 반환했습니다. 웹앱 배포 상태를 확인하세요.");
   }
-  return sheet;
-}
-
-function migrateGeneralSheetColumns() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(GENERAL_SHEET_NAME);
-  if (sheet) {
-    if (sheet.getLastColumn() < 9 || String(sheet.getRange(1, 9).getValue()).trim() !== "이메일") sheet.getRange(1, 9).setValue("이메일");
-    if (sheet.getLastColumn() < 10 || String(sheet.getRange(1, 10).getValue()).trim() !== "Slack Thread TS") sheet.getRange(1, 10).setValue("Slack Thread TS");
-    if (sheet.getLastColumn() < 11 || String(sheet.getRange(1, 11).getValue()).trim() !== "배치ID") sheet.getRange(1, 11).setValue("배치ID");
-    if (sheet.getLastColumn() < 12 || String(sheet.getRange(1, 12).getValue()).trim() !== "신청시각") sheet.getRange(1, 12).setValue("신청시각");
-    if (sheet.getLastColumn() < 13 || String(sheet.getRange(1, 13).getValue()).trim() !== "대여구분") sheet.getRange(1, 13).setValue("대여구분");
-  }
-  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
-  if (scenarioSheet) {
-    if (scenarioSheet.getLastColumn() < 8 || String(scenarioSheet.getRange(1, 8).getValue()).trim() !== "이메일") scenarioSheet.getRange(1, 8).setValue("이메일");
-    if (scenarioSheet.getLastColumn() < 9 || String(scenarioSheet.getRange(1, 9).getValue()).trim() !== "Slack Thread TS") scenarioSheet.getRange(1, 9).setValue("Slack Thread TS");
-    if (scenarioSheet.getLastColumn() < 10 || String(scenarioSheet.getRange(1, 10).getValue()).trim() !== "배치ID") scenarioSheet.getRange(1, 10).setValue("배치ID");
-    if (scenarioSheet.getLastColumn() < 11 || String(scenarioSheet.getRange(1, 11).getValue()).trim() !== "신청시각") scenarioSheet.getRange(1, 11).setValue("신청시각");
-    if (scenarioSheet.getLastColumn() < 12 || String(scenarioSheet.getRange(1, 12).getValue()).trim() !== "물품 구분") scenarioSheet.getRange(1, 12).setValue("물품 구분");
-  }
-  try { SpreadsheetApp.getUi().alert("로그 시트 헤더를 보강했습니다."); } catch (e) {}
-}
-
-// 봇 토큰으로 채널에 단일 메시지 발송 (구 웹훅 sendSlackNotification 대체)
-// 성공 시 메시지 ts를 반환, 실패 시 null (lastSlackError_에 사유 기록)
-function sendSlackNotification(message) {
-  return postSlackMessage_(message);
-}
-
-var lastSlackError_ = "";
-
-function boxWrap_(text) {
-  var bar = "━━━━━━━━━━━━━━━━━━━━";
-  return bar + "\n" + text + "\n" + bar;
-}
-
-function postSlackMessage_(text) {
-  lastSlackError_ = "";
-  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID) { lastSlackError_ = "봇 토큰/채널ID 미설정"; return null; }
-  try {
-    var response = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: text }), muteHttpExceptions: true });
-    var data = JSON.parse(response.getContentText());
-    if (data.ok && data.ts) return data.ts;
-    lastSlackError_ = data.error || "unknown";
-    return null;
-  } catch (e) { lastSlackError_ = e.message; return null; }
-}
-
-function postThreadReply_(text, threadTs) {
-  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID || !threadTs) return false;
-  try {
-    var response = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: text, thread_ts: threadTs }), muteHttpExceptions: true });
-    var data = JSON.parse(response.getContentText());
-    return !!data.ok;
-  } catch (e) { return false; }
-}
-
-function testSlackThread() {
-  var ui = SpreadsheetApp.getUi();
-  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID) { ui.alert("SLACK_BOT_TOKEN 또는 SLACK_CHANNEL_ID가 비어 있습니다."); return; }
-  var mainResp = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: "🔧 스레드 테스트 (메인 메시지)" }), muteHttpExceptions: true });
-  var mainData = JSON.parse(mainResp.getContentText());
-  if (!mainData.ok) { ui.alert("메인 메시지 실패\nSlack 오류: " + (mainData.error || "unknown") + "\n\nnot_in_channel 이면 해당 채널에서 '/invite @봇이름' 으로 봇을 초대하세요."); return; }
-  var replyResp = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: "🔧 스레드 테스트 (댓글) — 이게 보이면 정상입니다.", thread_ts: mainData.ts }), muteHttpExceptions: true });
-  var replyData = JSON.parse(replyResp.getContentText());
-  if (!replyData.ok) { ui.alert("메인 메시지는 성공했지만 댓글 실패\nSlack 오류: " + (replyData.error || "unknown")); return; }
-  ui.alert("성공! 채널에 메인 메시지와 스레드 댓글이 정상적으로 올라갔습니다. 실제 대여/반납도 댓글이 달립니다.");
-}
-
-function sendOverdueReminders() {
-  var items = getUnreturnedItems();
-  var nowMs = new Date().getTime();
-  var groups = {}; var order = [];
-  items.forEach(function (item) {
-    var borrowMs = null;
-    if (item.borrowedAtMs) borrowMs = item.borrowedAtMs;
-    else if (item.borrowDate) { var d = new Date(item.borrowDate); if (!isNaN(d.getTime())) borrowMs = d.getTime(); }
-    if (borrowMs === null) return;
-    var elapsedHours = (nowMs - borrowMs) / 3600000;
-    if (elapsedHours < OVERDUE_HOURS) return;
-    var borrower = item.borrowerName || "(이름 없음)";
-    if (!groups[borrower]) { groups[borrower] = { email: item.email || "", entries: [] }; order.push(borrower); }
-    if (!groups[borrower].email && item.email) groups[borrower].email = item.email;
-    groups[borrower].entries.push({ label: item.itemLabel, hours: Math.floor(elapsedHours) });
-  });
-  if (order.length === 0) return { success: true, message: "대여 후 " + OVERDUE_HOURS + "시간 이상 경과한 미반납 항목이 없습니다." };
-  var locations = buildLocationMap_();
-  var failed = 0;
-  order.forEach(function (borrower) {
-    var g = groups[borrower];
-    var mention = buildMentionText_(borrower, g.email, "");
-    var mainText = "⏰ " + mention + "님, 대여하신 물품을 빌리신 지 " + OVERDUE_HOURS + "시간이 지났습니다. 반납 부탁드립니다!";
-    var itemLines = g.entries.map(function (e) { return "  · " + e.label + " (" + e.hours + "시간 경과)"; }).join("\n");
-    var ts = postSlackMessage_(boxWrap_(mainText));
-    if (ts) {
-      // 위치 정렬된 물품·위치 목록을 스레드 댓글로 첨부
-      var parsedItems = g.entries.map(function (e) { return parseItemLabel_(e.label); });
-      var locLines = buildMergedLocationLines_(parsedItems, locations);
-      if (locLines.length) postThreadReply_("📍 *미반납 물품 · 위치*\n" + locLines.join("\n"), ts);
-    } else {
-      failed++;
+  if (!data.success) {
+    // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
+    if (data.error && String(data.error).indexOf("알 수 없는") !== -1) {
+      const shown = normalizeScriptUrl(scriptUrl);
+      throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
     }
+    throw new Error(data.error || "요청 실패");
+  }
+  return data;
+}
+
+async function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
+  if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
+  const res = await fetch(normalizeScriptUrl(scriptUrl), {
+    method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action, payload }),
   });
-  var note = failed ? " (" + failed + "명은 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)" : "";
-  return { success: true, message: order.length + "명에게 미반납 알림을 보냈습니다." + note };
-}
-
-function sendOverdueRemindersManual() { var res = sendOverdueReminders(); SpreadsheetApp.getUi().alert(res.message); }
-
-function setupDailyReminderTrigger() {
-  var triggers = ScriptApp.getProjectTriggers();
-  var exists = triggers.some(function (t) { return t.getHandlerFunction() === "sendOverdueReminders"; });
-  if (exists) { SpreadsheetApp.getUi().alert("이미 자동 발송이 설정되어 있습니다."); return; }
-  ScriptApp.newTrigger("sendOverdueReminders").timeBased().everyHours(1).create();
-  SpreadsheetApp.getUi().alert("매시간 미반납 여부를 확인해 24시간 경과 시 자동 발송되도록 설정했습니다.");
-}
-
-function removeDailyReminderTrigger() {
-  var triggers = ScriptApp.getProjectTriggers();
-  var removed = 0;
-  triggers.forEach(function (t) { if (t.getHandlerFunction() === "sendOverdueReminders") { ScriptApp.deleteTrigger(t); removed++; } });
-  SpreadsheetApp.getUi().alert(removed > 0 ? "자동 발송을 해제했습니다." : "설정된 자동 발송이 없습니다.");
-}
-
-function onOpen() {
-  var ui = SpreadsheetApp.getUi();
-  ui.createMenu("물품 관리")
-    .addItem("웹 앱 URL 확인", "openWebAppTest")
-    .addSeparator()
-    .addItem("미반납 알림 지금 보내기", "sendOverdueRemindersManual")
-    .addItem("미반납 알림 자동 발송 설정(매시간)", "setupDailyReminderTrigger")
-    .addItem("미반납 알림 자동 발송 해제", "removeDailyReminderTrigger")
-    .addSeparator()
-    .addItem("Slack 스레드 댓글 테스트", "testSlackThread")
-    .addItem("현재 버전을 최신으로 등록(배포 직후 실행)", "publishCurrentVersion")
-    .addItem("로그 시트 헤더 보강(최초 1회)", "migrateGeneralSheetColumns")
-    .addToUi();
-}
-
-function openWebAppTest() {
-  var ui = SpreadsheetApp.getUi();
-  var webAppUrl = ScriptApp.getService().getUrl();
-  ui.alert("웹 앱 URL", "아래 URL을 복사하여 브라우저에서 열어보세요:\n" + webAppUrl, ui.ButtonSet.OK);
-}
-
-function parseSidParts_(sid) {
-  var m = normalizeSid_(sid).match(/^([A-Z]+)(\d+)$/);
-  if (!m) return null;
-  return { prefix: m[1], num: parseInt(m[2], 10) };
-}
-
-function readScenarioIndex_() {
-  var index = { sids: {}, maxNum: -1, maxSid: "" };
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return index;
-  var col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
-  col.forEach(function (r) {
-    var sid = normalizeSid_(r[0]);
-    if (!sid) return;
-    index.sids[sid] = true;
-    var parts = parseSidParts_(sid);
-    if (!parts) return;
-    // 앞자리 0 유무가 다른 표기(예: "S120"과 "S0120")도 같은 SID로 인식되도록 정규화 키를 함께 등록한다.
-    index.sids[parts.prefix + parts.num] = true;
-    if (parts.num > index.maxNum) { index.maxNum = parts.num; index.maxSid = sid; }
-  });
-  return index;
-}
-
-function evaluateSidUsable_(sid, index) {
-  var target = normalizeSid_(sid);
-  var res = { blocked: false, reason: "" };
-  var parts = parseSidParts_(target);
-  var normalizedKey = parts ? (parts.prefix + parts.num) : target;
-  if (!target || index.sids[target] || index.sids[normalizedKey]) return res;
-  if (!parts) return res;
-  if (index.maxNum === undefined || index.maxNum < 0) return res;
-  if (parts.num <= index.maxNum) {
-    res.blocked = true;
-    res.reason = target + " 는 Scenario 시트에 없습니다. 시트에 등록된 마지막 SID(" + (index.maxSid || index.maxNum)
-      + ")보다 앞번호이므로 잘못된 SID이거나 삭제된 시나리오입니다. 대여할 수 없습니다.";
-  }
-  return res;
-}
-
-// ── 진단용: 특정 SID가 "Scenario" 시트에서 왜 안 찾아지는지 확인한다.
-// Apps Script 편집기에서 이 함수(시나리오SID진단)를 선택하고 ▶ 실행한 뒤,
-// "보기 → 실행 기록" 또는 "보기 → 로그"에서 결과를 확인하세요.
-// 괄호 안의 SID를 원하는 값으로 바꿔서 실행할 수도 있습니다 (기본값: S0120).
-function 시나리오SID진단(sidToCheck) {
-  var target = normalizeSid_(sidToCheck || "S0120");
-  Logger.log("=== 시나리오 SID 진단: " + target + " ===");
-  Logger.log("현재 서버 버전(APP_VERSION): " + APP_VERSION + "  ← 이 값이 화면에서 보이는 버전과 다르면 아직 재배포가 안 된 것입니다.");
-
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  Logger.log("연결된 스프레드시트: " + ss.getName());
-
-  var sheet = ss.getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
-  if (!sheet) {
-    Logger.log("❌ '" + SCENARIO_DEFINITION_SHEET_NAME + "' 라는 이름의 시트 탭을 찾지 못했습니다.");
-    Logger.log("   실제 시트 탭 이름들: " + ss.getSheets().map(function (s) { return s.getName(); }).join(", "));
-    return;
-  }
-  Logger.log("✅ 시트 탭을 찾았습니다: " + sheet.getName());
-
-  var lastRow = sheet.getLastRow();
-  Logger.log("마지막 행 번호(getLastRow): " + lastRow);
-  if (lastRow < 2) {
-    Logger.log("❌ 데이터가 없습니다 (헤더 행뿐).");
-    return;
-  }
-
-  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
-  Logger.log("읽어온 데이터 행 수: " + data.length);
-
-  var targetParts = parseSidParts_(target);
-  var exactMatches = [];
-  var normMatches = [];
-  var sampleFirst5 = [];
-  for (var i = 0; i < data.length; i++) {
-    var rawCell = data[i][0];
-    var rowSid = normalizeSid_(rawCell);
-    if (i < 5) sampleFirst5.push("행" + (i + 2) + ": 원본='" + rawCell + "' → 정규화='" + rowSid + "'");
-    if (rowSid === target) exactMatches.push(i + 2);
-    var rp = parseSidParts_(rowSid);
-    if (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num) normMatches.push(i + 2);
-  }
-
-  Logger.log("--- A열 처음 5개 샘플 ---");
-  sampleFirst5.forEach(function (s) { Logger.log(s); });
-
-  Logger.log("--- 결과 ---");
-  Logger.log("문자열 완전일치 행: " + (exactMatches.length ? exactMatches.join(", ") : "없음"));
-  Logger.log("접두문자+숫자값 일치 행(0 패딩 무시): " + (normMatches.length ? normMatches.join(", ") : "없음"));
-
-  if (exactMatches.length === 0 && normMatches.length === 0) {
-    Logger.log("❌ 이 SID는 '" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트 A열 어디에도 없습니다.");
-    Logger.log("   (화면에는 보이는데 이 결과가 나온다면, 탭 이름이 미세하게 다르거나(공백 등),");
-    Logger.log("    이 스크립트가 연결된 스프레드시트가 실제 보고 계신 파일과 다른 파일일 수 있습니다.)");
-  } else {
-    Logger.log("✅ 이 SID는 시트에 존재합니다. 그런데도 화면에서 '동기화가 필요한 SID'가 뜬다면,");
-    Logger.log("   Apps Script를 수정만 하고 '배포 → 배포 관리 → 새 버전'으로 재배포하지 않았을 가능성이 매우 높습니다.");
-  }
-}
-
-/**
- * SID 하나를 받아 해당 시나리오의 High Level 안내문과 필요 물품 목록을 반환한다.
- * "Scenario" 시트(A:SID, B:안내(영문), C:안내(한글), D:물품ID, E:물품명, F:수량)에서
- * 같은 SID를 가진 모든 행을 모아 하나의 시나리오 정보로 합친다.
- *
- * 설계 원칙: 이 함수는 절대 예외를 밖으로 던지지 않는다. 어떤 단계에서 문제가 생기든
- * (시트를 못 찾음, 물품 정보 병합 실패 등) 항상 유효한 객체를 반환하고, 문제가 있었다면
- * errorMessage 필드에 사람이 읽을 수 있는 이유를 담아 화면에서 바로 확인할 수 있게 한다.
- */
-function getScenarioDefinition(sid) {
-  var result = {
-    sid: normalizeSid_(sid),
-    found: false,
-    syncNeeded: true,
-    blocked: false,
-    blockReason: "",
-    highLevelEn: "",
-    highLevelKo: "",
-    items: [],
-    errorMessage: "",   // 진단용: 문제가 있었다면 이유가 여기 담긴다.
-    rowsScanned: 0       // 진단용: Scenario 시트에서 실제로 몇 행을 읽었는지
-  };
-
-  var target = result.sid;
-  if (!target) {
-    result.errorMessage = "SID 값이 비어 있습니다.";
-    return result;
-  }
-
-  // 1단계: Scenario 시트에서 SID와 일치하는 행을 모두 찾는다.
-  var lookup;
+  const text = await res.text();
   try {
-    lookup = lookupScenarioRows_(target);
-  } catch (e1) {
-    result.errorMessage = "Scenario 시트를 읽는 중 오류: " + (e1 && e1.message ? e1.message : e1);
-    return result;
+    return JSON.parse(text);
+  } catch {
+    throw new Error("서버가 올바르지 않은 응답을 반환했습니다. 웹앱 배포 상태를 확인하세요.");
   }
+}
 
-  result.rowsScanned = lookup.rowsScanned;
+export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> {
+  const data = await apiGet(scriptUrl, "getBorrowAppInfo");
+  return String(data.version || "");
+}
 
-  if (!lookup.sheetFound) {
-    result.errorMessage = "'" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트 탭을 찾을 수 없습니다. 실제 탭 이름: " + lookup.availableSheetNames.join(", ");
-    return result;
-  }
+export async function fetchObjectItems(scriptUrl: string): Promise<ObjectItem[]> {
+  const data = await apiGet(scriptUrl, "getObjectItems");
+  return (data.items || []) as ObjectItem[];
+}
 
-  if (lookup.matchedRows.length === 0) {
-    // 시트에 해당 SID가 전혀 없는 경우: 마지막으로 등록된 SID보다 앞번호면 "삭제/오류 SID"로 차단 안내한다.
-    result.found = false;
-    result.syncNeeded = true;
-    try {
-      var chk = evaluateSidUsable_(target, { sids: {}, maxNum: lookup.maxNum, maxSid: lookup.maxSid });
-      result.blocked = chk.blocked;
-      result.blockReason = chk.reason;
-    } catch (e2) {
-      // 차단 여부 판단은 부가 기능이라, 실패해도 무시하고 계속 진행한다.
-    }
-    return result;
-  }
+export async function fetchScenarioDefinition(scriptUrl: string, sid: string): Promise<ScenarioDefinition> {
+  const data = await apiGet(scriptUrl, "getScenarioDefinition", { sid });
+  return (data.scenario || { sid, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }) as ScenarioDefinition;
+}
 
-  // 2단계: 찾은 행들을 하나의 시나리오 정보로 합친다.
-  result.found = true;
-  result.syncNeeded = false;
-  lookup.matchedRows.forEach(function (row) {
-    if (!result.highLevelEn && row.highLevelEn) result.highLevelEn = row.highLevelEn;
-    if (!result.highLevelKo && row.highLevelKo) result.highLevelKo = row.highLevelKo;
-    if (row.itemId) {
-      result.items.push({ id: row.itemId, name: row.itemName, quantity: row.quantity });
-    }
-  });
+export async function fetchUnreturnedItems(scriptUrl: string): Promise<UnreturnedItem[]> {
+  const data = await apiGet(scriptUrl, "getUnreturnedItems");
+  return (data.items || []) as UnreturnedItem[];
+}
 
-  // 3단계(부가 정보): 물품 마스터(시나리오 오브젝트)와 대조해 위치/재고/이미지 등을 채운다.
-  // 이 단계가 실패해도 위에서 이미 만든 핵심 정보(안내문·물품 목록)는 그대로 반환한다.
+export async function fetchMyBorrowedItems(scriptUrl: string, name: string, employeeId: string): Promise<UnreturnedItem[]> {
+  const data = await apiGet(scriptUrl, "getMyBorrowedItems", { name, employeeId });
+  return (data.items || []) as UnreturnedItem[];
+}
+
+export async function checkConfigDsRegistered(scriptUrl: string, name: string): Promise<boolean> {
+  const data = await apiGet(scriptUrl, "isConfigDsRegistered", { name });
+  return !!data.registered;
+}
+
+export async function postRecordBorrow(scriptUrl: string, borrowList: BorrowEntry[], clientVersion: string): Promise<BorrowResult> {
+  return (await apiPost(scriptUrl, "recordBorrow", { borrowList, clientVersion })) as BorrowResult;
+}
+
+export async function postProcessReturn(scriptUrl: string, returnRequests: ReturnRequest[], clientVersion: string): Promise<BorrowResult> {
+  return (await apiPost(scriptUrl, "processReturn", { returnRequests, clientVersion })) as BorrowResult;
+}
+
+/* ---------------- 데모 데이터 (미연동 시) ---------------- */
+export const DEMO_OBJECT_ITEMS: ObjectItem[] = [
+  { id: "000008", name: "fruit", sector: "Seoul-Root", rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", image: "", stock: 15, rented: 8 },
+  { id: "000019", name: "towel (정사각형 소형 행주)", sector: "Seoul-Root", rootSlot: "000098", category: "청소 및 위생용품", subcategory: "위생 및 타월", image: "", stock: 58, rented: 3 },
+  { id: "002900", name: "Water hose", sector: "Seoul-Root", rootSlot: "000184", category: "생활용품", subcategory: "기타", image: "", stock: 10, rented: 0 },
+  { id: "002884", name: "Mechanical Pencil", sector: "Seoul-Root", rootSlot: "000246", category: "사무용품", subcategory: "필기구", image: "", stock: 25, rented: 5 },
+  { id: "001531", name: "electronic scale", sector: "Seoul-Root", rootSlot: "000028", category: "전자기기", subcategory: "측정기기", image: "", stock: 4, rented: 1 },
+];
+
+/* ══════════ 열람 ↔ 대여 공용: 신원 & 장바구니 (localStorage) ══════════ */
+
+export interface BrowseIdentity { name: string; employeeId: string }
+export interface BrowseCartItem { id: string; name: string; quantity: number; rootSlot?: string }
+
+const IDENTITY_KEY = "wms_browse_identity";
+const CART_PREFIX = "wms_browse_cart:";
+
+export function identityKey(name: string, employeeId: string): string {
+  return `${String(name || "").trim()}|${String(employeeId || "").trim()}`;
+}
+
+export function saveIdentity(identity: BrowseIdentity): void {
+  try { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); } catch {}
+}
+
+export function loadIdentity(): BrowseIdentity | null {
   try {
-    var objectMap = {};
-    getObjectItems().forEach(function (object) { objectMap[object.id] = object; });
-    result.items.forEach(function (item) {
-      var obj = objectMap[item.id];
-      if (!obj) return;
-      if (!item.name) item.name = obj.name;
-      item.rootSlot = obj.rootSlot || "";
-      item.category = obj.category || "";
-      item.subcategory = obj.subcategory || "";
-      item.image = obj.image || "";
-      item.stock = obj.stock || 0;
-      item.rented = obj.rented || 0;
-    });
-  } catch (e3) {
-    // 물품 마스터 병합 실패는 부가 정보 손실일 뿐, SID 자체는 정상적으로 찾은 것이므로
-    // found/syncNeeded는 그대로 두고 참고용 에러 메시지만 남긴다.
-    result.errorMessage = "물품 상세 정보 병합 중 오류(무시하고 진행): " + (e3 && e3.message ? e3.message : e3);
-  }
-
-  return result;
+    const raw = localStorage.getItem(IDENTITY_KEY);
+    return raw ? (JSON.parse(raw) as BrowseIdentity) : null;
+  } catch { return null; }
 }
 
-/**
- * "Scenario" 시트를 읽어 특정 SID와 일치하는 모든 행을 찾는다.
- * getScenarioDefinition에서 분리해 별도로 테스트/재사용할 수 있게 했다.
- */
-function lookupScenarioRows_(target) {
-  var out = { sheetFound: false, availableSheetNames: [], rowsScanned: 0, matchedRows: [], maxNum: -1, maxSid: "" };
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
-  if (!sheet) {
-    out.availableSheetNames = ss.getSheets().map(function (s) { return s.getName(); });
-    return out;
-  }
-  out.sheetFound = true;
-
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return out;
-
-  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
-  out.rowsScanned = data.length;
-
-  var targetParts = parseSidParts_(target);
-
-  for (var i = 0; i < data.length; i++) {
-    var row = data[i];
-    var rowSid = normalizeSid_(row[0]);
-    if (!rowSid) continue;
-
-    var rp = parseSidParts_(rowSid);
-    if (rp && rp.num > out.maxNum) { out.maxNum = rp.num; out.maxSid = rowSid; }
-
-    // 앞자리 0 표기 차이(예: "S120" vs "S0120")를 흡수하기 위해
-    // 문자열 완전일치뿐 아니라 접두문자+숫자값 일치도 같은 SID로 인정한다.
-    var isMatch = rowSid === target || (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num);
-    if (!isMatch) continue;
-
-    out.matchedRows.push({
-      highLevelEn: String(row[1] || "").trim(),
-      highLevelKo: String(row[2] || "").trim(),
-      itemId: padSlot_(String(row[3] || "").trim()),
-      itemName: String(row[4] || "").trim(),
-      quantity: row[5] || 1
-    });
-  }
-
-  return out;
-}
-
-function ensureScenarioLogSchema_(sheet) {
-  if (sheet.getLastColumn() < SCENARIO_LOG_ITEM_KIND_COL) sheet.insertColumnsAfter(sheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL - sheet.getLastColumn());
-  sheet.getRange(1, SCENARIO_LOG_ITEM_KIND_COL).setValue("물품 구분");
-}
-
-function ensureGeneralLogSchema_(sheet) {
-  if (sheet.getLastColumn() < GENERAL_OPTION_COL) sheet.insertColumnsAfter(sheet.getLastColumn(), GENERAL_OPTION_COL - sheet.getLastColumn());
-  sheet.getRange(1, GENERAL_OPTION_COL).setValue("대여구분");
-}
-
-function scenarioItemLabel_(item) {
-  var id = item && item.id ? padSlot_(String(item.id).trim()) : "";
-  var qty = (item && item.quantity) || 1;
-  return (id ? "[" + id + "] " : "") + ((item && item.name) || "") + (qty > 1 ? " x " + qty : "");
-}
-
-function normalizeDateTimeInput_(value) {
-  var text = String(value || "").trim().replace("T", " ");
-  if (!text) return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text + " 00:00:00";
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) return text + ":00";
-  return text;
-}
-
-function objectLinks_(items) {
-  return (items || []).map(function (item) { return buildObjectLink_(item.id, item.name) + ((item.quantity || 1) > 1 ? " x " + item.quantity : ""); }).join(", ") || "없음";
-}
-
-function buildLocationMap_() {
-  var map = {};
-  getObjectItems().forEach(function (o) { map[o.id] = o.rootSlot; });
-  return map;
-}
-
-function objectLocationLine_(id, name, quantity, locations) {
-  var padded = padObjectId_(id);
-  var loc = padded ? (locations[padded] || "") : "";
-  var qtyText = (quantity || 1) > 1 ? " x " + quantity : "";
-  var idPrefix = padded ? "[" + padded + "] " : "";
-  return "• " + idPrefix + buildObjectLink_(id, name) + qtyText + (loc ? "  📍 " + loc : "  📍 위치 없음");
-}
-
-function labelLocationLine_(label, locations) {
-  label = String(label || "").trim();
-  if (!label) return "";
-  var m = label.match(/^\[(\d+)\]/);
-  var padded = m ? padObjectId_(m[1]) : "";
-  var loc = padded ? (locations[padded] || "") : "";
-  var idPrefix = padded ? "[" + padded + "] " : "";
-  return "• " + idPrefix + buildReqLinkFromLabel_(label) + (loc ? "  📍 " + loc : "  📍 위치 없음");
-}
-
-function parseItemLabel_(label) {
-  label = String(label || "").trim();
-  var m = label.match(/^\[(\d+)\]\s*(.*)$/);
-  var id = "", rest = label;
-  if (m) { id = m[1]; rest = m[2]; }
-  var qm = rest.match(/\s*[x×]\s*(\d+)\s*$/i);
-  var qty = 1, name = rest;
-  if (qm) { qty = parseInt(qm[1], 10) || 1; name = rest.substring(0, qm.index); }
-  return { id: id, name: name.trim(), quantity: qty };
-}
-
-function buildMergedLocationLines_(items, locations) {
-  var map = {}, order = [];
-  (items || []).forEach(function (it) {
-    if (!it) return;
-    var pid = padObjectId_(it.id);
-    var key = pid || ("name:" + String(it.name || "").toLowerCase());
-    if (!pid && !it.name) return;
-    if (!map[key]) { map[key] = { id: it.id, name: it.name, quantity: 0 }; order.push(key); }
-    map[key].quantity += (it.quantity || 1);
-    if (!map[key].name && it.name) map[key].name = it.name;
-  });
-  var arr = order.map(function (k) { return map[k]; });
-  arr.sort(function (a, b) {
-    return computeLocationSortIndex_(locations[padObjectId_(a.id)] || "") - computeLocationSortIndex_(locations[padObjectId_(b.id)] || "");
-  });
-  return arr.map(function (o) { return objectLocationLine_(o.id, o.name, o.quantity, locations); });
-}
-
-// 시나리오 오브젝트 시트의 재고/대여 실시간 갱신 (수식이 있으면 건드리지 않음)
-function updateInventory_(itemId, qtyChange) {
+export function saveBrowseCart(name: string, employeeId: string, items: BrowseCartItem[]): void {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
-    if (!sheet) return;
-    var lastRow = sheet.getLastRow();
-    if (lastRow < 2) return;
-    var range = sheet.getRange(2, 1, lastRow - 1, 9);
-    var data = range.getValues();
-    for (var i = 0; i < data.length; i++) {
-      var rowId = padSlot_(String(data[i][0]).trim());
-      if (rowId === padSlot_(itemId)) {
-        var cellStock = sheet.getRange(i + 2, 8);
-        var cellRented = sheet.getRange(i + 2, 9);
-
-        if (!cellStock.getFormula()) {
-          var currentStock = Number(data[i][7]) || 0;
-          cellStock.setValue(currentStock - qtyChange);
-        }
-        if (!cellRented.getFormula()) {
-          var currentRented = Number(data[i][8]) || 0;
-          cellRented.setValue(currentRented + qtyChange);
-        }
-        SpreadsheetApp.flush();
-        break;
-      }
-    }
-  } catch (e) {
-    Logger.log("updateInventory_ error: " + e.message);
-  }
+    const k = CART_PREFIX + identityKey(name, employeeId);
+    if (items.length === 0) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(items));
+  } catch {}
 }
 
-function recordBorrow(borrowList, clientVersion) {
-  if (!Array.isArray(borrowList) || !borrowList.length) return { success: false, message: "대여 요청 정보가 없습니다." };
-  if (!clientVersion || clientVersion !== APP_VERSION) {
-    return { success: false, message: "구버전 화면을 사용 중입니다. 대여 신청 기능이 작동하지 않습니다. 페이지를 새로고침(F5)하여 최신 버전으로 접속한 뒤 다시 시도해주세요. (현재 버전: " + (clientVersion || "미확인") + ", 최신 버전: " + APP_VERSION + ")" };
-  }
-  if (isOutdatedVersion_()) {
-    return { success: false, message: "구버전에서는 대여 신청을 할 수 없습니다. 최신 버전 주소로 접속한 뒤 다시 시도해주세요." };
-  }
+export function loadBrowseCart(name: string, employeeId: string): BrowseCartItem[] {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var scenarioSheet = getOrCreateSheet_(ss, SCENARIO_SHEET_NAME, ["대여자", "시나리오 ID", "물품", "대여일", "대여 목적", "반납 여부", "반납일", "이메일", "Slack Thread TS", "배치ID", "신청시각", "물품 구분"]);
-    ensureScenarioLogSchema_(scenarioSheet);
-    var generalSheet = getOrCreateSheet_(ss, GENERAL_SHEET_NAME, ["대여자", "대여 물품 ID", "대여 물품명", "수량", "대여일", "대여 목적", "반납 여부", "반납일", "이메일", "Slack Thread TS", "배치ID", "신청시각", "대여구분"]);
-    ensureGeneralLogSchema_(generalSheet);
-    var contact = resolveBorrowerContact_(borrowList[0]);
-    if (contact.affiliation === "configds" && !lookupConfigDsContact_(borrowList[0].borrowerName)) {
-      return { success: false, message: "'ConfigDS계정' 시트에 등록되지 않은 이름입니다. 관리자에게 계정 등록을 요청한 뒤 다시 시도해주세요." };
-    }
-    var scenarioIndex = readScenarioIndex_();
-    var blockedMsgs = [];
-    borrowList.forEach(function (info) {
-      if (info.itemType !== "scenario") return;
-      var chk = evaluateSidUsable_(info.scenarioId, scenarioIndex);
-      if (chk.blocked && blockedMsgs.indexOf(chk.reason) === -1) blockedMsgs.push(chk.reason);
-    });
-    if (blockedMsgs.length) return { success: false, message: blockedMsgs.join("\n") };
-
-    // Calculate total requested quantity per item ID to validate stock
-    var serverRequestedTotals = {};
-    var serverAdditionalRecorded = false;
-    borrowList.forEach(function (info) {
-      if (info.itemType !== "scenario") {
-        (info.borrowedItems || []).forEach(function (item) {
-          var itemId = padSlot_(String(item.id || "").trim());
-          if (!itemId) return;
-          if (!serverRequestedTotals[itemId]) {
-            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
-          }
-          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
-        });
-      } else {
-        var required = info.requiredObjects || [];
-        var additional = serverAdditionalRecorded ? [] : (info.additionalItems || []);
-        if (additional.length) serverAdditionalRecorded = true;
-
-        required.forEach(function (item) {
-          var itemId = padSlot_(String(item.id || "").trim());
-          if (!itemId) return;
-          if (!serverRequestedTotals[itemId]) {
-            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
-          }
-          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
-        });
-
-        additional.forEach(function (item) {
-          var itemId = padSlot_(String(item.id || "").trim());
-          if (!itemId) return;
-          if (!serverRequestedTotals[itemId]) {
-            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
-          }
-          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
-        });
-      }
-    });
-
-    // Validate against current stock
-    var inventoryItems = getObjectItems();
-    var inventoryMap = {};
-    inventoryItems.forEach(function (obj) {
-      inventoryMap[obj.id] = obj;
-    });
-
-    for (var reqId in serverRequestedTotals) {
-      var reqItem = serverRequestedTotals[reqId];
-      var invItem = inventoryMap[reqId];
-      var availableStock = invItem ? (invItem.stock || 0) : 0;
-      if (reqItem.quantity > availableStock) {
-        return {
-          success: false,
-          message: "재고 부족 오류: '" + reqItem.name + "' 물품의 대여 요청 수량(" + reqItem.quantity + "개)이 현재 사용 가능한 재고(" + availableStock + "개)를 초과합니다. 화면을 새로고침하여 재고를 확인하고 다시 시도해주세요."
-        };
-      }
-    }
-
-    var applicant = buildApplicantLine_(borrowList[0].borrowerName, contact);
-    var scenarioRows = [], generalRows = [], scenarioCount = 0, generalCount = 0;
-    var borrowedForThread = [];
-    var borrowedSids = [];
-    var hasGeneralBorrow = false;
-    var generalOption = "";
-    var purposeTexts = [];
-    var additionalItemsRecorded = false;
-    var scenarioRequestBatchId = Utilities.getUuid();
-    var additionalBatchId = Utilities.getUuid();
-    var scenarioRequestSubmittedAt = new Date();
-
-    borrowList.forEach(function (info) {
-      var borrowDateTime = normalizeDateTimeInput_(info.borrowDate);
-      var purposeText = String(info.borrowPurpose || "").trim();
-      if (purposeText && purposeTexts.indexOf(purposeText) === -1) purposeTexts.push(purposeText);
-
-      if (info.itemType !== "scenario") {
-        if (info.generalOption) generalOption = info.generalOption;
-        var generalPurpose = info.borrowPurpose;
-        var generalBatchId = Utilities.getUuid();
-        var generalSubmittedAt = new Date();
-        (info.borrowedItems || []).forEach(function (item) {
-          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, generalPurpose, "X", "", contact.email || "", "", generalBatchId, generalSubmittedAt, info.generalOption || ""]);
-          generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
-          borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
-          hasGeneralBorrow = true;
-
-          updateInventory_(item.id, item.quantity || 1);
-        });
-        return;
-      }
-      var batchId = scenarioRequestBatchId, now = scenarioRequestSubmittedAt;
-      var required = info.requiredObjects || [];
-      var additional = additionalItemsRecorded ? [] : (info.additionalItems || []);
-      if (additional.length) additionalItemsRecorded = true;
-
-      required.forEach(function (item) {
-        scenarioSheet.appendRow([info.borrowerName, info.scenarioId, scenarioItemLabel_(item), borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", batchId, now, "대여 물품"]);
-        scenarioRows.push(scenarioSheet.getLastRow());
-        borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
-
-        updateInventory_(item.id, item.quantity || 1);
-      });
-      if (!required.length) {
-        scenarioSheet.appendRow([info.borrowerName, info.scenarioId, "", borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", batchId, now, "대여 물품"]);
-        scenarioRows.push(scenarioSheet.getLastRow());
-      }
-      scenarioCount++;
-      if (borrowedSids.indexOf(info.scenarioId) === -1) borrowedSids.push(info.scenarioId);
-
-      if (additional.length) {
-        additional.forEach(function (item) {
-          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", additionalBatchId, now, "SID 추가 물품"]);
-          generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
-          borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
-          hasGeneralBorrow = true;
-
-          updateInventory_(item.id, item.quantity || 1);
-        });
-      }
-    });
-
-    var mainLines = ["📦 *물품 대여 신청*", applicant];
-    if (borrowedSids.length) mainLines.push("• 시나리오 ID: " + borrowedSids.join(", "));
-    if (hasGeneralBorrow) mainLines.push("• 일반 대여" + (generalOption ? ": " + generalOption : ""));
-    if (purposeTexts.length) mainLines.push("• 목적: " + purposeTexts.join(" / "));
-    var mainText = mainLines.join("\n");
-
-    var locations = buildLocationMap_();
-    var objLines = buildMergedLocationLines_(borrowedForThread, locations);
-    var replyText = "📍 *대여 물품 · 위치*\n" + (objLines.join("\n") || "없음");
-
-    var ts = postSlackMessage_(boxWrap_(mainText));
-    var slackNote = "";
-    if (ts) {
-      generalRows.forEach(function (r) { generalSheet.getRange(r, 10).setValue(ts); });
-      scenarioRows.forEach(function (r) { scenarioSheet.getRange(r, 9).setValue(ts); });
-      if (objLines.length) postThreadReply_(replyText, ts);
-    } else {
-      // 봇 메인 메시지 실패 시: 스레드 없이 단일 메시지로라도 재시도 (웹훅 미사용)
-      var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText));
-      slackNote = combined
-        ? " (스레드 없이 단일 메시지로 발송했습니다)"
-        : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
-    }
-    return { success: true, message: "SID " + scenarioCount + "건, 일반 물품 " + generalCount + "개를 기록했습니다." + slackNote };
-  } catch (e) { return { success: false, message: "대여 기록 중 오류: " + e.message }; }
+    const raw = localStorage.getItem(CART_PREFIX + identityKey(name, employeeId));
+    return raw ? (JSON.parse(raw) as BrowseCartItem[]) : [];
+  } catch { return []; }
 }
 
-function getUnreturnedItems() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
-  var locations = {};
-  var objectMap = {};
-  getObjectItems().forEach(function (o) {
-    locations[o.id] = o.rootSlot;
-    objectMap[o.id] = o;
-  });
-  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
-  if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
-    var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
-    data.forEach(function (row, i) {
-      if (String(row[5]).trim() === "O") return;
-      var label = row[2] || "(물품 미등록)";
-      var idMatch = String(label).match(/^\[(\d+)\]/);
-      var itemId = idMatch ? padSlot_(idMatch[1]) : "";
-      var parsedQty = parseItemLabel_(label).quantity || 1;
-      var obj = objectMap[itemId] || {};
-      result.push({ sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1], itemLabel: label, itemKind: row[11] || "추가 대여물품", location: itemId ? (locations[itemId] || "") : "", quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4], email: String(row[7] || "").trim(), batchId: String(row[9] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
-    });
-  }
-  var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
-  if (generalSheet && generalSheet.getLastRow() > 1) {
-    var general = generalSheet.getRange(2, 1, generalSheet.getLastRow() - 1, Math.max(generalSheet.getLastColumn(), GENERAL_COL_COUNT)).getValues();
-    general.forEach(function (row, i) {
-      if (String(row[6]).trim() === "O") return;
-      var id = String(row[1] || "").trim(), qty = row[3] || 1;
-      var pid = padSlot_(id);
-      var obj = objectMap[pid] || {};
-      var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
-      result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
-    });
-  }
-  return result;
+export function clearBrowseCart(name: string, employeeId: string): void {
+  try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-// 시나리오 대여 대장 전체 조회 (반납 완료 항목 포함, 최신순 정렬)
-// 반납 여부: SID대여 row[5]='O', 일반대여 row[6]='O'
-function getScenarioAllLogs_() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
-  var locations = {}, objectMap = {};
-  getObjectItems().forEach(function (o) { locations[o.id] = o.rootSlot; objectMap[o.id] = o; });
+/* ══════════ 창고 물품 (창고물품 시트) 타입 & 헬퍼 ══════════ */
 
-  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
-  if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
-    var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
-    data.forEach(function (row, i) {
-      if (!row[0] && !row[2]) return; // 빈 행
-      var returned = String(row[5]).trim() === "O";
-      var label = row[2] || "(물품 미등록)";
-      var idMatch = String(label).match(/^\[(\d+)\]/);
-      var itemId = idMatch ? padSlot_(idMatch[1]) : "";
-      var parsedQty = parseItemLabel_(label).quantity || 1;
-      var obj = objectMap[itemId] || {};
-      result.push({
-        sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1],
-        itemLabel: label, itemKind: row[11] || "추가 대여물품",
-        location: itemId ? (locations[itemId] || "") : "", itemId: itemId, itemName: parseItemLabel_(label).name || label,
-        quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4],
-        email: String(row[7] || "").trim(), batchId: String(row[9] || ""),
-        returned: returned, returnedMark: String(row[5] || "").trim(),
-        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
-      });
-    });
-  }
-
-  var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
-  if (generalSheet && generalSheet.getLastRow() > 1) {
-    var general = generalSheet.getRange(2, 1, generalSheet.getLastRow() - 1, Math.max(generalSheet.getLastColumn(), GENERAL_COL_COUNT)).getValues();
-    general.forEach(function (row, i) {
-      if (!row[0] && !row[2]) return;
-      var returned = String(row[6]).trim() === "O";
-      var id = String(row[1] || "").trim(), qty = row[3] || 1;
-      var pid = padSlot_(id);
-      var obj = objectMap[pid] || {};
-      var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
-      result.push({
-        sheetType: "general", rowIndex: i + 2, borrowerName: row[0],
-        itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""),
-        location: locations[pid] || "", itemId: pid, itemName: row[2],
-        quantity: qty, borrowDate: formatDateValue_(row[4]),
-        submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5],
-        email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""),
-        returned: returned, returnedMark: String(row[6] || "").trim(),
-        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
-      });
-    });
-  }
-
-  // 최신순 정렬 (borrowDate 내림차순 → 가장 최신이 앞, 오래된 것이 뒤)
-  result.sort(function (a, b) {
-    var da = String(a.borrowDate || ""), db = String(b.borrowDate || "");
-    if (da === db) return 0;
-    return da < db ? 1 : -1;
-  });
-  return result;
+export interface WarehouseItem {
+  rowIndex: number;
+  location: string;   // 예: "A-01", "F-02"
+  name: string;
+  photo: string;
+  stock: number | string | null;
+  spec: string;
+  note: string;
+  manager: string;
+  keywords?: string; // 한글 검색어 (검색 보조)
 }
 
-function processReturn(returnRequests, clientVersion) {
-  if (!Array.isArray(returnRequests) || !returnRequests.length) return { success: false, message: "반납할 물품을 선택해주세요." };
-  if (!clientVersion || clientVersion !== APP_VERSION) {
-    return { success: false, message: "구버전 화면을 사용 중입니다. 반납 처리 기능이 작동하지 않습니다. 페이지를 새로고침(F5)하여 최신 버전으로 접속한 뒤 다시 시도해주세요. (현재 버전: " + (clientVersion || "미확인") + ", 최신 버전: " + APP_VERSION + ")" };
-  }
+// 위치 문자열 "A-01" → { rack: "A", slot: "01" }
+export function parseRackSlot(loc: string | null | undefined): { rack: string; slot: string } {
+  const t = String(loc ?? "").trim().toUpperCase();
+  const parts = t.split("-");
+  if (parts.length < 2) return { rack: t, slot: "" };
+  return { rack: parts[0], slot: parts.slice(1).join("-") };
+}
+
+export function warehouseStockNum(stock: number | string | null): number {
+  if (stock === "" || stock === null || stock === undefined) return NaN; // N/A 취급
+  const n = Number(stock);
+  return isNaN(n) ? NaN : n;
+}
+
+export interface WarehouseCartItem {
+  rowIndex: number;
+  location: string;
+  name: string;
+  quantity: number;
+}
+
+const WH_CART_PREFIX = "wms_wh_cart:";
+
+export function saveWarehouseCart(name: string, employeeId: string, items: WarehouseCartItem[]): void {
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet(), scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME), generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
-    var now = new Date(), today = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-    var locations = buildLocationMap_();
-    var groups = {};
-    var order = [];
-    var processed = 0;
-
-    returnRequests.forEach(function (request) {
-      var isScenario = request.sheetType === "scenario";
-      var sheet = isScenario ? scenarioSheet : generalSheet;
-      if (!sheet || !request.rowIndex || request.rowIndex < 2) return;
-      var colCount = isScenario ? SCENARIO_LOG_ITEM_KIND_COL : Math.max(sheet.getLastColumn(), GENERAL_COL_COUNT);
-      var data = sheet.getRange(request.rowIndex, 1, 1, colCount).getValues()[0];
-      var returnedCol = isScenario ? 6 : 7;
-      if (String(data[returnedCol - 1]).trim() === "O") return;
-
-      var borrower, email, item = null, sid = "", isGeneral = false, option = "";
-      if (isScenario) {
-        borrower = data[0]; sid = data[1]; email = String(data[7] || "").trim();
-        if (data[2]) item = parseItemLabel_(data[2]);
-      } else {
-        borrower = data[0]; email = String(data[8] || "").trim(); isGeneral = true;
-        item = { id: data[1], name: data[2], quantity: data[3] || 1 };
-        option = String(data[12] || "").trim();
-      }
-
-      var rowQty = item ? (item.quantity || 1) : 1;
-      var reqQty = parseInt(request.quantity, 10);
-      if (isNaN(reqQty) || reqQty <= 0) reqQty = rowQty;
-      if (reqQty > rowQty) reqQty = rowQty;
-
-      if (reqQty < rowQty) {
-        var remainQty = rowQty - reqQty;
-        var returnedRow = data.slice();
-        returnedRow[returnedCol - 1] = "O";
-        returnedRow[returnedCol] = today;
-        if (isScenario) {
-          sheet.getRange(request.rowIndex, 3).setValue(scenarioItemLabel_({ id: item.id, name: item.name, quantity: remainQty }));
-          returnedRow[2] = scenarioItemLabel_({ id: item.id, name: item.name, quantity: reqQty });
-        } else {
-          sheet.getRange(request.rowIndex, 4).setValue(remainQty);
-          returnedRow[3] = reqQty;
-        }
-        sheet.appendRow(returnedRow);
-      } else {
-        sheet.getRange(request.rowIndex, returnedCol).setValue("O");
-        sheet.getRange(request.rowIndex, returnedCol + 1).setValue(today);
-      }
-      processed += reqQty;
-      if (item) item = { id: item.id, name: item.name, quantity: reqQty };
-
-      // REAL-TIME INVENTORY UPDATE (on Return, qtyChange is negative!)
-      if (item && item.id) {
-        updateInventory_(item.id, -reqQty);
-      }
-
-      if (!groups[borrower]) { groups[borrower] = { borrower: borrower, email: email, sids: [], hasGeneral: false, items: [], options: [] }; order.push(borrower); }
-      if (!groups[borrower].email && email) groups[borrower].email = email;
-      if (sid && groups[borrower].sids.indexOf(sid) === -1) groups[borrower].sids.push(sid);
-      if (isGeneral) {
-        groups[borrower].hasGeneral = true;
-        if (option && groups[borrower].options.indexOf(option) === -1) groups[borrower].options.push(option);
-      }
-      if (item) groups[borrower].items.push(item);
-    });
-
-    var remainingByBorrower = {};
-    getUnreturnedItems().forEach(function (u) {
-      var b = u.borrowerName || "";
-      var parsed = parseItemLabel_(u.itemLabel);
-      if (!parsed.id && !parsed.name) return;
-      if (!remainingByBorrower[b]) remainingByBorrower[b] = [];
-      remainingByBorrower[b].push(parsed);
-    });
-
-    var slackNote = "";
-    order.forEach(function (borrower) {
-      var g = groups[borrower];
-      var mainLines = ["✅ *반납 처리*", "• 반납자: " + buildMentionText_(g.borrower, g.email, "")];
-      if (g.sids.length) mainLines.push("• 시나리오 ID: " + g.sids.join(", "));
-      if (g.hasGeneral) mainLines.push(g.sids.length ? "• 일반 반납 물품 포함" : "• 일반 반납");
-      if (g.options.length) mainLines.push("• 대여구분: " + g.options.join(", "));
-      var mainText = mainLines.join("\n");
-
-      var returnLines = buildMergedLocationLines_(g.items, locations);
-      var replyText = "📍 *반납 물품 · 위치*\n" + (returnLines.join("\n") || "없음") + "\n반납일: " + today;
-
-      var remaining = remainingByBorrower[borrower] || [];
-      var remainingLines = buildMergedLocationLines_(remaining, locations);
-      var remainingText = "📦 *현재 대여 중인 물품 · 위치*\n" + (remainingLines.join("\n") || "없음 (모두 반납 완료)");
-
-      var ts = postSlackMessage_(boxWrap_(mainText));
-      if (ts) {
-        postThreadReply_(replyText, ts);
-        postThreadReply_(remainingText, ts);
-      } else {
-        var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText + "\n───────────────\n" + remainingText));
-        slackNote = combined
-          ? " (스레드 없이 단일 메시지로 발송했습니다)"
-          : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
-      }
-    });
-
-    return { success: true, message: processed + "개 물품의 반납을 처리했습니다." + slackNote };
-  } catch (e) { return { success: false, message: "반납 처리 중 오류: " + e.message }; }
+    const k = WH_CART_PREFIX + identityKey(name, employeeId);
+    if (items.length === 0) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify(items));
+  } catch {}
 }
 
-function getMyBorrowedItems(borrowerName, employeeId) {
-  var name = String(borrowerName || "").trim();
-  if (!name) return [];
-  var expectedEmail = "";
-  var empId = String(employeeId || "").trim();
-  if (empId && /^\d+$/.test(empId)) expectedEmail = (empId + "@cfgw-kr.com").toLowerCase();
-
-  var all = getUnreturnedItems();
-  return all.filter(function (item) {
-    var sameName = String(item.borrowerName || "").trim() === name;
-    if (!sameName) return false;
-    if (!expectedEmail) return true;
-    var itemEmail = String(item.email || "").trim().toLowerCase();
-    return !itemEmail || itemEmail === expectedEmail;
-  });
+export function loadWarehouseCart(name: string, employeeId: string): WarehouseCartItem[] {
+  try {
+    const raw = localStorage.getItem(WH_CART_PREFIX + identityKey(name, employeeId));
+    return raw ? (JSON.parse(raw) as WarehouseCartItem[]) : [];
+  } catch { return []; }
 }
 
-function formatDateValue_(value) {
-  if (value instanceof Date) return value.getFullYear() + "-" + String(value.getMonth() + 1).padStart(2, "0") + "-" + String(value.getDate()).padStart(2, "0");
-  return value;
+export function clearWarehouseCart(name: string, employeeId: string): void {
+  try { localStorage.removeItem(WH_CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-function formatDateTimeValue_(value) {
-  if (value instanceof Date) return (value.getMonth() + 1) + "월 " + value.getDate() + "일 " + String(value.getHours()).padStart(2, "0") + ":" + String(value.getMinutes()).padStart(2, "0") + ":" + String(value.getSeconds()).padStart(2, "0");
-  return String(value || "");
+// 창고 재고 전체 조회 (WMS getAll의 inventory 사용)
+export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
+  const data = await apiGet(scriptUrl, "getAll");
+  return (data.inventory || []) as WarehouseItem[];
 }
 
-function buildGeneralGroupInfo_(borrower, submittedAt, borrowDate) {
-  var display = "";
-  if (submittedAt instanceof Date) {
-    display = Utilities.formatDate(submittedAt, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
-  } else if (submittedAt) {
-    display = String(submittedAt).replace("T", " ").slice(0, 16);
-  } else {
-    display = formatDateValue_(borrowDate) || "";
-  }
-  return { key: String(borrower || "") + "|" + display, display: display };
+// 창고 물품 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
+export async function postWarehouseRent(
+  scriptUrl: string,
+  payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
+): Promise<any> {
+  return apiPost(scriptUrl, "rentInventoryItem", payload);
+}
+
+export async function fetchWarehouseBorrowedItems(scriptUrl: string, name: string): Promise<any[]> {
+  const data = await apiGet(scriptUrl, "getWarehouseBorrowedItems", { name });
+  return (data.items || []) as any[];
+}
+
+/* ══════════ 시나리오 오브젝트 관리 (WMS 관리자용) ══════════ */
+
+export interface ScenarioObjectAdmin {
+  rowIndex: number;
+  id: string;
+  name: string;
+  sector: string;
+  rootSlot: string;
+  category: string;
+  subcategory: string;
+  image: string;
+  stock: number;
+  rented: number;
+}
+
+export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
+  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin");
+  return (data.items || []) as ScenarioObjectAdmin[];
+}
+
+export async function updateScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin> & { rowIndex: number }): Promise<any> {
+  return apiPost(scriptUrl, "updateScenarioObject", payload);
+}
+
+export async function addScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin>): Promise<any> {
+  return apiPost(scriptUrl, "addScenarioObject", payload);
+}
+
+export async function deleteScenarioObject(scriptUrl: string, rowIndex: number): Promise<any> {
+  return apiPost(scriptUrl, "deleteScenarioObject", { rowIndex });
+}
+
+// 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
+export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
+  const pa = String(la ?? "").toUpperCase().split("-");
+  const pb = String(lb ?? "").toUpperCase().split("-");
+  const ra = pa[0] || "", rb = pb[0] || "";
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  let sa = parseInt(String(pa[1] ?? "").replace(/\D/g, ""), 10);
+  let sb = parseInt(String(pb[1] ?? "").replace(/\D/g, ""), 10);
+  if (isNaN(sa)) sa = 999999;
+  if (isNaN(sb)) sb = 999999;
+  return sa - sb;
+}
+
+/* ══════════ 시나리오 대여 대장 (반납완료 포함 전체 조회 + 재대여) ══════════ */
+
+export interface ScenarioLogEntry {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  borrowerName: string;
+  scenarioId?: string;
+  itemLabel: string;
+  itemKind?: string;
+  location: string;
+  itemId: string;
+  itemName: string;
+  quantity: number;
+  borrowDate: string;
+  submitGroupKey?: string;
+  submitDisplay?: string;
+  borrowPurpose: string;
+  email: string;
+  batchId: string;
+  generalOption?: string;
+  returned: boolean;
+  image: string;
+  stock: number;
+  rented: number;
+}
+
+export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioLogEntry[]> {
+  const data = await apiGet(scriptUrl, "getScenarioAllLogs");
+  return (data.items || []) as ScenarioLogEntry[];
+}
+
+// 반납완료된 대여를 그대로 다시 대여 신청 (동일 물품/수량/대여자)
+export async function reBorrowScenarioLogs(
+  scriptUrl: string,
+  logs: ScenarioLogEntry[],
+  clientVersion: string
+): Promise<BorrowResult> {
+  // 대여자/이메일 기준으로 일반대여 항목으로 재구성 (재대여는 일반대여로 처리)
+  const first = logs[0];
+  const borrowList: BorrowEntry[] = [{
+    itemType: "general",
+    borrowerName: first.borrowerName,
+    affiliation: "",
+    employeeId: "",
+    borrowDate: nowString(),
+    borrowPurpose: first.borrowPurpose || "재대여",
+    generalOption: "재대여",
+    borrowedItems: logs.map((l) => ({ id: l.itemId, name: l.itemName, quantity: l.quantity })),
+  }];
+  return postRecordBorrow(scriptUrl, borrowList, clientVersion);
 }
