@@ -515,6 +515,34 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setMode("b2");
   }
 
+  const loadSidScenario = (val: string) => {
+    setSidCart((prev) => prev.map((e) => (e.sid === val ? { ...e, loading: true } : e)));
+    const applyResult = (scenario: ScenarioDefinition) => {
+      setSidCart((prev) => prev.map((e) => (e.sid === val ? { ...e, loading: false, scenario } : e)));
+    };
+    if (connected && scriptUrl) {
+      fetchScenarioDefinition(scriptUrl, val)
+        .then(applyResult)
+        .catch((err: any) => {
+          // 이전에는 어떤 이유로 실패하든 무조건 "동기화 필요"로만 뭉뚱그려 보여줬는데,
+          // 그러면 실제 원인(네트워크 오류, 서버 예외, 배포 문제 등)을 알 수가 없었다.
+          // 이제는 실제 에러 메시지를 그대로 담아서 화면에 보여준다.
+          const message = err?.message || "알 수 없는 오류로 조회에 실패했습니다.";
+          showToast(`SID 조회 실패 (${val}): ${message}`, "error");
+          applyResult({
+            sid: val, found: false, syncNeeded: false, blocked: false, blockReason: "",
+            highLevelEn: "", highLevelKo: "", items: [], fetchError: message,
+          });
+        });
+    } else {
+      setTimeout(() => applyResult({
+        sid: val, found: true, syncNeeded: false, blocked: false, blockReason: "",
+        highLevelEn: "Preview instruction", highLevelKo: "미리보기 안내",
+        items: [{ id: "000008", name: "fruit", quantity: 1, rootSlot: "000060", stock: 15, rented: 8 }],
+      }), 400);
+    }
+  };
+
   function tryAddSid(): boolean {
     const val = sidInput.trim().toUpperCase();
     if (!val) return false;
@@ -525,20 +553,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (sidCart.some((s) => s.sid === val)) { showToast(`이미 추가된 SID입니다: ${val}`, "warn"); return false; }
     setSidCart((prev) => [...prev, { sid: val, loading: true, scenario: null }]);
     setSidInput("");
-    const applyResult = (scenario: ScenarioDefinition) => {
-      setSidCart((prev) => prev.map((e) => (e.sid === val ? { ...e, loading: false, scenario } : e)));
-    };
-    if (connected && scriptUrl) {
-      fetchScenarioDefinition(scriptUrl, val)
-        .then(applyResult)
-        .catch(() => applyResult({ sid: val, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }));
-    } else {
-      setTimeout(() => applyResult({
-        sid: val, found: true, syncNeeded: false, blocked: false, blockReason: "",
-        highLevelEn: "Preview instruction", highLevelKo: "미리보기 안내",
-        items: [{ id: "000008", name: "fruit", quantity: 1, rootSlot: "000060", stock: 15, rented: 8 }],
-      }), 400);
-    }
+    loadSidScenario(val);
     return true;
   }
 
@@ -1231,6 +1246,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 style={{ ...inputStyle, paddingLeft: "40px" }}
               />
             </div>
+            {appVersion ? (
+              <div style={{ fontSize: "10px", color: C.label, marginTop: "-6px", marginBottom: "12px" }}>서버 버전: {appVersion}</div>
+            ) : null}
             {sidCart.length > 0 ? (
               <div style={{ marginBottom: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
@@ -1246,10 +1264,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         </div>
                         {entry.loading ? (
                           <div style={{ fontSize: "11px", color: C.label, marginTop: "3px" }}>Scenario 시트에서 필요 물품을 불러오는 중…</div>
+                        ) : entry.scenario?.fetchError ? (
+                          <div style={{ marginTop: "4px" }}>
+                            <div style={{ fontSize: "11px", color: C.error, fontWeight: 700 }}>조회 실패: {entry.scenario.fetchError}</div>
+                            <button onClick={() => loadSidScenario(entry.sid)} style={{ marginTop: "4px", fontSize: "11px", fontWeight: 700, color: C.accentText, background: "none", border: `1px solid ${C.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer" }}>다시 시도</button>
+                          </div>
                         ) : entry.scenario?.blocked ? (
                           <div style={{ fontSize: "11px", color: C.error, marginTop: "3px", fontWeight: 700 }}>{entry.scenario.blockReason}</div>
                         ) : entry.scenario?.syncNeeded ? (
-                          <div style={{ fontSize: "11px", color: C.warn, marginTop: "3px", fontWeight: 700 }}>동기화가 필요한 SID입니다. 대여는 계속할 수 있습니다.</div>
+                          <div style={{ marginTop: "4px" }}>
+                            <div style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>Scenario 시트에서 이 SID를 찾지 못했습니다. 대여는 계속할 수 있습니다.</div>
+                            {entry.scenario.errorMessage ? (
+                              <div style={{ fontSize: "10px", color: C.label, marginTop: "2px" }}>({entry.scenario.errorMessage})</div>
+                            ) : null}
+                            <button onClick={() => loadSidScenario(entry.sid)} style={{ marginTop: "4px", fontSize: "11px", fontWeight: 700, color: C.accentText, background: "none", border: `1px solid ${C.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer" }}>다시 시도</button>
+                          </div>
                         ) : (
                           <div style={{ fontSize: "11px", color: C.label, marginTop: "3px" }}>
                             {(entry.scenario?.items || []).map((it) => (
@@ -1285,8 +1314,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     <strong style={{ color: C.text }}>{entry.sid}</strong>
                     {entry.loading ? (
                       <div style={{ color: C.label, fontSize: "12px" }}>불러오는 중…</div>
+                    ) : s?.fetchError ? (
+                      <div style={{ color: C.error, fontSize: "12px", fontWeight: 700 }}>조회 실패: {s.fetchError}</div>
                     ) : s?.syncNeeded ? (
-                      <div style={{ color: C.warn, fontSize: "12px", fontWeight: 700 }}>동기화가 필요한 SID입니다. 대여는 가능합니다.</div>
+                      <div style={{ color: C.warn, fontSize: "12px", fontWeight: 700 }}>Scenario 시트에서 이 SID를 찾지 못했습니다. 대여는 가능합니다.</div>
                     ) : (
                       <div style={{ color: C.label, fontSize: "12px", lineHeight: 1.5 }}>
                         <div>EN: {s?.highLevelEn || "-"}</div>

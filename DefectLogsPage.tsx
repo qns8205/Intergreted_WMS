@@ -25,6 +25,7 @@ import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCo
 import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
 import { compareRackSlot } from "../utils/borrowApi";
+import ScenarioAdminPage from "./ScenarioAdminPage";
 
 interface MobileViewPageProps {
   inventory: InventoryItem[];
@@ -42,10 +43,11 @@ interface MobileViewPageProps {
   isLightMode: boolean;
   toggleLightMode: () => void;
   connected: boolean;
+  scriptUrl?: string;
   currentView?: "landing" | "login" | "rental" | "monitor" | "defect" | "rent";
 }
 
-type Mode = "대여" | "반납" | "등록" | "불량";
+type Mode = "대여" | "반납" | "등록" | "불량" | "시나리오";
 type SheetMode = "detail" | "form" | "edit-inventory" | null;
 
 interface OutstandingRental {
@@ -80,13 +82,14 @@ export default function MobileViewPage({
   isLightMode,
   toggleLightMode,
   connected,
+  scriptUrl = "",
   currentView = "monitor",
 }: MobileViewPageProps) {
   const [mode, setMode] = useState<Mode>("대여");
   const [searchQuery, setSearchQuery] = useState("");
 
   // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
-  const TAB_ORDER: Record<string, number> = { "대여": 0, "반납": 1, "등록": 2, "불량": 3 };
+  const TAB_ORDER: Record<string, number> = { "등록": 0, "시나리오": 1, "대여": 2, "반납": 2, "불량": 3 };
   const prevTabOrderRef = useRef(TAB_ORDER[mode] ?? 0);
   const tabSlideDirRef = useRef<"forward" | "back">("forward");
   const curTabOrder = TAB_ORDER[mode] ?? 0;
@@ -129,6 +132,7 @@ export default function MobileViewPage({
 
   // --- 모바일 불량(불량 탭) 폼 상태 ---
   const [defectTab, setDefectTab] = useState<"list" | "register">("list");
+  const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
   const [defSelectedInvIndex, setDefSelectedInvIndex] = useState<number>(-1); // -1: 직접 입력
   const [defCustomName, setDefCustomName] = useState("");
   const [defSearch, setDefSearch] = useState("");
@@ -349,6 +353,8 @@ export default function MobileViewPage({
         setMode("불량");
       } else if (mainPath === "register") {
         setMode("등록");
+      } else if (mainPath === "scenariotab") {
+        setMode("시나리오");
       }
 
       // Sync sheet mode
@@ -379,6 +385,8 @@ export default function MobileViewPage({
       window.location.hash = "#/defect";
     } else if (m === "등록") {
       window.location.hash = "#/register";
+    } else if (m === "시나리오") {
+      window.location.hash = "#/scenariotab";
     }
   };
 
@@ -453,6 +461,11 @@ export default function MobileViewPage({
 
   const handleSubmit = async (overrideType?: "대여" | "반납" | "소모") => {
     const actionType = overrideType || mode;
+    // 반납 화면에서 "소모로 처리"를 누른 경우: 이미 대여 시 재고가 차감된 상태이므로
+    // type은 "반납"으로 유지해 미반납 집계를 정상적으로 닫되, 노트에 [소모완료] 태그를 붙여
+    // 재고가 다시 복구되지 않도록 한다. (type:"소모"를 쓰면 재고가 중복 차감되고 미반납도 안 닫힘)
+    const isConsumeOnReturn = mode === "반납" && actionType === "소모";
+    const recordType: "대여" | "반납" = isConsumeOnReturn ? "반납" : (actionType === "소모" ? "소모" : actionType);
     if (!selectedItem) return;
     if (!formUser.trim()) {
       notify("이름을 입력해 주세요.", "warn");
@@ -464,7 +477,7 @@ export default function MobileViewPage({
     }
     if (maxQty !== undefined && formQty > maxQty) {
       notify(
-        actionType === "반납" ? `미반납 수량(${maxQty}개)을 초과할 수 없습니다.` : `현재고(${maxQty}개)를 초과할 수 없습니다.`,
+        mode === "반납" ? `미반납 수량(${maxQty}개)을 초과할 수 없습니다.` : `현재고(${maxQty}개)를 초과할 수 없습니다.`,
         "warn"
       );
       return;
@@ -477,21 +490,22 @@ export default function MobileViewPage({
       const itemLoc = isCustom ? customBorrowLoc.trim() : selectedItem.location;
       if (isCustom && !itemName) { notify("물품명을 입력해 주세요.", "warn"); setSubmitting(false); return; }
       const dueTag = actionType === "대여" && formDueDate ? ` [반납예정:${formDueDate}]` : "";
+      const consumeTag = isConsumeOnReturn ? " [소모완료]" : "";
       const log: RentLog = {
         timestamp: formatTimestampLocal(),
         location: itemLoc,
         name: itemName,
-        type: actionType,
+        type: recordType,
         qty: formQty,
         user: formUser.trim(),
-        note: (formNote.trim() || `${actionType} 처리 (모바일 관리자)`) + dueTag,
+        note: (formNote.trim() || `${actionType} 처리 (모바일 관리자)`) + dueTag + consumeTag,
       };
       await onAddRentLog(log);
       notify(
         actionType === "대여"
           ? `${itemName} ${formQty}개 대여 신청이 접수되었습니다.`
           : actionType === "소모"
-          ? `${itemName} ${formQty}개 소모 처리되었습니다. (반납 대상 아님)`
+          ? `${itemName} ${formQty}개 소모 처리되었습니다. (반납 대상 아님, 재고 변동 없음)`
           : `${itemName} ${formQty}개 반납이 접수되었습니다.`,
         "ok"
       );
@@ -780,10 +794,10 @@ export default function MobileViewPage({
         </div>
 
         <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-          {isAdmin && onOpenScenario ? (
+          {isAdmin ? (
             <button
               className="mvp-btn"
-              onClick={onOpenScenario}
+              onClick={() => switchMode("시나리오")}
               title="시나리오 물품 관리"
               style={{
                 height: "36px",
@@ -836,67 +850,15 @@ export default function MobileViewPage({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr",
+            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr" : "1fr",
             gap: "6px",
             background: isLightMode ? "#f1f5f9" : "#111827",
             padding: "4px",
             borderRadius: "14px",
-            marginBottom: (mode === "등록" || mode === "불량") ? "0px" : "10px",
+            marginBottom: ((mode === "등록" && warehouseTab === "register") || mode === "불량") ? "0px" : "10px",
           }}
         >
-          <button
-            className="mvp-btn"
-            onClick={() => switchMode("대여")}
-            style={{
-              padding: isAdmin ? "10px 4px" : "13px",
-              borderRadius: "11px",
-              fontSize: isAdmin ? "12px" : "14.5px",
-              fontWeight: 800,
-              background: mode === "대여" ? ACCENT : "transparent",
-              color: mode === "대여" ? "#ffffff" : TEXT_DIM,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "4px",
-              boxShadow: mode === "대여" ? "0 6px 14px rgba(79,70,229,0.3)" : "none",
-            }}
-          >
-            📥 대여
-          </button>
-          <button
-            className="mvp-btn"
-            onClick={() => switchMode("반납")}
-            style={{
-              padding: isAdmin ? "10px 4px" : "13px",
-              borderRadius: "11px",
-              fontSize: isAdmin ? "12px" : "14.5px",
-              fontWeight: 800,
-              background: mode === "반납" ? GREEN : "transparent",
-              color: mode === "반납" ? "#ffffff" : TEXT_DIM,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "4px",
-              boxShadow: mode === "반납" ? "0 6px 14px rgba(16,185,129,0.3)" : "none",
-            }}
-          >
-            🔄 반납
-            {outstandingRentals.length > 0 && (
-              <span
-                style={{
-                  background: mode === "반납" ? "rgba(255,255,255,0.25)" : DANGER,
-                  color: "#ffffff",
-                  fontSize: "9px",
-                  fontWeight: 800,
-                  borderRadius: "999px",
-                  padding: "1px 5px",
-                }}
-              >
-                {outstandingRentals.length}
-              </span>
-            )}
-          </button>
-          {isAdmin && (
+          {isAdmin ? (
             <>
               <button
                 className="mvp-btn"
@@ -906,16 +868,68 @@ export default function MobileViewPage({
                   borderRadius: "11px",
                   fontSize: "12px",
                   fontWeight: 800,
-                  background: mode === "등록" ? "#2563eb" : "transparent",
-                  color: mode === "등록" ? "#ffffff" : TEXT_DIM,
+                  background: mode === "등록" ? TEXT_MAIN : "transparent",
+                  color: mode === "등록" ? BG : TEXT_DIM,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "4px",
-                  boxShadow: mode === "등록" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
+                  boxShadow: mode === "등록" ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
                 }}
               >
-                📦 등록
+                📦 창고 물품
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={() => switchMode("시나리오")}
+                style={{
+                  padding: "10px 4px",
+                  borderRadius: "11px",
+                  fontSize: "12px",
+                  fontWeight: 800,
+                  background: mode === "시나리오" ? TEXT_MAIN : "transparent",
+                  color: mode === "시나리오" ? BG : TEXT_DIM,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "4px",
+                  boxShadow: mode === "시나리오" ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
+                }}
+              >
+                🧩 시나리오 물품
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={() => switchMode(mode === "반납" ? "반납" : "대여")}
+                style={{
+                  padding: "10px 4px",
+                  borderRadius: "11px",
+                  fontSize: "12px",
+                  fontWeight: 800,
+                  background: (mode === "대여" || mode === "반납") ? TEXT_MAIN : "transparent",
+                  color: (mode === "대여" || mode === "반납") ? BG : TEXT_DIM,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "4px",
+                  boxShadow: (mode === "대여" || mode === "반납") ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
+                }}
+              >
+                🔄 대여 & 반납
+                {outstandingRentals.length > 0 && (
+                  <span
+                    style={{
+                      background: (mode === "대여" || mode === "반납") ? "rgba(255,255,255,0.25)" : DANGER,
+                      color: (mode === "대여" || mode === "반납") ? BG : "#ffffff",
+                      fontSize: "9px",
+                      fontWeight: 800,
+                      borderRadius: "999px",
+                      padding: "1px 5px",
+                    }}
+                  >
+                    {outstandingRentals.length}
+                  </span>
+                )}
               </button>
               <button
                 className="mvp-btn"
@@ -936,29 +950,80 @@ export default function MobileViewPage({
               >
                 ⚠️ 불량
               </button>
-              <button
-                className="mvp-btn"
-                onClick={() => onOpenScenario && onOpenScenario()}
-                style={{
-                  padding: "10px 4px",
-                  borderRadius: "11px",
-                  fontSize: "12px",
-                  fontWeight: 800,
-                  background: "transparent",
-                  color: "#94a3b8",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "4px",
-                }}
-              >
-                🧩 물품
-              </button>
             </>
+          ) : (
+            <button
+              className="mvp-btn"
+              onClick={() => switchMode(mode === "반납" ? "반납" : "대여")}
+              style={{
+                padding: "13px",
+                borderRadius: "11px",
+                fontSize: "14.5px",
+                fontWeight: 800,
+                background: TEXT_MAIN,
+                color: BG,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "6px",
+              }}
+            >
+              🔄 대여 & 반납
+              {outstandingRentals.length > 0 && (
+                <span
+                  style={{
+                    background: "rgba(255,255,255,0.25)",
+                    color: BG,
+                    fontSize: "9px",
+                    fontWeight: 800,
+                    borderRadius: "999px",
+                    padding: "1px 5px",
+                  }}
+                >
+                  {outstandingRentals.length}
+                </span>
+              )}
+            </button>
           )}
         </div>
 
-        {!(mode === "등록" || (mode === "불량" && defectTab === "register")) && (
+        {(mode === "대여" || mode === "반납") && (
+          <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
+            <button
+              className="mvp-btn"
+              onClick={() => switchMode("대여")}
+              style={{
+                flex: 1,
+                padding: "9px",
+                borderRadius: "10px",
+                fontSize: "12.5px",
+                fontWeight: 700,
+                background: mode === "대여" ? ACCENT : (isLightMode ? "#f1f5f9" : "#111827"),
+                color: mode === "대여" ? "#ffffff" : TEXT_DIM,
+              }}
+            >
+              📥 대여
+            </button>
+            <button
+              className="mvp-btn"
+              onClick={() => switchMode("반납")}
+              style={{
+                flex: 1,
+                padding: "9px",
+                borderRadius: "10px",
+                fontSize: "12.5px",
+                fontWeight: 700,
+                background: mode === "반납" ? GREEN : (isLightMode ? "#f1f5f9" : "#111827"),
+                color: mode === "반납" ? "#ffffff" : TEXT_DIM,
+              }}
+            >
+              🔄 반납
+            </button>
+          </div>
+        )}
+
+
+        {!((mode === "등록" && warehouseTab === "register") || (mode === "불량" && defectTab === "register")) && (
           <>
             <div style={{ position: "relative" }}>
               <Search
@@ -1269,8 +1334,100 @@ export default function MobileViewPage({
           )
         ) : mode === "등록" ? (
           /* =========================================================
-             3. 신규 품목 등록 폼 (Admin 모바일 전용)
+             3. 창고 물품 탭: 목록 보기 / 새 물품 등록 (Admin 모바일 전용)
              ========================================================= */
+          <>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "4px",
+                background: isLightMode ? "#f1f5f9" : "#111827",
+                padding: "4px",
+                borderRadius: "12px",
+                marginBottom: "12px",
+              }}
+            >
+              <button
+                className="mvp-btn"
+                onClick={() => setWarehouseTab("list")}
+                style={{
+                  padding: "9px",
+                  borderRadius: "9px",
+                  fontSize: "12.5px",
+                  fontWeight: 700,
+                  background: warehouseTab === "list" ? TEXT_MAIN : "transparent",
+                  color: warehouseTab === "list" ? BG : TEXT_DIM,
+                }}
+              >
+                📋 목록 보기 ({filteredInventory.length})
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={() => setWarehouseTab("register")}
+                style={{
+                  padding: "9px",
+                  borderRadius: "9px",
+                  fontSize: "12.5px",
+                  fontWeight: 700,
+                  background: warehouseTab === "register" ? TEXT_MAIN : "transparent",
+                  color: warehouseTab === "register" ? BG : TEXT_DIM,
+                }}
+              >
+                ➕ 새 물품 등록
+              </button>
+            </div>
+
+            {warehouseTab === "list" ? (
+              filteredInventory.length === 0 ? (
+                <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
+                  <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
+                  등록된 창고 물품이 없습니다.
+                </div>
+              ) : (
+                filteredInventory.map((item, idx) => {
+                  const hasImage = !!item.photo;
+                  const imageUrl = hasImage ? getGoogleDriveImageUrl(item.photo) : "";
+                  const stockLabel = item.stock === null || item.stock === "N/A" ? "N/A" : `${item.stock}개`;
+                  return (
+                    <div
+                      key={`wh-${item.rowIndex}-${idx}`}
+                      className="mvp-card"
+                      onClick={() => openItemDetail(item)}
+                      style={{
+                        background: CARD_BG,
+                        border: `1px solid ${BORDER}`,
+                        borderRadius: "16px",
+                        padding: "10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        cursor: "pointer",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "48px", height: "48px", borderRadius: "10px", overflow: "hidden", flexShrink: 0,
+                          background: isLightMode ? "#f1f5f9" : "#0f172a", display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        {hasImage ? (
+                          <img src={imageUrl} alt={item.name} referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <Package size={20} style={{ opacity: 0.3 }} />
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "14px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                        <div style={{ fontSize: "12px", color: TEXT_DIM, marginTop: "2px" }}>{item.location} · 재고 {stockLabel}</div>
+                      </div>
+                      <ChevronRight size={16} color={TEXT_DIM} />
+                    </div>
+                  );
+                })
+              )
+            ) : (
           <form onSubmit={handleRegisterItemSubmit} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
               <Package size={20} color="#2563eb" />
@@ -1560,6 +1717,20 @@ export default function MobileViewPage({
               {regSubmitting ? "실시간 클라우드 등록 중..." : "📦 신규 물품 정식 등록"}
             </button>
           </form>
+            )}
+          </>
+        ) : mode === "시나리오" ? (
+          /* =========================================================
+             3-B. 시나리오 물품 관리 (같은 영역에서 탭으로 전환, 페이지 이동 없음)
+             ========================================================= */
+          <div style={{ margin: "-14px -14px 0" }}>
+            <ScenarioAdminPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              showToast={(msg, type) => notify(msg, type === "info" ? "ok" : type)}
+            />
+          </div>
         ) : (
           /* =========================================================
              4. 불량 제품 관리 및 등록 (Admin 모바일 전용)
@@ -2686,7 +2857,7 @@ export default function MobileViewPage({
                     ) : null}
 
                     <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
-                      {mode === "대여" && isAdmin ? (
+                      {(mode === "대여" || mode === "반납") && isAdmin ? (
                         <button
                           className="mvp-btn"
                           onClick={() => handleSubmit("소모")}
@@ -2707,7 +2878,7 @@ export default function MobileViewPage({
                             boxShadow: "0 8px 20px rgba(245,158,11,0.3)",
                           }}
                         >
-                          🔥 소모
+                          🔥 {mode === "반납" ? "소모로 처리" : "소모"}
                         </button>
                       ) : null}
                       <button

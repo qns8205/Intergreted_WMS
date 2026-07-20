@@ -1627,6 +1627,7 @@ export default function App() {
         isLightMode={isLightMode}
         toggleLightMode={toggleLightMode}
         connected={connected}
+        scriptUrl={scriptUrl}
         currentView={currentView}
         onOpenScenario={() => setCurrentView("scenario")}
       />

@@ -1345,7 +1345,7 @@ var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-f7Ln781J9wJTJL3C3FMFltk
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
-var APP_VERSION = "2026-07-20-sid-fix-01";
+var APP_VERSION = "2026-07-20-sid-rewrite-02";
 var PROP_LATEST_VERSION_ = "LATEST_APP_VERSION";
 var PROP_LATEST_URL_ = "LATEST_APP_URL";
 
@@ -1992,50 +1992,146 @@ function 시나리오SID진단(sidToCheck) {
   }
 }
 
+/**
+ * SID 하나를 받아 해당 시나리오의 High Level 안내문과 필요 물품 목록을 반환한다.
+ * "Scenario" 시트(A:SID, B:안내(영문), C:안내(한글), D:물품ID, E:물품명, F:수량)에서
+ * 같은 SID를 가진 모든 행을 모아 하나의 시나리오 정보로 합친다.
+ *
+ * 설계 원칙: 이 함수는 절대 예외를 밖으로 던지지 않는다. 어떤 단계에서 문제가 생기든
+ * (시트를 못 찾음, 물품 정보 병합 실패 등) 항상 유효한 객체를 반환하고, 문제가 있었다면
+ * errorMessage 필드에 사람이 읽을 수 있는 이유를 담아 화면에서 바로 확인할 수 있게 한다.
+ */
 function getScenarioDefinition(sid) {
-  var target = normalizeSid_(sid);
-  var empty = { sid: target, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] };
-  if (!target) return empty;
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
-  if (!sheet || sheet.getLastRow() < 2) return empty;
-  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
-  var maxNum = -1, maxSid = "";
-  // 앞자리 0 표기 차이(예: "S120" vs "S0120")로 인한 불일치를 막기 위해
-  // 문자열 완전일치가 아니라 접두문자+숫자값이 같은지로 비교한다.
-  var targetParts = parseSidParts_(target);
-  data.forEach(function (row) {
-    var rowSid = normalizeSid_(row[0]);
-    var rp = parseSidParts_(rowSid);
-    if (rp && rp.num > maxNum) { maxNum = rp.num; maxSid = rowSid; }
-    var isMatch = rowSid === target || (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num);
-    if (!isMatch) return;
-    empty.found = true;
-    empty.syncNeeded = false;
-    empty.highLevelEn = empty.highLevelEn || String(row[1] || "").trim();
-    empty.highLevelKo = empty.highLevelKo || String(row[2] || "").trim();
-    var id = padSlot_(String(row[3] || "").trim());
-    if (id) empty.items.push({ id: id, name: String(row[4] || "").trim(), quantity: row[5] || 1 });
+  var result = {
+    sid: normalizeSid_(sid),
+    found: false,
+    syncNeeded: true,
+    blocked: false,
+    blockReason: "",
+    highLevelEn: "",
+    highLevelKo: "",
+    items: [],
+    errorMessage: "",   // 진단용: 문제가 있었다면 이유가 여기 담긴다.
+    rowsScanned: 0       // 진단용: Scenario 시트에서 실제로 몇 행을 읽었는지
+  };
+
+  var target = result.sid;
+  if (!target) {
+    result.errorMessage = "SID 값이 비어 있습니다.";
+    return result;
+  }
+
+  // 1단계: Scenario 시트에서 SID와 일치하는 행을 모두 찾는다.
+  var lookup;
+  try {
+    lookup = lookupScenarioRows_(target);
+  } catch (e1) {
+    result.errorMessage = "Scenario 시트를 읽는 중 오류: " + (e1 && e1.message ? e1.message : e1);
+    return result;
+  }
+
+  result.rowsScanned = lookup.rowsScanned;
+
+  if (!lookup.sheetFound) {
+    result.errorMessage = "'" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트 탭을 찾을 수 없습니다. 실제 탭 이름: " + lookup.availableSheetNames.join(", ");
+    return result;
+  }
+
+  if (lookup.matchedRows.length === 0) {
+    // 시트에 해당 SID가 전혀 없는 경우: 마지막으로 등록된 SID보다 앞번호면 "삭제/오류 SID"로 차단 안내한다.
+    result.found = false;
+    result.syncNeeded = true;
+    try {
+      var chk = evaluateSidUsable_(target, { sids: {}, maxNum: lookup.maxNum, maxSid: lookup.maxSid });
+      result.blocked = chk.blocked;
+      result.blockReason = chk.reason;
+    } catch (e2) {
+      // 차단 여부 판단은 부가 기능이라, 실패해도 무시하고 계속 진행한다.
+    }
+    return result;
+  }
+
+  // 2단계: 찾은 행들을 하나의 시나리오 정보로 합친다.
+  result.found = true;
+  result.syncNeeded = false;
+  lookup.matchedRows.forEach(function (row) {
+    if (!result.highLevelEn && row.highLevelEn) result.highLevelEn = row.highLevelEn;
+    if (!result.highLevelKo && row.highLevelKo) result.highLevelKo = row.highLevelKo;
+    if (row.itemId) {
+      result.items.push({ id: row.itemId, name: row.itemName, quantity: row.quantity });
+    }
   });
 
-  if (!empty.found) {
-    var chk = evaluateSidUsable_(target, { sids: {}, maxNum: maxNum, maxSid: maxSid });
-    empty.blocked = chk.blocked;
-    empty.blockReason = chk.reason;
+  // 3단계(부가 정보): 물품 마스터(시나리오 오브젝트)와 대조해 위치/재고/이미지 등을 채운다.
+  // 이 단계가 실패해도 위에서 이미 만든 핵심 정보(안내문·물품 목록)는 그대로 반환한다.
+  try {
+    var objectMap = {};
+    getObjectItems().forEach(function (object) { objectMap[object.id] = object; });
+    result.items.forEach(function (item) {
+      var obj = objectMap[item.id];
+      if (!obj) return;
+      if (!item.name) item.name = obj.name;
+      item.rootSlot = obj.rootSlot || "";
+      item.category = obj.category || "";
+      item.subcategory = obj.subcategory || "";
+      item.image = obj.image || "";
+      item.stock = obj.stock || 0;
+      item.rented = obj.rented || 0;
+    });
+  } catch (e3) {
+    // 물품 마스터 병합 실패는 부가 정보 손실일 뿐, SID 자체는 정상적으로 찾은 것이므로
+    // found/syncNeeded는 그대로 두고 참고용 에러 메시지만 남긴다.
+    result.errorMessage = "물품 상세 정보 병합 중 오류(무시하고 진행): " + (e3 && e3.message ? e3.message : e3);
   }
-  var objectMap = {};
-  getObjectItems().forEach(function (object) { objectMap[object.id] = object; });
-  empty.items.forEach(function (item) {
-    var obj = objectMap[item.id];
-    if (!obj) return;
-    if (!item.name) item.name = obj.name;
-    item.rootSlot = obj.rootSlot || "";
-    item.category = obj.category || "";
-    item.subcategory = obj.subcategory || "";
-    item.image = obj.image || "";
-    item.stock = obj.stock || 0;
-    item.rented = obj.rented || 0;
-  });
-  return empty;
+
+  return result;
+}
+
+/**
+ * "Scenario" 시트를 읽어 특정 SID와 일치하는 모든 행을 찾는다.
+ * getScenarioDefinition에서 분리해 별도로 테스트/재사용할 수 있게 했다.
+ */
+function lookupScenarioRows_(target) {
+  var out = { sheetFound: false, availableSheetNames: [], rowsScanned: 0, matchedRows: [], maxNum: -1, maxSid: "" };
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
+  if (!sheet) {
+    out.availableSheetNames = ss.getSheets().map(function (s) { return s.getName(); });
+    return out;
+  }
+  out.sheetFound = true;
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return out;
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  out.rowsScanned = data.length;
+
+  var targetParts = parseSidParts_(target);
+
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    var rowSid = normalizeSid_(row[0]);
+    if (!rowSid) continue;
+
+    var rp = parseSidParts_(rowSid);
+    if (rp && rp.num > out.maxNum) { out.maxNum = rp.num; out.maxSid = rowSid; }
+
+    // 앞자리 0 표기 차이(예: "S120" vs "S0120")를 흡수하기 위해
+    // 문자열 완전일치뿐 아니라 접두문자+숫자값 일치도 같은 SID로 인정한다.
+    var isMatch = rowSid === target || (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num);
+    if (!isMatch) continue;
+
+    out.matchedRows.push({
+      highLevelEn: String(row[1] || "").trim(),
+      highLevelKo: String(row[2] || "").trim(),
+      itemId: padSlot_(String(row[3] || "").trim()),
+      itemName: String(row[4] || "").trim(),
+      quantity: row[5] || 1
+    });
+  }
+
+  return out;
 }
 
 function ensureScenarioLogSchema_(sheet) {
