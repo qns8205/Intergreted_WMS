@@ -657,19 +657,19 @@ export default function App() {
     }
   }
 
-  // 20초 주기로 스프레드시트 최신 데이터 실시간 자동 동기화 (기기 간 실시간 싱크 완성 및 속도 최적화)
+  // 10초 주기로 스프레드시트 최신 데이터 실시간 자동 동기화 (기기 간 실시간 싱크 완성)
   useEffect(() => {
     if (!connected || !scriptUrl) return;
 
-    // 초기 마운트 시 즉시 한 번 갱신 보장 (화면 전환 시마다 리프레시되는 현상 방지)
+    // 마운트 혹은 화면 전환 시 즉시 한 번 갱신 보장
     silentRefresh();
 
     const interval = setInterval(() => {
       silentRefresh();
-    }, 20000); // 20초 간격 폴링으로 부하 감소 및 응답 속도 체감 향상
+    }, 10000); // 10초 간격 폴링
 
     return () => clearInterval(interval);
-  }, [connected, scriptUrl]); // eslint-disable-line
+  }, [connected, scriptUrl, currentView]); // eslint-disable-line
 
   // 구글 스프레드시트 데이터와 랙 선반 정보 병합
   function racksFromServerSectors(sectors: any[], inv: InventoryItem[]): Rack[] {
@@ -1170,12 +1170,10 @@ export default function App() {
       setSaving(true);
       const action = isNew ? "addInventoryItem" : "updateInventoryItem";
       callScript(action, item)
-        .then(async (res: any) => {
-          if (isNew && res && res.rowIndex) {
-            setInventory((prev) =>
-              prev.map((i) => (i.rowIndex === optimisticItem.rowIndex ? { ...i, rowIndex: res.rowIndex } : i))
-            );
-          }
+        .then(async () => {
+          // 최신 인벤토리 실시간 재동기화
+          const data = await fetchAll();
+          setInventory(mergePendingStocks(data.inventory || []));
           setLastSync(new Date());
           safeSetLocalStorage("wms_last_sync", new Date().toISOString());
           showToast(isNew ? "✅ 신규 품목 동기화 완료" : "✅ 품목 스펙 동기화 완료", "ok");
@@ -1218,7 +1216,9 @@ export default function App() {
       if (connected) {
         setSaving(true);
         callScript("updateMultipleInventoryItems", { items: updatedItems })
-          .then(() => {
+          .then(async () => {
+            const data = await fetchAll();
+            setInventory(mergePendingStocks(data.inventory || []));
             setLastSync(new Date());
             showToast("✅ 구글 스프레드시트 일괄 업데이트 완료", "ok");
           })
@@ -1272,7 +1272,9 @@ export default function App() {
     if (connected) {
       setSaving(true);
       callScript("updateMultipleInventoryItems", { items: updatedItems })
-        .then(() => {
+        .then(async () => {
+          const data = await fetchAll();
+          setInventory(mergePendingStocks(data.inventory || []));
           setLastSync(new Date());
           showToast("✅ 구글 스프레드시트 이름 수정 완료", "ok");
         })
@@ -1300,7 +1302,9 @@ export default function App() {
     if (connected) {
       setSaving(true);
       callScript("deleteInventoryItem", { rowIndex })
-        .then(() => {
+        .then(async () => {
+          const data = await fetchAll();
+          setInventory(mergePendingStocks(data.inventory || []));
           setLastSync(new Date());
           safeSetLocalStorage("wms_last_sync", new Date().toISOString());
           showToast("✅ 구글 스프레드시트 삭제 반영 완료", "ok");
@@ -1613,6 +1617,7 @@ export default function App() {
         onAddRentLog={handleAddRentLog}
         onAddDefectLog={handleAddDefectLog}
         onSaveInventoryItem={saveInventoryItem}
+        onDeleteInventory={deleteInventoryItemRow}
         onBack={() => {
           setIsAdmin(false);
           safeSetLocalStorage("wms_is_admin", "false");
@@ -1657,10 +1662,10 @@ export default function App() {
                 onClick={() => { if (t.view !== "scenario") setCurrentView(t.view as any); }}
                 style={{
                   padding: "10px 2px", borderRadius: "11px", fontSize: "12px", fontWeight: 800, border: "none",
-                  background: t.view === "scenario" ? "var(--accent, #0f172a)" : "transparent",
+                  background: t.view === "scenario" ? "#2563eb" : "transparent",
                   color: t.view === "scenario" ? "#ffffff" : "var(--text-dim, #94a3b8)",
                   cursor: "pointer",
-                  boxShadow: t.view === "scenario" ? "0 6px 14px var(--accent-soft, rgba(15, 23, 42, 0.2))" : "none",
+                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
                 }}
               >
                 {t.label}
@@ -1700,44 +1705,36 @@ export default function App() {
         .wms-dark {
           --app-bg: #0f172a;
           --canvas-bg: #0b1120;
-          --header-bg: rgba(22, 31, 48, 0.72);
-          --panel-bg: rgba(22, 31, 48, 0.75);
-          --panel-border: rgba(38, 50, 74, 0.5);
+          --header-bg: #161f30;
+          --panel-bg: #161f30;
+          --panel-border: #26324a;
           --text-main: #f1f5f9;
           --text-dim: #8b98ac;
-          --input-bg: rgba(15, 23, 42, 0.5);
-          --accent: #ffffff;
-          --accent-soft: rgba(255, 255, 255, 0.14);
+          --input-bg: #0f172a;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.16);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
           --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
-          --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.22);
-          --backdrop: blur(14px);
+          --shadow: 0 4px 12px rgba(0,0,0,0.22);
         }
         .wms-light {
-          --app-bg: #f4f6f9;
+          --app-bg: #f7f8fa;
           --canvas-bg: #eef1f5;
-          --header-bg: rgba(255, 255, 255, 0.72);
-          --panel-bg: rgba(255, 255, 255, 0.75);
-          --panel-border: rgba(230, 233, 239, 0.5);
-          --text-main: #1e293b;
+          --header-bg: #ffffff;
+          --panel-bg: #ffffff;
+          --panel-border: #e6e9ef;
+          --text-main: #111827;
           --text-dim: #626c7d;
-          --input-bg: rgba(244, 246, 249, 0.6);
-          --accent: #0f172a;
-          --accent-soft: rgba(15, 23, 42, 0.08);
+          --input-bg: #f4f6f9;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.10);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
           --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
-          --shadow: 0 8px 32px 0 rgba(15, 23, 42, 0.04);
-          --backdrop: blur(14px);
-        }
-        
-        /* 글라스모피즘 핵심 데코레이터 */
-        .glass-card, [style*="var(--panel-bg)"], [style*="var(--header-bg)"] {
-          backdrop-filter: var(--backdrop, none);
-          -webkit-backdrop-filter: var(--backdrop, none);
+          --shadow: 0 4px 14px rgba(15,23,42,0.08);
         }
         body { font-size: ${16 * fontScale}px; }
         .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
@@ -1944,7 +1941,7 @@ export default function App() {
 
           <button
             onClick={() => setCurrentView("rent")}
-            title={sidebarCollapsed ? "대여/반납 대장" : undefined}
+            title={sidebarCollapsed ? "대여 & 반납" : undefined}
             style={{
               width: "100%",
               padding: sidebarCollapsed ? "10px 0" : "9px 12px",
@@ -1961,7 +1958,7 @@ export default function App() {
             }}
           >
             <ClipboardList size={18} />
-            {!sidebarCollapsed && <span>대여/반납 대장</span>}
+            {!sidebarCollapsed && <span>대여 & 반납</span>}
           </button>
 
           <button
@@ -2084,7 +2081,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여/반납 대장 관리" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2143,7 +2140,7 @@ export default function App() {
               display: "flex",
               alignItems: "center",
               background: "var(--input-bg, #0f172a)",
-              border: "1px solid var(--panel-border, rgba(15, 118, 110, 0.4))",
+              border: "1px solid var(--panel-border, #2563eb)",
               borderRadius: 9999,
               padding: "0 16px",
             }}
@@ -2406,8 +2403,8 @@ export default function App() {
                     padding: "10px 18px",
                     borderRadius: "10px 10px 0 0",
                     border: "none",
-                    borderBottom: rentLogTab === t.key ? "2px solid var(--accent, #0f172a)" : "2px solid transparent",
-                    background: rentLogTab === t.key ? "var(--accent-soft, rgba(15, 23, 42, 0.08))" : "transparent",
+                    borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
+                    background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
                     color: rentLogTab === t.key ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
                     fontSize: "14px",
                     fontWeight: 700,
@@ -2462,7 +2459,7 @@ export default function App() {
                 padding: "24px",
               }}
             >
-              {/* 그리드 상단 바 */}
+              {/* 상단 바 */}
               <div
                 style={{
                   display: "flex",
@@ -2473,218 +2470,17 @@ export default function App() {
                   gap: "12px",
                 }}
               >
-                {/* 보기 전환: 물품 그룹 / 배치 지도 */}
-                <div style={{ display: "flex", gap: "4px", background: "var(--input-bg, #0f172a)", padding: "4px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)" }}>
-                  {([["grouped", "🗂 물품 보기"], ["map", "🗺 배치 지도"]] as const).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => { setMonitorView(v); if (v === "grouped") setSelectedRackId(null); }}
-                      style={{
-                        padding: "7px 14px", borderRadius: "7px", border: "none", fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
-                        background: monitorView === v ? "var(--accent, #0f172a)" : "transparent",
-                        color: monitorView === v ? "#ffffff" : "var(--text-dim, #94a3b8)",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {/* 기능 버튼 */}
-                {isAdmin && (
-                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                    <button
-                      onClick={regenerateFromInventory}
-                      style={{
-                        background: "var(--panel-bg, #1e293b)",
-                        border: "1px solid var(--panel-border, #334155)",
-                        color: "var(--text-main, #f1f5f9)",
-                        padding: "8px 14px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        cursor: "pointer",
-                      }}
-                      title="위치코드 분석기 기반 랙 자동 재정렬"
-                    >
-                      <MapPin size={13} />
-                      자동 배치
-                    </button>
-
-                    <button
-                      onClick={addManualRack}
-                      style={{
-                        background: "#334155",
-                        color: "#ffffff",
-                        padding: "8px 14px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <Plus size={13} />
-                      새 랙 추가
-                    </button>
-                  </div>
-                )}
-
+                <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-main, #f1f5f9)" }}>🗂 창고 물품</div>
               </div>
 
-              {/* 그리드 카드 목록 */}
-              {monitorView === "grouped" ? (
-                <RackGroupedView
-                  inventory={inventory}
-                  isLightMode={isLightMode}
-                  isAdmin={isAdmin}
-                  onEditItem={(item) => setEditingItem(item)}
-                  onImageClick={(url) => setImageModalUrl(url)}
-                />
-              ) : racks.length === 0 ? (
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: "2px dashed var(--panel-border, #334155)",
-                    borderRadius: "12px",
-                    padding: "40px",
-                    textAlign: "center",
-                  }}
-                >
-                  <p style={{ color: "var(--text-dim, #94a3b8)", fontSize: "14px", marginBottom: "16px" }}>
-                    등록된 구역/랙이 존재하지 않습니다. 위치코드를 기반으로 자동 배치하거나 신규 랙을 직접 생성해 보세요.
-                  </p>
-                  <div style={{ display: "flex", gap: "10px" }}>
-                    <button
-                      onClick={regenerateFromInventory}
-                      style={{
-                        background: "#334155",
-                        color: "#ffffff",
-                        padding: "10px 18px",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      위치코드 기반 자동 배치
-                    </button>
-                    <button
-                      onClick={addManualRack}
-                      style={{
-                        background: "var(--panel-bg, #1e293b)",
-                        border: "1px solid var(--panel-border, #334155)",
-                        color: "var(--text-main, #f1f5f9)",
-                        padding: "10px 18px",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      새 구역 추가
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                    gap: "16px",
-                  }}
-                >
-                  {racks.map((rack) => {
-                    const isSelected = selectedRackId === rack.id;
-                    const isHighlighted = highlightShelf !== null && rack.id === parseLocation(highlightShelf).rack;
-
-                    return (
-                      <div
-                        key={rack.id}
-                        id={`rack-card-${rack.id}`}
-                        onClick={() => setSelectedRackId(rack.id)}
-                        style={{
-                          background: isSelected 
-                            ? "var(--panel-bg, #1e293b)" 
-                            : "var(--panel-bg, #1e293b)",
-                          border: isSelected
-                            ? `2px solid ${rack.color}`
-                            : isHighlighted
-                            ? "2px solid #f59e0b"
-                            : "1px solid var(--panel-border, #334155)",
-                          borderRadius: "8px",
-                          padding: "20px 16px",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                          animation: isHighlighted ? "searchPulse 1.4s ease-in-out infinite" : "none",
-                          minHeight: "80px",
-                          position: "relative",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected && !isHighlighted) {
-                            e.currentTarget.style.borderColor = rack.color;
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected && !isHighlighted) {
-                            e.currentTarget.style.borderColor = "var(--panel-border, #334155)";
-                          }
-                        }}
-                      >
-                        {/* Rack Name */}
-                        <span style={{ 
-                          fontWeight: 700, 
-                          fontSize: "16px", 
-                          color: isSelected ? rack.color : "var(--text-main, #f1f5f9)",
-                          textAlign: "center",
-                        }}>
-                          {rack.name || `${rack.id} 랙`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <RackGroupedView
+                inventory={inventory}
+                isLightMode={isLightMode}
+                isAdmin={isAdmin}
+                onEditItem={(item) => setEditingItem(item)}
+                onImageClick={(url) => setImageModalUrl(url)}
+              />
             </div>
-
-            {/* 우측 사이드 패널 (랙 및 선반별 품목 리스트) */}
-            <SidePanel
-              rack={selectedRack}
-              shelvesWithItems={shelvesWithItems}
-              onClose={() => setSelectedRackId(null)}
-              onUpdateRack={(fields) => updateRackField(selectedRack!.id, fields)}
-              onDeleteRack={() => deleteRack(selectedRack!.id)}
-              onEditItem={(item) => setEditingItem(item)}
-              onAddItem={(loc, spec) => {
-                setDefaultLocationForNewItem(loc || null);
-                setDefaultSpecForNewItem(spec || null);
-                setShowAddForm(true);
-              }}
-              onAddSubcategory={handleAddSubcategory}
-              onRenameSubcategory={handleRenameSubcategory}
-              onDeleteItem={deleteInventoryItemRow}
-              highlightShelf={
-                selectedRack && highlightShelf && parseLocation(highlightShelf).rack === selectedRack.id
-                  ? highlightShelf
-                  : null
-              }
-              highlightedItemRowIndex={highlightedItemRowIndex}
-              onChangeStock={handleChangeStock}
-              isAdmin={isAdmin}
-              onRentItem={(item, actionType) => setShowRentModal({ item, actionType })}
-              isLightMode={isLightMode}
-            />
           </>
         )}
       </div>
@@ -2721,7 +2517,7 @@ export default function App() {
           <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, background: "var(--panel-bg, #1e293b)", border: "1px solid var(--panel-border, #334155)", borderRadius: 16, padding: 24, textAlign: "center", color: "var(--text-main, #f1f5f9)" }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>🔒 연동 설정은 관리자 전용입니다</div>
             <div style={{ fontSize: 13, color: "var(--text-dim, #94a3b8)", lineHeight: 1.6, marginBottom: 16 }}>서버 연동 주소는 관리자만 변경할 수 있습니다. 변경이 필요하면 관리자에게 요청하세요.</div>
-            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--accent, #0f172a)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
+            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@ import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
   HandHelping, PackageOpen, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
-  Warehouse, Trash2, ShoppingCart,
+  Warehouse, Trash2,
 } from "lucide-react";
 import {
   ObjectItem, ScenarioDefinition, UnreturnedItem, BorrowEntry, ReturnRequest,
@@ -62,9 +62,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
     border: isLightMode ? "#e6e9ef" : "#26324a",
     text: isLightMode ? "#111827" : "#f1f5f9",
-    label: isLightMode ? "#0f172a" : "#cbd5e1",
-    accent: isLightMode ? "#0f172a" : "#f1f5f9",
-    accentSoft: isLightMode ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.14)",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
     accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
@@ -168,8 +168,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, []);
 
   /* ---------- 창고 재고/미반납 로드 ---------- */
-  const loadWarehouse = useCallback(async () => {
-    if (whLoaded) return;
+  const loadWarehouse = useCallback(async (force = false) => {
+    if (!force && whLoaded) return;
     setWhLoading(true);
     try {
       if (connected && scriptUrl) setWhItems(await fetchWarehouseInventory(scriptUrl));
@@ -178,7 +178,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
       ]);
       setWhLoaded(true);
-    } catch (e: any) { showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
+    } catch (e: any) {
+      setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
+      showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
 
@@ -421,7 +424,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   onClick={() => toggleCart(list, setList, it)}
                   style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}
                 >
-                  <input type="checkbox" readOnly checked={inCart} style={{ width: 20, height: 20, accentColor: C.accent, flexShrink: 0, cursor: "pointer" }} />
+                  <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
                   <Thumb url={it.image} size={44} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
@@ -746,7 +749,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         onClick={() => toggleReturnKeys([item], !checked)}
         style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "12px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "10px", marginBottom: "6px", cursor: "pointer" }}
       >
-        <input type="checkbox" readOnly checked={checked} style={{ width: 20, height: 20, accentColor: C.accent, marginTop: "2px", flexShrink: 0, cursor: "pointer" }} />
+        <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
         <Thumb url={item.image} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, lineHeight: 1.35 }}>
@@ -938,7 +941,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
-    if (rootMode === "wborrow") { setWhLoaded(false); loadWarehouse(); }
+    if (rootMode === "wborrow") { loadWarehouse(true); }
     if (rootMode === "wreturn") loadWhReturn();
   }
 
@@ -1337,7 +1340,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : returnTree.length === 0 ? (
               <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>검색 결과가 없습니다.</div>
             ) : (
-              <div style={{ marginBottom: "80px" }}>
+              <div style={{ marginBottom: "120px" }}>
                 {returnTree.map(({ borrower, items }) => {
                   const all = sortByLoc(items);
                   const scenarioItems = all.filter((it) => it.sheetType === "scenario");
@@ -1441,8 +1444,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
             </div>
             <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
-              {!whLoaded || whLoading ? (
+              {whLoading ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 창고 물품을 불러오는 중...</div>
+              ) : !whLoaded || whItems.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+                  <div>창고 물품 목록을 불러오지 못했습니다.</div>
+                  <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
+                </div>
               ) : whFiltered.length === 0 ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
               ) : (
@@ -1452,7 +1460,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const { rack, slot } = parseRackSlot(it.location);
                   return (
                     <div key={it.rowIndex} onClick={() => addWhCart(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}>
-                      <input type="checkbox" readOnly checked={inCart} style={{ width: 20, height: 20, accentColor: C.accent, flexShrink: 0, cursor: "pointer" }} />
+                      <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
                       <Thumb url={it.photo} size={44} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
@@ -1498,7 +1506,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             </div>
 
-            <div id="wh-checkout-form" style={{ marginTop: "16px" }}>
+            <div style={{ marginTop: "16px" }}>
               <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
               <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
             </div>
@@ -1544,56 +1552,51 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 창고 물품이 없습니다.</div>
             ) : (
               <>
-                <div style={{ paddingBottom: "80px" }}>
-                  {whReturnItems
-                    .map((item, idx) => ({ item, idx }))
-                    .filter(({ item }) => {
-                      const q = whSearch.trim().toLowerCase();
-                      if (!q) return true;
-                      return String(item.name || "").toLowerCase().includes(q)
-                        || String(item.borrowerName || "").toLowerCase().includes(q)
-                        || String(item.location || "").toLowerCase().includes(q);
-                    })
-                    .map(({ item, idx }) => {
-                    const key = String(idx);
-                    const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
-                    const sel = whReturnSel[key];
-                    const checked = sel !== undefined;
-                    const { rack, slot } = parseRackSlot(item.location);
-                    return (
-                      <div key={key} onClick={() => setWhReturnSel((p) => { const n = { ...p }; if (checked) delete n[key]; else n[key] = maxQty; return n; })}
-                        style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "13px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "12px", marginBottom: "8px", cursor: "pointer" }}>
-                        <input type="checkbox" readOnly checked={checked} style={{ width: 20, height: 20, accentColor: C.accent, marginTop: "2px", flexShrink: 0, cursor: "pointer" }} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
-                          <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
-                            {item.borrowerName ? `대여자: ${item.borrowerName} · ` : ""}대여일: {item.borrowDate || "-"}
-                          </div>
-                          <div style={{ marginTop: "4px" }}>
-                            {item.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "2px 8px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
-                          </div>
-                          {maxQty > 1 ? (
-                            <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-                              <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
-                              <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.max(1, (p[key] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
-                              <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{sel ?? maxQty}</span>
-                              <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.min(maxQty, (p[key] ?? maxQty) + 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={12} /></button>
-                              <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
-                            </div>
-                          ) : null}
+                {whReturnItems
+                  .map((item, idx) => ({ item, idx }))
+                  .filter(({ item }) => {
+                    const q = whSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return String(item.name || "").toLowerCase().includes(q)
+                      || String(item.borrowerName || "").toLowerCase().includes(q)
+                      || String(item.location || "").toLowerCase().includes(q);
+                  })
+                  .map(({ item, idx }) => {
+                  const key = String(idx);
+                  const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
+                  const sel = whReturnSel[key];
+                  const checked = sel !== undefined;
+                  const { rack, slot } = parseRackSlot(item.location);
+                  return (
+                    <div key={key} onClick={() => setWhReturnSel((p) => { const n = { ...p }; if (checked) delete n[key]; else n[key] = maxQty; return n; })}
+                      style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "13px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "12px", marginBottom: "8px", cursor: "pointer" }}>
+                      <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
+                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
+                          {item.borrowerName ? `대여자: ${item.borrowerName} · ` : ""}대여일: {item.borrowDate || "-"}
                         </div>
+                        <div style={{ marginTop: "4px" }}>
+                          {item.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "2px 8px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
+                        </div>
+                        {maxQty > 1 ? (
+                          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+                            <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
+                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.max(1, (p[key] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
+                            <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{sel ?? maxQty}</span>
+                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.min(maxQty, (p[key] ?? maxQty) + 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={12} /></button>
+                            <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
+                          </div>
+                        ) : null}
                       </div>
-                    );
-                  })}
-                </div>
-
-                <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: C.card, borderTop: `1px solid ${C.border}`, padding: "12px 16px", zIndex: 10 }}>
-                  <div style={{ maxWidth: "620px", margin: "0 auto", display: "flex", gap: "10px" }}>
-                    <button onClick={goPrev} style={secondaryBtn}>이전</button>
-                    <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, flex: 1, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
-                      {returnSubmitting ? <><Spinner size={16} light /> 처리 중...</> : `반납 처리하기${Object.keys(whReturnSel).length ? ` (${Object.keys(whReturnSel).length}건)` : ""}`}
-                    </button>
-                  </div>
+                    </div>
+                  );
+                })}
+                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
+                  <button onClick={goPrev} style={secondaryBtn}>이전</button>
+                  <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
+                    {returnSubmitting ? <><Spinner size={16} light /> 처리 중...</> : `반납 처리하기${Object.keys(whReturnSel).length ? ` (${Object.keys(whReturnSel).length}건)` : ""}`}
+                  </button>
                 </div>
               </>
             )}
@@ -1650,294 +1653,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         ) : null}
         </div>
       </div>
-
-      {/* 🛒 동적 플로팅 장바구니 (일반 대여) */}
-      {mode === "b3g" && cart.length > 0 && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "24px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1000,
-            width: "calc(100% - 32px)",
-            maxWidth: "480px",
-            background: "var(--panel-bg, rgba(255, 255, 255, 0.88))",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            border: "1px solid var(--panel-border, rgba(230, 233, 239, 0.6))",
-            borderRadius: "20px",
-            padding: "10px 16px",
-            boxShadow: "0 12px 36px -4px rgba(15, 23, 42, 0.15)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "12px",
-            animation: "wmsSlideUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) both",
-          }}
-        >
-          <style>{`
-            @keyframes wmsSlideUp {
-              from { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
-              to { opacity: 1; transform: translate(-50%, 0) scale(1); }
-            }
-          `}</style>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <div
-              style={{
-                width: "38px",
-                height: "38px",
-                borderRadius: "12px",
-                background: "var(--accent-soft, rgba(67, 97, 238, 0.12))",
-                color: "var(--accent, #4361ee)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "relative",
-              }}
-            >
-              <ShoppingCart size={18} />
-              <span
-                style={{
-                  position: "absolute",
-                  top: "-5px",
-                  right: "-5px",
-                  background: "var(--accent, #4361ee)",
-                  color: "#fff",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  borderRadius: "10px",
-                  padding: "1px 5px",
-                  minWidth: "16px",
-                  textAlign: "center",
-                }}
-              >
-                {cart.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-              </span>
-            </div>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: "13.5px", color: "var(--text-main, #1e293b)" }}>
-                대여 자재 {cart.length}종 선택됨
-              </div>
-              <div style={{ fontSize: "11px", color: "var(--text-dim, #626c7d)" }}>
-                총 수량이 반영되었습니다.
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "2px", overflow: "hidden", flex: 1, justifyContent: "center" }}>
-            {cart.slice(0, 3).map((item, idx) => (
-              <div
-                key={item.id || idx}
-                style={{
-                  width: "28px",
-                  height: "28px",
-                  borderRadius: "6px",
-                  border: "2px solid var(--panel-bg, #ffffff)",
-                  background: "var(--canvas-bg, #f1f5f9)",
-                  overflow: "hidden",
-                  marginLeft: idx > 0 ? "-8px" : "0",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <span style={{ fontSize: "9px", fontWeight: 700, color: "var(--text-dim, #626c7d)" }}>
-                  {item.name?.slice(0, 2)}
-                </span>
-              </div>
-            ))}
-            {cart.length > 3 && (
-              <div
-                style={{
-                  width: "28px",
-                  height: "28px",
-                  borderRadius: "6px",
-                  border: "2px solid var(--panel-bg, #ffffff)",
-                  background: "var(--accent-soft, rgba(67, 97, 238, 0.12))",
-                  color: "var(--accent, #4361ee)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "9px",
-                  fontWeight: 800,
-                  marginLeft: "-8px",
-                  flexShrink: 0,
-                }}
-              >
-                +{cart.length - 3}
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => setMode("b4g")}
-            style={{
-              background: "var(--accent, #4361ee)",
-              color: "#ffffff",
-              border: "none",
-              borderRadius: "12px",
-              padding: "8px 14px",
-              fontSize: "12.5px",
-              fontWeight: 800,
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(67, 97, 238, 0.25)",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            신청하기 <ChevronRight size={13} />
-          </button>
-        </div>
-      )}
-
-      {/* 🛒 동적 플로팅 장바구니 (창고 대여) */}
-      {mode === "wborrow" && whCart.length > 0 && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "24px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1000,
-            width: "calc(100% - 32px)",
-            maxWidth: "480px",
-            background: "var(--panel-bg, rgba(255, 255, 255, 0.88))",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            border: "1px solid var(--panel-border, rgba(230, 233, 239, 0.6))",
-            borderRadius: "20px",
-            padding: "10px 16px",
-            boxShadow: "0 12px 36px -4px rgba(15, 23, 42, 0.15)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "12px",
-            animation: "wmsSlideUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) both",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <div
-              style={{
-                width: "38px",
-                height: "38px",
-                borderRadius: "12px",
-                background: "var(--accent-soft, rgba(67, 97, 238, 0.12))",
-                color: "var(--accent, #4361ee)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                position: "relative",
-              }}
-            >
-              <ShoppingCart size={18} />
-              <span
-                style={{
-                  position: "absolute",
-                  top: "-5px",
-                  right: "-5px",
-                  background: "var(--accent, #4361ee)",
-                  color: "#fff",
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  borderRadius: "10px",
-                  padding: "1px 5px",
-                  minWidth: "16px",
-                  textAlign: "center",
-                }}
-              >
-                {whCart.reduce((sum, item) => sum + (item.quantity || 1), 0)}
-              </span>
-            </div>
-            <div>
-              <div style={{ fontWeight: 800, fontSize: "13.5px", color: "var(--text-main, #1e293b)" }}>
-                창고 자재 {whCart.length}종 담김
-              </div>
-              <div style={{ fontSize: "11px", color: "var(--text-dim, #626c7d)" }}>
-                입력 양식을 채워 완료하세요.
-              </div>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: "2px", overflow: "hidden", flex: 1, justifyContent: "center" }}>
-            {whCart.slice(0, 3).map((item, idx) => (
-              <div
-                key={`${item.rowIndex}-${idx}`}
-                style={{
-                  width: "28px",
-                  height: "28px",
-                  borderRadius: "6px",
-                  border: "2px solid var(--panel-bg, #ffffff)",
-                  background: "var(--canvas-bg, #f1f5f9)",
-                  overflow: "hidden",
-                  marginLeft: idx > 0 ? "-8px" : "0",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
-              >
-                {item.photo ? (
-                  <img src={item.photo} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
-                  <span style={{ fontSize: "9px", fontWeight: 700, color: "var(--text-dim, #626c7d)" }}>
-                    {item.name?.slice(0, 2)}
-                  </span>
-                )}
-              </div>
-            ))}
-            {whCart.length > 3 && (
-              <div
-                style={{
-                  width: "28px",
-                  height: "28px",
-                  borderRadius: "6px",
-                  border: "2px solid var(--panel-bg, #ffffff)",
-                  background: "var(--accent-soft, rgba(67, 97, 238, 0.12))",
-                  color: "var(--accent, #4361ee)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "9px",
-                  fontWeight: 800,
-                  marginLeft: "-8px",
-                  flexShrink: 0,
-                }}
-              >
-                +{whCart.length - 3}
-              </div>
-            )}
-          </div>
-
-          <button
-            onClick={() => {
-              document.getElementById("wh-checkout-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
-            }}
-            style={{
-              background: "var(--accent, #4361ee)",
-              color: "#ffffff",
-              border: "none",
-              borderRadius: "12px",
-              padding: "8px 14px",
-              fontSize: "12.5px",
-              fontWeight: 800,
-              cursor: "pointer",
-              boxShadow: "0 4px 12px rgba(67, 97, 238, 0.25)",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            양식 채우기 <ChevronRight size={13} />
-          </button>
-        </div>
-      )}
 
       {/* 이미지 확대 모달 */}
       {imageModalUrl ? (

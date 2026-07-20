@@ -18,7 +18,7 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "var(--accent, #0f172a)";
+const ACCENT = "#2563eb";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 

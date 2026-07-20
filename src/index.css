@@ -9,8 +9,8 @@
   from { opacity: 0.15; transform: translateX(-90px); }
   to   { opacity: 1;    transform: translateX(0); }
 }
-.step-forward { animation: wmsSlideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
-.step-back    { animation: wmsSlideInLeft  0.5s cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
+.step-forward { animation: wmsSlideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+.step-back    { animation: wmsSlideInLeft  0.5s cubic-bezier(0.16, 1, 0.3, 1); }
 @media (prefers-reduced-motion: reduce) {
   .step-forward, .step-back { animation: none; }
 }

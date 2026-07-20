@@ -407,13 +407,9 @@ export function resizeAndCompressImage(file: File, maxWidth = 1200, maxHeight = 
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const originalWidth = img.width;
-        const originalHeight = img.height;
-        const shouldRotate = originalHeight > originalWidth;
-
-        // If portrait, swap width/height so calculation treats it as landscape (horizontal)
-        let width = shouldRotate ? originalHeight : originalWidth;
-        let height = shouldRotate ? originalWidth : originalHeight;
+        // Calculate new dimensions while maintaining aspect ratio
+        let width = img.width;
+        let height = img.height;
 
         if (width > maxWidth || height > maxHeight) {
           if (width > height) {
@@ -435,14 +431,8 @@ export function resizeAndCompressImage(file: File, maxWidth = 1200, maxHeight = 
           return;
         }
 
-        if (shouldRotate) {
-          // Rotate 90 degrees clockwise to make it landscape
-          ctx.translate(width / 2, height / 2);
-          ctx.rotate((90 * Math.PI) / 180);
-          ctx.drawImage(img, -height / 2, -width / 2, height, width);
-        } else {
-          ctx.drawImage(img, 0, 0, width, height);
-        }
+        // Draw image onto canvas
+        ctx.drawImage(img, 0, 0, width, height);
 
         // Export as JPEG with custom quality
         const dataUrl = canvas.toDataURL("image/jpeg", quality);
