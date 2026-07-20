@@ -93,7 +93,7 @@ export default function BrowsePage({
 
   const [modalUrl, setModalUrl] = useState("");
   const [myLoading, setMyLoading] = useState(false);
-  const [myResult, setMyResult] = useState<{ scenario: any[]; warehouse: any[] } | null>(null);
+  const [myResult, setMyResult] = useState<{ scenario: any[]; general: any[]; warehouse: any[] } | null>(null);
 
   const identName = affiliation === "other" ? otherName.trim() : name.trim();
   const identEmp = affiliation === "cfgw" ? empId.trim() : "";
@@ -266,9 +266,12 @@ export default function BrowsePage({
           fetchMyBorrowedItems(scriptUrl, identName, identEmp),
           fetchWarehouseBorrowedItems(scriptUrl, identName),
         ]);
-        setMyResult({ scenario: sc, warehouse: wh });
+        // 시트 기준으로 분리: SID대여 시트(scenario) vs 일반대여 시트(general)
+        const scenarioOnly = (sc || []).filter((it: any) => it.sheetType === "scenario");
+        const generalOnly = (sc || []).filter((it: any) => it.sheetType === "general");
+        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: wh });
       } else {
-        setMyResult({ scenario: [], warehouse: [] });
+        setMyResult({ scenario: [], general: [], warehouse: [] });
       }
     } catch (e: any) { showToast(`조회 중 오류: ${e.message}`, "error"); }
     finally { setMyLoading(false); }
@@ -538,15 +541,23 @@ export default function BrowsePage({
                   <span style={{ fontSize: "14px", fontWeight: 700 }}>{identName}님이 대여 중인 물품</span>
                   <button onClick={runMyLookup} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: C.accentText, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}><RotateCcw size={12} /> 새로고침</button>
                 </div>
-                {myResult.scenario.length === 0 && myResult.warehouse.length === 0 ? (
+                {myResult.scenario.length === 0 && myResult.general.length === 0 && myResult.warehouse.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
                 ) : (
                   <>
                     {myResult.scenario.length ? (
                       <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품</div>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품 (SID 대여)</div>
                         {myResult.scenario.map((item: any, i: number) => (
                           <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} loc={padSlot(item.location)} />
+                        ))}
+                      </>
+                    ) : null}
+                    {myResult.general.length ? (
+                      <>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "16px 0 8px" }}>일반 대여</div>
+                        {myResult.general.map((item: any, i: number) => (
+                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} loc={padSlot(item.location)} />
                         ))}
                       </>
                     ) : null}

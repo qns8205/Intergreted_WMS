@@ -72,7 +72,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            color: isLightMode ? "#2563eb" : "#60a5fa",
+            color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
           자재 대여 · 반납 · 관리
@@ -160,7 +160,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#2563eb" : "#60a5fa",
+                color: isLightMode ? "#111827" : "#f1f5f9",
               }}
             >
               {c.title}
@@ -242,7 +242,7 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#2563eb" : "#60a5fa",
+              color: isLightMode ? "#111827" : "#f1f5f9",
               marginBottom: "3px",
             }}
           >

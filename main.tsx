@@ -1617,6 +1617,7 @@ export default function App() {
         onAddRentLog={handleAddRentLog}
         onAddDefectLog={handleAddDefectLog}
         onSaveInventoryItem={saveInventoryItem}
+        onDeleteInventory={deleteInventoryItemRow}
         onBack={() => {
           setIsAdmin(false);
           safeSetLocalStorage("wms_is_admin", "false");
@@ -1940,7 +1941,7 @@ export default function App() {
 
           <button
             onClick={() => setCurrentView("rent")}
-            title={sidebarCollapsed ? "대여/반납 대장" : undefined}
+            title={sidebarCollapsed ? "대여 & 반납" : undefined}
             style={{
               width: "100%",
               padding: sidebarCollapsed ? "10px 0" : "9px 12px",
@@ -1957,7 +1958,7 @@ export default function App() {
             }}
           >
             <ClipboardList size={18} />
-            {!sidebarCollapsed && <span>대여/반납 대장</span>}
+            {!sidebarCollapsed && <span>대여 & 반납</span>}
           </button>
 
           <button
@@ -2080,7 +2081,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여/반납 대장 관리" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2458,7 +2459,7 @@ export default function App() {
                 padding: "24px",
               }}
             >
-              {/* 그리드 상단 바 */}
+              {/* 상단 바 */}
               <div
                 style={{
                   display: "flex",
@@ -2469,218 +2470,17 @@ export default function App() {
                   gap: "12px",
                 }}
               >
-                {/* 보기 전환: 물품 그룹 / 배치 지도 */}
-                <div style={{ display: "flex", gap: "4px", background: "var(--input-bg, #0f172a)", padding: "4px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)" }}>
-                  {([["grouped", "🗂 물품 보기"], ["map", "🗺 배치 지도"]] as const).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => { setMonitorView(v); if (v === "grouped") setSelectedRackId(null); }}
-                      style={{
-                        padding: "7px 14px", borderRadius: "7px", border: "none", fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
-                        background: monitorView === v ? "var(--accent, #2563eb)" : "transparent",
-                        color: monitorView === v ? "#ffffff" : "var(--text-dim, #94a3b8)",
-                      }}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {/* 기능 버튼 */}
-                {isAdmin && (
-                  <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                    <button
-                      onClick={regenerateFromInventory}
-                      style={{
-                        background: "var(--panel-bg, #1e293b)",
-                        border: "1px solid var(--panel-border, #334155)",
-                        color: "var(--text-main, #f1f5f9)",
-                        padding: "8px 14px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        cursor: "pointer",
-                      }}
-                      title="위치코드 분석기 기반 랙 자동 재정렬"
-                    >
-                      <MapPin size={13} />
-                      자동 배치
-                    </button>
-
-                    <button
-                      onClick={addManualRack}
-                      style={{
-                        background: "#334155",
-                        color: "#ffffff",
-                        padding: "8px 14px",
-                        borderRadius: 8,
-                        fontSize: 12,
-                        fontWeight: 700,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 4,
-                        cursor: "pointer",
-                      }}
-                    >
-                      <Plus size={13} />
-                      새 랙 추가
-                    </button>
-                  </div>
-                )}
-
+                <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-main, #f1f5f9)" }}>🗂 창고 물품</div>
               </div>
 
-              {/* 그리드 카드 목록 */}
-              {monitorView === "grouped" ? (
-                <RackGroupedView
-                  inventory={inventory}
-                  isLightMode={isLightMode}
-                  isAdmin={isAdmin}
-                  onEditItem={(item) => setEditingItem(item)}
-                  onImageClick={(url) => setImageModalUrl(url)}
-                />
-              ) : racks.length === 0 ? (
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: "2px dashed var(--panel-border, #334155)",
-                    borderRadius: "12px",
-                    padding: "40px",
-                    textAlign: "center",
-                  }}
-                >
-                  <p style={{ color: "var(--text-dim, #94a3b8)", fontSize: "14px", marginBottom: "16px" }}>
-                    등록된 구역/랙이 존재하지 않습니다. 위치코드를 기반으로 자동 배치하거나 신규 랙을 직접 생성해 보세요.
-                  </p>
-                  <div style={{ display: "flex", gap: "10px" }}>
-                    <button
-                      onClick={regenerateFromInventory}
-                      style={{
-                        background: "#334155",
-                        color: "#ffffff",
-                        padding: "10px 18px",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      위치코드 기반 자동 배치
-                    </button>
-                    <button
-                      onClick={addManualRack}
-                      style={{
-                        background: "var(--panel-bg, #1e293b)",
-                        border: "1px solid var(--panel-border, #334155)",
-                        color: "var(--text-main, #f1f5f9)",
-                        padding: "10px 18px",
-                        borderRadius: "8px",
-                        fontSize: "13px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      새 구역 추가
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-                    gap: "16px",
-                  }}
-                >
-                  {racks.map((rack) => {
-                    const isSelected = selectedRackId === rack.id;
-                    const isHighlighted = highlightShelf !== null && rack.id === parseLocation(highlightShelf).rack;
-
-                    return (
-                      <div
-                        key={rack.id}
-                        id={`rack-card-${rack.id}`}
-                        onClick={() => setSelectedRackId(rack.id)}
-                        style={{
-                          background: isSelected 
-                            ? "var(--panel-bg, #1e293b)" 
-                            : "var(--panel-bg, #1e293b)",
-                          border: isSelected
-                            ? `2px solid ${rack.color}`
-                            : isHighlighted
-                            ? "2px solid #f59e0b"
-                            : "1px solid var(--panel-border, #334155)",
-                          borderRadius: "8px",
-                          padding: "20px 16px",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-                          cursor: "pointer",
-                          transition: "all 0.15s ease",
-                          animation: isHighlighted ? "searchPulse 1.4s ease-in-out infinite" : "none",
-                          minHeight: "80px",
-                          position: "relative",
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSelected && !isHighlighted) {
-                            e.currentTarget.style.borderColor = rack.color;
-                          }
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSelected && !isHighlighted) {
-                            e.currentTarget.style.borderColor = "var(--panel-border, #334155)";
-                          }
-                        }}
-                      >
-                        {/* Rack Name */}
-                        <span style={{ 
-                          fontWeight: 700, 
-                          fontSize: "16px", 
-                          color: isSelected ? rack.color : "var(--text-main, #f1f5f9)",
-                          textAlign: "center",
-                        }}>
-                          {rack.name || `${rack.id} 랙`}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <RackGroupedView
+                inventory={inventory}
+                isLightMode={isLightMode}
+                isAdmin={isAdmin}
+                onEditItem={(item) => setEditingItem(item)}
+                onImageClick={(url) => setImageModalUrl(url)}
+              />
             </div>
-
-            {/* 우측 사이드 패널 (랙 및 선반별 품목 리스트) */}
-            <SidePanel
-              rack={selectedRack}
-              shelvesWithItems={shelvesWithItems}
-              onClose={() => setSelectedRackId(null)}
-              onUpdateRack={(fields) => updateRackField(selectedRack!.id, fields)}
-              onDeleteRack={() => deleteRack(selectedRack!.id)}
-              onEditItem={(item) => setEditingItem(item)}
-              onAddItem={(loc, spec) => {
-                setDefaultLocationForNewItem(loc || null);
-                setDefaultSpecForNewItem(spec || null);
-                setShowAddForm(true);
-              }}
-              onAddSubcategory={handleAddSubcategory}
-              onRenameSubcategory={handleRenameSubcategory}
-              onDeleteItem={deleteInventoryItemRow}
-              highlightShelf={
-                selectedRack && highlightShelf && parseLocation(highlightShelf).rack === selectedRack.id
-                  ? highlightShelf
-                  : null
-              }
-              highlightedItemRowIndex={highlightedItemRowIndex}
-              onChangeStock={handleChangeStock}
-              isAdmin={isAdmin}
-              onRentItem={(item, actionType) => setShowRentModal({ item, actionType })}
-              isLightMode={isLightMode}
-            />
           </>
         )}
       </div>

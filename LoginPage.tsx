@@ -168,8 +168,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, []);
 
   /* ---------- 창고 재고/미반납 로드 ---------- */
-  const loadWarehouse = useCallback(async () => {
-    if (whLoaded) return;
+  const loadWarehouse = useCallback(async (force = false) => {
+    if (!force && whLoaded) return;
     setWhLoading(true);
     try {
       if (connected && scriptUrl) setWhItems(await fetchWarehouseInventory(scriptUrl));
@@ -178,7 +178,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
       ]);
       setWhLoaded(true);
-    } catch (e: any) { showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
+    } catch (e: any) {
+      setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
+      showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
 
@@ -938,7 +941,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
-    if (rootMode === "wborrow") { setWhLoaded(false); loadWarehouse(); }
+    if (rootMode === "wborrow") { loadWarehouse(true); }
     if (rootMode === "wreturn") loadWhReturn();
   }
 
@@ -1337,7 +1340,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : returnTree.length === 0 ? (
               <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>검색 결과가 없습니다.</div>
             ) : (
-              <div style={{ marginBottom: "80px" }}>
+              <div style={{ marginBottom: "120px" }}>
                 {returnTree.map(({ borrower, items }) => {
                   const all = sortByLoc(items);
                   const scenarioItems = all.filter((it) => it.sheetType === "scenario");
@@ -1441,8 +1444,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
             </div>
             <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
-              {!whLoaded || whLoading ? (
+              {whLoading ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 창고 물품을 불러오는 중...</div>
+              ) : !whLoaded || whItems.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+                  <div>창고 물품 목록을 불러오지 못했습니다.</div>
+                  <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
+                </div>
               ) : whFiltered.length === 0 ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
               ) : (

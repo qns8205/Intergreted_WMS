@@ -19,6 +19,7 @@ import {
   ClipboardList,
   Camera,
   Upload,
+  Trash2,
 } from "lucide-react";
 import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -36,6 +37,7 @@ interface MobileViewPageProps {
   onAddRentLog: (log: RentLog) => Promise<void>;
   onAddDefectLog?: (log: Omit<DefectLog, "rowIndex">) => Promise<void>;
   onSaveInventoryItem?: (item: Omit<InventoryItem, "rowIndex"> & { rowIndex?: number }) => Promise<void>;
+  onDeleteInventory?: (rowIndex: number) => Promise<void>;
   onBack: () => void;
   isLightMode: boolean;
   toggleLightMode: () => void;
@@ -73,6 +75,7 @@ export default function MobileViewPage({
   onAddRentLog,
   onAddDefectLog,
   onSaveInventoryItem,
+  onDeleteInventory,
   onBack,
   isLightMode,
   toggleLightMode,
@@ -128,6 +131,7 @@ export default function MobileViewPage({
   const [defectTab, setDefectTab] = useState<"list" | "register">("list");
   const [defSelectedInvIndex, setDefSelectedInvIndex] = useState<number>(-1); // -1: 직접 입력
   const [defCustomName, setDefCustomName] = useState("");
+  const [defSearch, setDefSearch] = useState("");
   const [defCustomLoc, setDefCustomLoc] = useState("");
   const [defQty, setDefQty] = useState(1);
   const [defType, setDefType] = useState("파손");
@@ -1696,6 +1700,17 @@ export default function MobileViewPage({
                 {/* 품목 선택 */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>품목 고르기</label>
+                  <div style={{ position: "relative", marginBottom: "2px" }}>
+                    <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
+                    <input
+                      className="mvp-input"
+                      type="text"
+                      placeholder="물품명·위치로 검색"
+                      value={defSearch}
+                      onChange={(e) => setDefSearch(e.target.value)}
+                      style={{ ...inputBaseStyle, paddingLeft: "36px" }}
+                    />
+                  </div>
                   <select
                     className="mvp-input"
                     value={defSelectedInvIndex}
@@ -1719,12 +1734,18 @@ export default function MobileViewPage({
                     }}
                   >
                     <option value={-1}>직접 품목 입력하기</option>
-                    {inventory.map((item, idx) => (
-                      <option key={idx} value={idx}>
-                        {item.name} ({item.location})
-                      </option>
-                    ))}
+                    {inventory
+                      .map((item, idx) => ({ item, idx }))
+                      .filter(({ item }) => !defSearch.trim() || smartMatch([item.name, item.location, item.spec, item.keywords], defSearch))
+                      .map(({ item, idx }) => (
+                        <option key={idx} value={idx}>
+                          {item.name} ({item.location})
+                        </option>
+                      ))}
                   </select>
+                  {defSearch.trim() && inventory.filter((item) => smartMatch([item.name, item.location, item.spec, item.keywords], defSearch)).length === 0 ? (
+                    <div style={{ fontSize: "11px", color: AMBER, fontWeight: 600 }}>검색 결과가 없습니다. "직접 품목 입력하기"로 등록하세요.</div>
+                  ) : null}
                 </div>
 
                 {/* 직접 입력 시 물품명/위치 노출 */}
@@ -2228,6 +2249,33 @@ export default function MobileViewPage({
                       }}
                     >
                       ✏️ 기존 물품 정보 수정 (관리자)
+                    </button>
+                  )}
+
+                  {isAdmin && onDeleteInventory && selectedItem && selectedItem.rowIndex > 0 && (
+                    <button
+                      className="mvp-btn"
+                      onClick={async () => {
+                        await onDeleteInventory(selectedItem.rowIndex);
+                        closeSheet();
+                      }}
+                      style={{
+                        width: "100%",
+                        background: "rgba(239, 68, 68, 0.12)",
+                        color: "#ef4444",
+                        borderRadius: "14px",
+                        padding: "13px",
+                        fontSize: "14px",
+                        fontWeight: 700,
+                        marginTop: "10px",
+                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Trash2 size={15} /> 이 물품 삭제 (관리자)
                     </button>
                   )}
                 </>
