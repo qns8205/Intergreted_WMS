@@ -8,6 +8,7 @@ import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import SidePanel from "./components/SidePanel";
+import RackGroupedView from "./components/RackGroupedView";
 import ScenarioAdminPage from "./components/ScenarioAdminPage";
 import ScenarioLogsPage from "./components/ScenarioLogsPage";
 import DefectLogsPage from "./components/DefectLogsPage";
@@ -42,7 +43,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxt86U_xFleI59RbVu-7RMa-zQOgs2J-pLHZQ_acZkQoEdFo9tTOvNv4v9uSWMhZndFgA/exec";
+const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxWI_byjRAxNQ0Li1EC6CwinNu336h-minlRqMS8Ll6Hl85pl_JCY_jgl67mRft2YXq/exec";
 
 const DEMO_DEFECT_LOGS: DefectLog[] = [
   {
@@ -151,7 +152,7 @@ export default function App() {
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
-  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("warehouse");
+  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("scenario");
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -231,6 +232,8 @@ export default function App() {
   const [inventory, setInventory] = useState<InventoryItem[]>(DEMO_INVENTORY);
   const [racks, setRacks] = useState<Rack[]>([]);
   const [selectedRackId, setSelectedRackId] = useState<string | null>(null);
+  const [monitorView, setMonitorView] = useState<"map" | "grouped">("grouped");
+  const [imageModalUrl, setImageModalUrl] = useState<string>("");
 
   // 모바일 화면 여부 감지 (열람용 모드 진입 시 전용 모바일 UI를 보여주기 위함)
   const [isMobile, setIsMobile] = useState<boolean>(() => {
@@ -322,11 +325,15 @@ export default function App() {
       }
     }
     const saved = localStorage.getItem("wms_script_url");
-    if (
-      saved === "https://script.google.com/macros/s/AKfycbwc5YXabteLtTakGJqNo74AHD_AchtBw1bLlXEBiwmyk7CVdKsesrqSx8FZMOM1LrhuYQ/exec" ||
-      saved === "https://script.google.com/macros/s/AKfycby5Way2Bq9NEqxv96yDsKwgCmNw-MLh0ms0Z8XlTKEcjw4n0j4L_xPUEN42RNQDqQ686A/exec"
-    ) {
+    // 이 기기(특히 모바일)에 예전 배포 URL이 저장돼 있으면 최신 URL로 자동 교체.
+    const LEGACY_SCRIPT_URLS = [
+      "https://script.google.com/macros/s/AKfycbwc5YXabteLtTakGJqNo74AHD_AchtBw1bLlXEBiwmyk7CVdKsesrqSx8FZMOM1LrhuYQ/exec",
+      "https://script.google.com/macros/s/AKfycby5Way2Bq9NEqxv96yDsKwgCmNw-MLh0ms0Z8XlTKEcjw4n0j4L_xPUEN42RNQDqQ686A/exec",
+      "https://script.google.com/macros/s/AKfycbxt86U_xFleI59RbVu-7RMa-zQOgs2J-pLHZQ_acZkQoEdFo9tTOvNv4v9uSWMhZndFgA/exec",
+    ];
+    if (saved && LEGACY_SCRIPT_URLS.indexOf(saved.trim()) !== -1) {
       safeSetLocalStorage("wms_script_url", DEFAULT_SCRIPT_URL);
+      safeSetLocalStorage("wms_connected", "true");
       return DEFAULT_SCRIPT_URL;
     }
     return saved || DEFAULT_SCRIPT_URL;
@@ -374,6 +381,24 @@ export default function App() {
       return next;
     });
   };
+
+  // 글자 크기 배율 (0.9 ~ 1.3), 접근성/현장 가독성용
+  const [fontScale, setFontScale] = useState<number>(() => {
+    const saved = parseFloat(localStorage.getItem("wms_font_scale") || "1");
+    return isNaN(saved) ? 1 : Math.min(1.3, Math.max(0.9, saved));
+  });
+  const cycleFontScale = () => {
+    setFontScale((prev) => {
+      const steps = [0.9, 1, 1.1, 1.2, 1.3];
+      const idx = steps.findIndex((s) => Math.abs(s - prev) < 0.001);
+      const next = steps[(idx + 1) % steps.length];
+      safeSetLocalStorage("wms_font_scale", String(next));
+      return next;
+    });
+  };
+  useEffect(() => {
+    document.documentElement.style.setProperty("--wms-font-scale", String(fontScale));
+  }, [fontScale]);
 
   const [toast, setToast] = useState<{ msg: string; type: "info" | "ok" | "warn" | "error" } | null>(null);
   const [zoom, setZoom] = useState(1.0);
@@ -1602,7 +1627,60 @@ export default function App() {
         toggleLightMode={toggleLightMode}
         connected={connected}
         currentView={currentView}
+        onOpenScenario={() => setCurrentView("scenario")}
       />
+    );
+  }
+
+  // 모바일: 시나리오 물품 관리 (관리자) — 전용 풀스크린 래퍼로 렌더
+  if (isMobile && currentView === "scenario") {
+    if (!isAdmin) {
+      setCurrentView("landing");
+      return null;
+    }
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--canvas-bg, #020617)", color: "var(--text-main, #f1f5f9)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 20, background: "var(--panel-bg, #1e293b)", borderBottom: "1px solid var(--panel-border, #334155)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px 8px" }}>
+            <button onClick={() => setCurrentView("landing")} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 12px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)", background: "transparent", color: "var(--text-dim, #94a3b8)", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+              <Home size={15} /> 처음
+            </button>
+            <h1 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>🧩 시나리오 물품 관리</h1>
+          </div>
+          {/* 창고 탭들로 바로 전환 (탭 넘기기 방식) */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: "6px", padding: "0 12px 10px" }}>
+            {[
+              { label: "📥 대여", view: "monitor" },
+              { label: "🔄 반납", view: "rent" },
+              { label: "📦 등록", view: "monitor" },
+              { label: "⚠️ 불량", view: "defect" },
+              { label: "🧩 물품", view: "scenario" },
+            ].map((t, i) => (
+              <button
+                key={i}
+                onClick={() => { if (t.view !== "scenario") setCurrentView(t.view as any); }}
+                style={{
+                  padding: "10px 2px", borderRadius: "11px", fontSize: "12px", fontWeight: 800, border: "none",
+                  background: t.view === "scenario" ? "#2563eb" : "transparent",
+                  color: t.view === "scenario" ? "#ffffff" : "var(--text-dim, #94a3b8)",
+                  cursor: "pointer",
+                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{ padding: "16px" }}>
+          <ScenarioAdminPage
+            scriptUrl={scriptUrl}
+            connected={connected}
+            isLightMode={isLightMode}
+            showToast={showToast}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -1625,41 +1703,59 @@ export default function App() {
         * { box-sizing: border-box; }
         .wms-dark {
           --app-bg: #0f172a;
-          --canvas-bg: #020617;
-          --header-bg: #1e293b;
-          --panel-bg: #1e293b;
-          --panel-border: #334155;
+          --canvas-bg: #0b1120;
+          --header-bg: #161f30;
+          --panel-bg: #161f30;
+          --panel-border: #26324a;
           --text-main: #f1f5f9;
-          --text-dim: #94a3b8;
+          --text-dim: #8b98ac;
           --input-bg: #0f172a;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.16);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
+          --shadow: 0 4px 12px rgba(0,0,0,0.22);
         }
         .wms-light {
-          --app-bg: #f8fafc;
-          --canvas-bg: #e2e8f0;
+          --app-bg: #f7f8fa;
+          --canvas-bg: #eef1f5;
           --header-bg: #ffffff;
           --panel-bg: #ffffff;
-          --panel-border: #cbd5e1;
-          --text-main: #0f172a;
-          --text-dim: #475569;
-          --input-bg: #f1f5f9;
+          --panel-border: #e6e9ef;
+          --text-main: #111827;
+          --text-dim: #626c7d;
+          --input-bg: #f4f6f9;
+          --accent: #2563eb;
+          --accent-soft: rgba(37, 99, 235,0.10);
+          --radius: 10px;
+          --radius-sm: 7px;
+          --radius-lg: 14px;
+          --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
+          --shadow: 0 4px 14px rgba(15,23,42,0.08);
         }
-        .mono { font-family: 'JetBrains Mono', monospace; }
-        button { cursor: pointer; transition: all 0.15s ease-in-out; display: flex; align-items: center; justify-content: center; border: none; }
-        button:hover { opacity: 0.9; transform: scale(1.01); }
-        button:active { transform: scale(0.99); }
-        input, select { outline: none; transition: border-color 0.15s ease-in-out; }
-        input:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 2px rgba(99,102,241,0.2) !important; }
+        body { font-size: ${16 * fontScale}px; }
+        .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
+        button { cursor: pointer; transition: background 0.14s ease, opacity 0.14s ease, transform 0.08s ease; display: flex; align-items: center; justify-content: center; border: none; }
+        button:hover { opacity: 0.92; }
+        button:active { transform: scale(0.98); }
+        input, select, textarea { outline: none; transition: border-color 0.14s ease, box-shadow 0.14s ease; }
+        input:focus, select:focus, textarea:focus { border-color: var(--accent) !important; box-shadow: 0 0 0 3px var(--accent-soft) !important; }
+        :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-thumb { background: var(--panel-border); border-radius: 20px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
-        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(99,102,241,0.4); } 100% { box-shadow: 0 0 0 14px rgba(99,102,241,0); } }
-        .canvas-bg {
-          user-select: none;
-        }
+        @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(37, 99, 235,0.4); } 100% { box-shadow: 0 0 0 14px rgba(37, 99, 235,0); } }
+        .canvas-bg { user-select: none; }
       `}</style>
 
       {/* ===== 1. 좌측 사이드바 ===== */}
       <aside
         style={{
-          width: sidebarCollapsed ? 72 : 260,
+          width: sidebarCollapsed ? 64 : 232,
           background: "var(--header-bg, #1e293b)",
           borderRight: "1px solid var(--panel-border, #334155)",
           display: "flex",
@@ -1674,7 +1770,7 @@ export default function App() {
         {sidebarCollapsed ? (
           <div
             style={{
-              height: 64,
+              height: 56,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1702,7 +1798,7 @@ export default function App() {
         ) : (
           <div
             style={{
-              height: 64,
+              height: 56,
               padding: "0 16px 0 20px",
               display: "flex",
               alignItems: "center",
@@ -1721,7 +1817,7 @@ export default function App() {
                   fontWeight: 800,
                   fontSize: 14,
                   color: "#ffffff",
-                  background: "#4f46e5",
+                  background: "#334155",
                   padding: "8px 14px",
                   borderRadius: 8,
                   border: "none",
@@ -1780,7 +1876,7 @@ export default function App() {
                 현재 로그인 사용자
               </div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-main, #f1f5f9)", display: "flex", alignItems: "center", gap: 6 }}>
-                👤 {currentUser.name || currentUser.id} <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#4f46e5", color: "#fff", fontWeight: 700 }}>관리자</span>
+                👤 {currentUser.name || currentUser.id} <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#334155", color: "#fff", fontWeight: 700 }}>관리자</span>
               </div>
             </div>
           )
@@ -1790,7 +1886,7 @@ export default function App() {
         <div
           style={{
             flex: 1,
-            padding: sidebarCollapsed ? "24px 8px" : "24px 16px",
+            padding: sidebarCollapsed ? "16px 8px" : "16px 12px",
             display: "flex",
             flexDirection: "column",
             gap: 8,
@@ -1801,17 +1897,17 @@ export default function App() {
             title={sidebarCollapsed ? "창고물품" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "monitor" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(99, 102, 241, 0.15)") : "transparent",
-              color: currentView === "monitor" ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "monitor" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "monitor" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "monitor" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(99, 102, 241, 0.3)") : "1px solid transparent",
+              border: currentView === "monitor" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <Package size={18} />
@@ -1824,17 +1920,17 @@ export default function App() {
             title={sidebarCollapsed ? "시나리오 물품" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "scenario" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(99, 102, 241, 0.15)") : "transparent",
-              color: currentView === "scenario" ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "scenario" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "scenario" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(99, 102, 241, 0.3)") : "1px solid transparent",
+              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <Grid size={18} />
@@ -1847,17 +1943,17 @@ export default function App() {
             title={sidebarCollapsed ? "대여/반납 대장" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
               justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "rent" ? (isLightMode ? "rgba(79, 70, 229, 0.08)" : "rgba(99, 102, 241, 0.15)") : "transparent",
-              color: currentView === "rent" ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+              background: currentView === "rent" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "rent" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
               display: "flex",
               alignItems: "center",
               gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "rent" ? (isLightMode ? "1px solid rgba(79, 70, 229, 0.2)" : "1px solid rgba(99, 102, 241, 0.3)") : "1px solid transparent",
+              border: currentView === "rent" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
             }}
           >
             <ClipboardList size={18} />
@@ -1869,7 +1965,7 @@ export default function App() {
             title={sidebarCollapsed ? "불량로그" : undefined}
             style={{
               width: "100%",
-              padding: sidebarCollapsed ? "12px 0" : "12px 16px",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
               borderRadius: 8,
               fontSize: 14,
               fontWeight: 700,
@@ -1992,9 +2088,9 @@ export default function App() {
               fontWeight: 700,
               padding: "4px 10px",
               borderRadius: "12px",
-              background: isAdmin ? "rgba(16, 185, 129, 0.12)" : "rgba(99, 102, 241, 0.12)",
-              color: isAdmin ? "#10b981" : "#818cf8",
-              border: `1px solid ${isAdmin ? "rgba(16, 185, 129, 0.25)" : "rgba(99, 102, 241, 0.25)"}`,
+              background: isAdmin ? "rgba(16, 185, 129, 0.12)" : "rgba(37, 99, 235, 0.12)",
+              color: isAdmin ? "#10b981" : "#94a3b8",
+              border: `1px solid ${isAdmin ? "rgba(16, 185, 129, 0.25)" : "rgba(37, 99, 235, 0.25)"}`,
               display: "flex",
               alignItems: "center",
               gap: 4
@@ -2011,13 +2107,13 @@ export default function App() {
                 setCurrentView("login");
               }}
               style={{
-                background: "rgba(99, 102, 241, 0.08)",
-                border: "1px solid rgba(99, 102, 241, 0.25)",
+                background: "rgba(37, 99, 235, 0.08)",
+                border: "1px solid rgba(37, 99, 235, 0.25)",
                 borderRadius: "6px",
                 padding: "3px 10px",
                 fontSize: "11px",
                 fontWeight: 700,
-                color: "#818cf8",
+                color: "#94a3b8",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -2025,10 +2121,10 @@ export default function App() {
                 transition: "all 0.2s",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(99, 102, 241, 0.18)";
+                e.currentTarget.style.background = "rgba(37, 99, 235, 0.18)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(99, 102, 241, 0.08)";
+                e.currentTarget.style.background = "rgba(37, 99, 235, 0.08)";
               }}
             >
               🔐 관리자 로그인
@@ -2043,7 +2139,7 @@ export default function App() {
               display: "flex",
               alignItems: "center",
               background: "var(--input-bg, #0f172a)",
-              border: "1px solid var(--panel-border, #475569)",
+              border: "1px solid var(--panel-border, #2563eb)",
               borderRadius: 9999,
               padding: "0 16px",
             }}
@@ -2125,7 +2221,7 @@ export default function App() {
                           gap: 6,
                         }}
                       >
-                        <span className="mono" style={{ background: "var(--input-bg, #0f172a)", padding: "1px 5px", borderRadius: 3, color: "#818cf8" }}>
+                        <span className="mono" style={{ background: "var(--input-bg, #0f172a)", padding: "1px 5px", borderRadius: 3, color: "#94a3b8" }}>
                           {item.location}
                         </span>
                         {item.note && <span>| 특이사항: {item.note}</span>}
@@ -2156,6 +2252,30 @@ export default function App() {
         {/* 우측 보조 컨트롤 영역 */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <ConnectionBadge connected={connected} dirty={dirty} saving={saving} lastSync={lastSync} />
+
+          <button
+            onClick={cycleFontScale}
+            style={{
+              height: 34,
+              minWidth: 44,
+              padding: "0 8px",
+              borderRadius: 6,
+              border: "1px solid var(--panel-border, #334155)",
+              background: "var(--input-bg, #0f172a)",
+              color: "var(--text-main, #f1f5f9)",
+              cursor: "pointer",
+              fontSize: 12,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 3,
+            }}
+            title={`글자 크기 (현재 ${Math.round(fontScale * 100)}%) · 눌러서 변경`}
+          >
+            <span style={{ fontSize: 11 }}>가</span>
+            <span style={{ fontSize: 15 }}>가</span>
+          </button>
 
           <button
             onClick={toggleLightMode}
@@ -2272,8 +2392,8 @@ export default function App() {
             {/* 시나리오 / 창고 전환 탭 */}
             <div style={{ display: "flex", gap: "8px", padding: "16px 24px 0", background: "var(--canvas-bg, #020617)" }}>
               {[
-                { key: "warehouse" as const, label: "창고 물품 대장" },
                 { key: "scenario" as const, label: "시나리오 물품 대장" },
+                { key: "warehouse" as const, label: "창고 물품 대장" },
               ].map((t) => (
                 <button
                   key={t.key}
@@ -2282,9 +2402,9 @@ export default function App() {
                     padding: "10px 18px",
                     borderRadius: "10px 10px 0 0",
                     border: "none",
-                    borderBottom: rentLogTab === t.key ? "2px solid #6366f1" : "2px solid transparent",
-                    background: rentLogTab === t.key ? (isLightMode ? "rgba(99,102,241,0.08)" : "rgba(99,102,241,0.15)") : "transparent",
-                    color: rentLogTab === t.key ? (isLightMode ? "#4f46e5" : "#818cf8") : "var(--text-dim, #94a3b8)",
+                    borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
+                    background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
+                    color: rentLogTab === t.key ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
                     fontSize: "14px",
                     fontWeight: 700,
                     cursor: "pointer",
@@ -2342,13 +2462,29 @@ export default function App() {
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "flex-end",
+                  justifyContent: "space-between",
                   alignItems: "center",
                   marginBottom: "20px",
                   flexWrap: "wrap",
                   gap: "12px",
                 }}
               >
+                {/* 보기 전환: 물품 그룹 / 배치 지도 */}
+                <div style={{ display: "flex", gap: "4px", background: "var(--input-bg, #0f172a)", padding: "4px", borderRadius: "10px", border: "1px solid var(--panel-border, #334155)" }}>
+                  {([["grouped", "🗂 물품 보기"], ["map", "🗺 배치 지도"]] as const).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => { setMonitorView(v); if (v === "grouped") setSelectedRackId(null); }}
+                      style={{
+                        padding: "7px 14px", borderRadius: "7px", border: "none", fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
+                        background: monitorView === v ? "var(--accent, #2563eb)" : "transparent",
+                        color: monitorView === v ? "#ffffff" : "var(--text-dim, #94a3b8)",
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
                 {/* 기능 버튼 */}
                 {isAdmin && (
                   <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
@@ -2376,7 +2512,7 @@ export default function App() {
                     <button
                       onClick={addManualRack}
                       style={{
-                        background: "#4f46e5",
+                        background: "#334155",
                         color: "#ffffff",
                         padding: "8px 14px",
                         borderRadius: 8,
@@ -2397,7 +2533,15 @@ export default function App() {
               </div>
 
               {/* 그리드 카드 목록 */}
-              {racks.length === 0 ? (
+              {monitorView === "grouped" ? (
+                <RackGroupedView
+                  inventory={inventory}
+                  isLightMode={isLightMode}
+                  isAdmin={isAdmin}
+                  onEditItem={(item) => setEditingItem(item)}
+                  onImageClick={(url) => setImageModalUrl(url)}
+                />
+              ) : racks.length === 0 ? (
                 <div
                   style={{
                     flex: 1,
@@ -2418,7 +2562,7 @@ export default function App() {
                     <button
                       onClick={regenerateFromInventory}
                       style={{
-                        background: "#4f46e5",
+                        background: "#334155",
                         color: "#ffffff",
                         padding: "10px 18px",
                         borderRadius: "8px",
@@ -2542,7 +2686,13 @@ export default function App() {
       </div>
 
       {/* ===== 3. 설정 모달 ===== */}
-      {showSetup && (
+      {imageModalUrl ? (
+        <div onClick={() => setImageModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <img src={imageModalUrl} alt="" referrerPolicy="no-referrer" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "92%", maxHeight: "92%", borderRadius: "10px", objectFit: "contain", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }} />
+        </div>
+      ) : null}
+
+      {showSetup && isAdmin && (
         <SetupModal
           scriptUrl={scriptUrl}
           setScriptUrl={setScriptUrl}
@@ -2560,6 +2710,16 @@ export default function App() {
             showToast("스프레드시트 연동이 해제되었습니다. 가상 데모 모드로 동작합니다.", "info");
           }}
         />
+      )}
+      {showSetup && !isAdmin && (
+        // 비관리자가 연동 설정에 접근하면 잠금 안내만 표시 (URL 변경 방지)
+        <div onClick={() => setShowSetup(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, background: "var(--panel-bg, #1e293b)", border: "1px solid var(--panel-border, #334155)", borderRadius: 16, padding: 24, textAlign: "center", color: "var(--text-main, #f1f5f9)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>🔒 연동 설정은 관리자 전용입니다</div>
+            <div style={{ fontSize: 13, color: "var(--text-dim, #94a3b8)", lineHeight: 1.6, marginBottom: 16 }}>서버 연동 주소는 관리자만 변경할 수 있습니다. 변경이 필요하면 관리자에게 요청하세요.</div>
+            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
+          </div>
+        </div>
       )}
 
       {/* ===== 4. 품목 팝업 폼 ===== */}
@@ -2688,13 +2848,13 @@ export default function App() {
               <button
                 onClick={handleCreateManualRack}
                 style={{
-                  background: "#4f46e5",
+                  background: "#334155",
                   color: "#ffffff",
                   padding: "10px 20px",
                   borderRadius: "8px",
                   fontSize: "13px",
                   fontWeight: 700,
-                  boxShadow: "0 4px 12px rgba(79, 70, 229, 0.25)",
+                  boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
                 }}
               >
                 설계 및 배치 시작
@@ -2737,7 +2897,7 @@ export default function App() {
             </h3>
             <p style={{ fontSize: "12px", color: "var(--text-dim, #94a3b8)", marginBottom: "16px", lineHeight: "1.4" }}>
               편집 권한 활성화를 위해 비밀번호를 입력해주세요.<br />
-              <span style={{ color: "#818cf8", fontWeight: 700 }}>(공용 비밀번호: 1234)</span>
+              <span style={{ color: "#94a3b8", fontWeight: 700 }}>(공용 비밀번호: 1234)</span>
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "16px" }}>
@@ -2803,7 +2963,7 @@ export default function App() {
                   }
                 }}
                 style={{
-                  background: "#4f46e5",
+                  background: "#334155",
                   color: "#ffffff",
                   padding: "8px 16px",
                   borderRadius: "8px",
@@ -2851,7 +3011,7 @@ export default function App() {
               style={{
                 fontSize: "16px",
                 fontWeight: 800,
-                color: modalActionType === "대여" ? "#818cf8" : modalActionType === "소모" ? "#f59e0b" : "#10b981",
+                color: modalActionType === "대여" ? "#94a3b8" : modalActionType === "소모" ? "#f59e0b" : "#10b981",
                 marginBottom: "16px",
                 display: "flex",
                 alignItems: "center",
@@ -2866,7 +3026,7 @@ export default function App() {
                 {showRentModal.item.name}
               </div>
               <div style={{ color: "var(--text-dim, #94a3b8)", fontSize: "11px", display: "flex", gap: "8px" }}>
-                <span>위치: <span className="mono" style={{ color: "#818cf8" }}>{showRentModal.item.location}</span></span>
+                <span>위치: <span className="mono" style={{ color: "#94a3b8" }}>{showRentModal.item.location}</span></span>
                 <span>| 현재 수량: <span className="mono" style={{ color: "#34d399" }}>{showRentModal.item.stock ?? 0}개</span></span>
               </div>
             </div>
@@ -2888,7 +3048,7 @@ export default function App() {
                       fontSize: "12px",
                       fontWeight: 700,
                       cursor: "pointer",
-                      background: modalActionType === "대여" ? "#4f46e5" : "transparent",
+                      background: modalActionType === "대여" ? "#334155" : "transparent",
                       color: modalActionType === "대여" ? "#ffffff" : "var(--text-dim, #94a3b8)",
                       transition: "all 0.15s",
                     }}
@@ -3049,7 +3209,7 @@ export default function App() {
                 }}
                 disabled={(modalActionType === "대여" || modalActionType === "소모") && typeof showRentModal.item.stock === "number" && rentQty > showRentModal.item.stock}
                 style={{
-                  background: modalActionType === "대여" ? "#4f46e5" : modalActionType === "소모" ? "#f59e0b" : "#10b981",
+                  background: modalActionType === "대여" ? "#334155" : modalActionType === "소모" ? "#f59e0b" : "#10b981",
                   color: "#ffffff",
                   padding: "10px 20px",
                   borderRadius: "8px",

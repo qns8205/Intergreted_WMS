@@ -18,7 +18,7 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
+const ACCENT = "#2563eb";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 
@@ -274,10 +274,10 @@ export default function SetupModal({
         </div>
 
         {connected && scriptUrl && (
-          <div style={{ marginTop: 20, background: "rgba(99, 102, 241, 0.08)", padding: 14, borderRadius: 10, border: "1px dashed rgba(99, 102, 241, 0.45)" }}>
+          <div style={{ marginTop: 20, background: "rgba(37, 99, 235, 0.08)", padding: 14, borderRadius: 10, border: "1px dashed rgba(37, 99, 235, 0.45)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#818cf8", display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
                   👥 타인/동료 기기 동기화 링크
                 </div>
                 <div style={{ fontSize: 11.5, color: TEXT_DIM, marginTop: 4, lineHeight: 1.5 }}>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   ArrowLeft, Search, User, IdCard, Boxes, Fingerprint, ChevronRight,
   Plus, Minus, X, ShoppingCart, Warehouse, MapPin, Trash2, HandHelping,
@@ -14,6 +14,7 @@ import {
   DEMO_OBJECT_ITEMS,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 
 type Affiliation = "cfgw" | "configds" | "other";
 type Step = "identity" | "menu" | "scenario" | "warehouse" | "mylookup";
@@ -46,15 +47,15 @@ export default function BrowsePage({
   scriptUrl, connected, isLightMode, onBack, showToast, onGoBorrow, initialStep = null, purpose = "browse",
 }: BrowsePageProps) {
   const C = {
-    bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#ffffff" : "#1e293b",
-    cardSub: isLightMode ? "#f8fafc" : "#151d30",
-    border: isLightMode ? "#e2e8f0" : "#334155",
-    text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#6366f1",
-    accentSoft: "rgba(99, 102, 241, 0.15)",
-    accentText: isLightMode ? "#4f46e5" : "#818cf8",
+    bg: isLightMode ? "#f7f8fa" : "#0b1120",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -74,7 +75,10 @@ export default function BrowsePage({
   const [sciLoaded, setSciLoaded] = useState(false);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [sciLoading, setSciLoading] = useState(false);
+  const [whLoading, setWhLoading] = useState(false);
+  const [sciErr, setSciErr] = useState("");
+  const [whErr, setWhErr] = useState("");
 
   const [sciCart, setSciCart] = useState<BrowseCartItem[]>([]);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
@@ -109,30 +113,35 @@ export default function BrowsePage({
   }, [whCart, identName, identEmp, step]);
 
   const loadScenario = useCallback(async () => {
-    if (sciLoaded) return;
-    setLoading(true);
+    setSciLoading(true);
     try {
       setSciItems(connected && scriptUrl ? await fetchObjectItems(scriptUrl) : DEMO_OBJECT_ITEMS);
-      setSciLoaded(true);
-    } catch (e: any) { showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
-    finally { setLoading(false); }
-  }, [connected, scriptUrl, sciLoaded, showToast]);
+      setSciErr("");
+    } catch (e: any) {
+      setSciErr(e?.message || "불러오기에 실패했습니다.");
+      showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
+    finally { setSciLoaded(true); setSciLoading(false); }
+  }, [connected, scriptUrl, showToast]);
 
   const loadWarehouse = useCallback(async () => {
-    if (whLoaded) return;
-    setLoading(true);
+    setWhLoading(true);
     try {
       setWhItems(connected && scriptUrl ? await fetchWarehouseInventory(scriptUrl) : DEMO_WAREHOUSE);
-      setWhLoaded(true);
-    } catch (e: any) { showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error"); }
-    finally { setLoading(false); }
-  }, [connected, scriptUrl, whLoaded, showToast]);
+      setWhErr("");
+    } catch (e: any) {
+      setWhErr(e?.message || "불러오기에 실패했습니다.");
+      showToast(`창고 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    }
+    finally { setWhLoaded(true); setWhLoading(false); }
+  }, [connected, scriptUrl, showToast]);
 
+  // step이 scenario/warehouse가 되면 (아직 미로드·비로딩일 때) 자동 로드.
+  // 클릭 핸들러에서 직접 호출하지 않고 effect로 처리하여 클로저/중복호출 문제를 원천 차단.
   useEffect(() => {
-    if (initialStep === "warehouse") loadWarehouse();
-    if (initialStep === "scenario") loadScenario();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (step === "scenario" && !sciLoaded && !sciLoading) loadScenario();
+    if (step === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
+  }, [step, sciLoaded, sciLoading, whLoaded, whLoading, loadScenario, loadWarehouse]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -147,16 +156,13 @@ export default function BrowsePage({
   const sciSubs = sciCat && sciCatMap[sciCat] ? Array.from<string>(sciCatMap[sciCat]).sort() : [];
 
   const sciFiltered = useMemo(() => {
-    const q = sciSearch.trim().toLowerCase();
+    const q = sciSearch.trim();
     return sciItems.filter((it) => {
       if (sciCat && it.category !== sciCat) return false;
       if (sciSub && it.subcategory !== sciSub) return false;
       if (!q) return true;
       const slotPad = padSlot(it.rootSlot);
-      const qTrim = q.replace(/^0+/, "");
-      const slotHit = slotPad.includes(q) || (!!qTrim && slotPad.replace(/^0+/, "") === qTrim);
-      return it.name.toLowerCase().includes(q) || it.id.includes(q) ||
-        (it.category || "").toLowerCase().includes(q) || (it.subcategory || "").toLowerCase().includes(q) || slotHit;
+      return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
     });
   }, [sciItems, sciSearch, sciCat, sciSub]);
 
@@ -174,13 +180,13 @@ export default function BrowsePage({
   const whSlots = whRack && whRackMap[whRack] ? Array.from<string>(whRackMap[whRack]).sort() : [];
 
   const whFiltered = useMemo(() => {
-    const q = whSearch.trim().toLowerCase();
+    const q = whSearch.trim();
     return whItems.filter((it) => {
       const { rack, slot } = parseRackSlot(it.location);
       if (whRack && rack !== whRack) return false;
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
-      return it.name.toLowerCase().includes(q);
+      return smartMatch([it.name, it.location, it.keywords], q);
     }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
 
@@ -307,6 +313,51 @@ export default function BrowsePage({
     : step === "warehouse" ? "창고 물품 열람"
     : step === "mylookup" ? "내 대여 조회" : "열람 조회";
 
+  /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
+  const stepRef = useRef(step);
+  stepRef.current = step;
+
+  // 슬라이딩 방향 추적 (렌더 중 동기 계산)
+  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenario: 2, warehouse: 2, mylookup: 2 };
+  const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
+  const slideDirRef = useRef<"forward" | "back">("forward");
+  const curStepOrder = STEP_ORDER[step] ?? 0;
+  if (curStepOrder !== prevStepOrderRef.current) {
+    slideDirRef.current = curStepOrder >= prevStepOrderRef.current ? "forward" : "back";
+    prevStepOrderRef.current = curStepOrder;
+  }
+  const slideDir = slideDirRef.current;
+  const suppressBrowseHash = useRef(false);
+  const browseBase = purpose === "mylookup" ? "mylookup" : "browse";
+
+  useEffect(() => {
+    if (suppressBrowseHash.current) { suppressBrowseHash.current = false; return; }
+    const target = `#/${browseBase}/${step}`;
+    if (window.location.hash !== target) {
+      window.history.pushState(null, "", target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  useEffect(() => {
+    const onPop = () => {
+      const parts = window.location.hash.split("/");
+      const base = parts[1] || "";
+      const slug = parts[2] || "";
+      if (base !== "browse" && base !== "mylookup") { onBack(); return; }
+      const valid: Step[] = ["identity", "menu", "scenario", "warehouse", "mylookup"];
+      if (valid.includes(slug as Step) && slug !== stepRef.current) {
+        suppressBrowseHash.current = true;
+        setStep(slug as Step);
+      } else if (!valid.includes(slug as Step)) {
+        onBack();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
       <style>{`@keyframes bsp-spin { to { transform: rotate(360deg); } }`}</style>
@@ -325,6 +376,7 @@ export default function BrowsePage({
 
       <div style={{ maxWidth: step === "scenario" || step === "warehouse" ? "1200px" : "620px", margin: "0 auto", padding: "24px 16px 96px" }}>
 
+        <div key={step} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {step === "identity" ? (
           <div>
             <div style={{ marginBottom: "20px", padding: "14px 16px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "13px", lineHeight: 1.6 }}>
@@ -343,7 +395,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>성함</label>
                 <div style={{ position: "relative", marginBottom: "16px" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={name} onChange={(e) => setName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={name} onChange={(e) => setName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
               </>
             ) : (
@@ -351,7 +403,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>이름</label>
                 <div style={{ position: "relative", marginBottom: "8px" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginBottom: "16px", lineHeight: 1.5 }}>기타 소속은 성함만 입력합니다. (사번·Slack 멘션 없음)</div>
               </>
@@ -361,7 +413,7 @@ export default function BrowsePage({
                 <label style={labelStyle}>사번</label>
                 <div style={{ position: "relative", marginBottom: "24px" }}>
                   <IdCard size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={empId} onChange={(e) => setEmpId(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => { if (e.key === "Enter") submitIdentity(); }} placeholder="사번을 입력해주세요 (숫자만)" inputMode="numeric" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={empId} onChange={(e) => setEmpId(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => { if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) submitIdentity(); }} placeholder="사번을 입력해주세요 (숫자만)" inputMode="numeric" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
               </>
             ) : <div style={{ height: "8px" }} />}
@@ -382,7 +434,7 @@ export default function BrowsePage({
             ].map((m) => (
               <div
                 key={m.key}
-                onClick={() => { setStep(m.key); m.key === "scenario" ? loadScenario() : loadWarehouse(); }}
+                onClick={() => setStep(m.key)}
                 style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
                 onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.transform = "translateY(-2px)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}
@@ -399,7 +451,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "scenario" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={loading} count={sciFiltered.length} total={sciItems.length}
+          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -437,7 +489,7 @@ export default function BrowsePage({
         ) : null}
 
         {step === "warehouse" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={loading} count={whFiltered.length} total={whItems.length}
+          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={whLoading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhErr(""); loadWarehouse(); }}
             filterRow={
               <>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
@@ -513,12 +565,13 @@ export default function BrowsePage({
             )}
           </div>
         ) : null}
+        </div>
       </div>
 
       {(step === "scenario" || step === "warehouse") && (step === "scenario" ? sciCartCount : whCartCount) > 0 ? (
         <button
           onClick={() => setCartOpen(step as Kind)}
-          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(99,102,241,0.5)" }}
+          style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 40, display: "flex", alignItems: "center", gap: "10px", padding: "14px 20px", borderRadius: "999px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, boxShadow: "0 8px 24px rgba(37, 99, 235,0.5)" }}
         >
           <ShoppingCart size={18} /> 장바구니
           <span style={{ background: "#fff", color: C.accent, borderRadius: "999px", padding: "1px 9px", fontSize: "12px", fontWeight: 800 }}>{step === "scenario" ? sciCartCount : whCartCount}</span>
@@ -579,13 +632,35 @@ function Chip({ C, icon, text, tone }: { C: any; icon?: React.ReactNode; text: s
   return <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10px", fontWeight: 700, color, background: bg, borderRadius: "6px", padding: "2px 7px", fontFamily: icon ? "monospace" : "inherit" }}>{icon}{text}</span>;
 }
 
-function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, children }: any) {
+function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, children, error, onRetry }: any) {
+  const [showManual, setShowManual] = React.useState(false);
+  React.useEffect(() => {
+    // 로딩도 아니고 로드도 안 된 어정쩡한 상태가 6초 이상 지속되면 수동 버튼 노출 (무한로딩 안전장치)
+    if (!loaded && !loading && !error) {
+      const t = setTimeout(() => setShowManual(true), 6000);
+      return () => clearTimeout(t);
+    }
+    setShowManual(false);
+  }, [loaded, loading, error]);
   return (
     <div>
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>{filterRow}</div>
-      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${count} / ${total}개 물품` : ""}</div>
-      {!loaded || loading ? (
+      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded && !error ? `${count} / ${total}개 물품` : ""}</div>
+      {loading ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
+      ) : error ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "56px 16px", color: C.label, textAlign: "center" }}>
+          <div style={{ fontSize: "14px", color: C.text, fontWeight: 700 }}>물품을 불러오지 못했습니다.</div>
+          <div style={{ fontSize: "12px", maxWidth: "320px", lineHeight: 1.5 }}>{String(error)}</div>
+          {onRetry ? <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>다시 시도</button> : null}
+        </div>
+      ) : !loaded ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "56px 0", color: C.label }}>
+          <Spinner size={30} /> 물품을 불러오는 중입니다...
+          {showManual && onRetry ? (
+            <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: `1px solid ${C.border}`, background: "transparent", color: C.text, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>불러오기가 지연됩니다. 수동으로 다시 불러오기</button>
+          ) : null}
+        </div>
       ) : count === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>검색 결과가 없습니다.</div>
       ) : (
@@ -597,9 +672,9 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
 
 function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus }: any) {
   return (
-    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(99,102,241,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
+    <div style={{ border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1 }}>
       <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
-        {image ? <img src={getGoogleDriveImageUrl(image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
+        {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>
       <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
         <div style={{ fontWeight: 700, fontSize: "14px", lineHeight: 1.35, wordBreak: "break-word" }}>{title}</div>

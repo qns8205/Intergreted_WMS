@@ -16,6 +16,7 @@ import {
   loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 
 /* ══════════════════════════════ 타입 ══════════════════════════════ */
 
@@ -56,15 +57,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
   const C = {
-    bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#ffffff" : "#1e293b",
-    cardSub: isLightMode ? "#f8fafc" : "#151d30",
-    border: isLightMode ? "#e2e8f0" : "#334155",
-    text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#6366f1",
-    accentSoft: "rgba(99, 102, 241, 0.15)",
-    accentText: isLightMode ? "#4f46e5" : "#818cf8",
+    bg: isLightMode ? "#f7f8fa" : "#0b1120",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -80,7 +81,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
-  const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string }>({ ok: true, title: "", sub: "" });
+  const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
   const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
@@ -126,9 +127,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whLoading, setWhLoading] = useState(false);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
   const [whSearch, setWhSearch] = useState("");
+  const [whCustomLoc, setWhCustomLoc] = useState("");
   const [whRack, setWhRack] = useState("");
   const [whSlot, setWhSlot] = useState("");
   const [whPurpose, setWhPurpose] = useState("");
+  const [whDueDate, setWhDueDate] = useState("");
   const [whReturnItems, setWhReturnItems] = useState<any[]>([]);
   const [whReturnLoading, setWhReturnLoading] = useState(false);
   const [whReturnSel, setWhReturnSel] = useState<Record<string, number>>({});
@@ -234,17 +237,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (cat && it.category !== cat) return false;
     if (sub && it.subcategory !== sub) return false;
     if (!q) return true;
-    const query = q.toLowerCase();
-    const slotRaw = String(it.rootSlot ?? "");
-    const slotPad = padSlot(slotRaw);
-    const slotTrim = slotPad.replace(/^0+/, "");
-    const qTrim = query.replace(/^0+/, "");
-    const slotHit = !!slotRaw && (slotRaw.toLowerCase().includes(query) || slotPad.includes(query) || (!!qTrim && slotTrim === qTrim));
-    return (
-      it.name.toLowerCase().includes(query) || it.id.includes(query) ||
-      (it.category || "").toLowerCase().includes(query) ||
-      (it.subcategory || "").toLowerCase().includes(query) || slotHit
-    );
+    const slotPad = padSlot(String(it.rootSlot ?? ""));
+    return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
   }
 
   /* ══════════════════════ 공용 스타일/서브컴포넌트 ══════════════════════ */
@@ -354,7 +348,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       <div style={{ marginBottom: "14px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
           <span style={{ fontSize: "13px", color: C.label }}>선택된 물품</span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{list.length}개</span>
+          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{list.length}개</span>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
           {list.length === 0 ? (
@@ -466,6 +460,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!isKoreanName(v)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return false; }
     if (affiliation === "cfgw" && !/^\d+$/.test(employeeId.trim())) { showToast("사번은 숫자만 입력할 수 있습니다.", "warn"); return false; }
     return true;
+  }
+
+  // Enter 키로 다음 단계로 넘어가기 위한 헬퍼. (한글 조합 중 Enter는 무시)
+  function onEnter(fn: () => void) {
+    return (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !(e.nativeEvent as any).isComposing) {
+        e.preventDefault();
+        fn();
+      }
+    };
   }
 
   async function step1Next() {
@@ -642,12 +646,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const normalizeSearch = (s: string) => s.normalize("NFC").replace(/\s+/g, "").toLowerCase();
 
   function itemMatchesQuery(it: UnreturnedItem, query: string): boolean {
-    if (normalizeSearch(it.itemLabel || "").includes(query)) return true;
-    const slotRaw = String(it.location ?? "");
-    if (!slotRaw) return false;
-    const slotPad = padSlot(slotRaw);
-    const qTrim = query.replace(/^0+/, "");
-    return slotPad.includes(query) || (!!qTrim && slotPad.replace(/^0+/, "") === qTrim);
+    const slotPad = padSlot(String(it.location ?? ""));
+    return smartMatch([it.itemLabel, it.location, slotPad], query);
   }
 
   const sumQty = (items: UnreturnedItem[]) => items.reduce((n, it) => n + (Math.max(1, parseInt(String(it.quantity), 10) || 1)), 0);
@@ -667,13 +667,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   const returnTree = useMemo(() => {
-    const query = normalizeSearch(returnSearch.trim());
+    const query = returnSearch.trim();
     const sorted = unreturned.slice().sort((a, b) => (a.borrowDate || "") < (b.borrowDate || "") ? -1 : (a.borrowDate || "") > (b.borrowDate || "") ? 1 : 0);
     const byBorrower = groupBy<UnreturnedItem>(sorted, (it) => it.borrowerName || "(이름 없음)");
     const visible: { borrower: string; items: UnreturnedItem[] }[] = [];
     byBorrower.forEach(({ key: borrower, items }) => {
       if (!query) { visible.push({ borrower, items }); return; }
-      const borrowerMatch = normalizeSearch(borrower).includes(query);
+      const borrowerMatch = smartMatch([borrower], query);
       const matched = borrowerMatch ? items : items.filter((it) => itemMatchesQuery(it, query));
       if (borrowerMatch || matched.length) visible.push({ borrower, items: matched });
     });
@@ -726,7 +726,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <span style={{ flex: 1, fontWeight: 700, fontSize: level === 1 ? "14px" : "13px", color: C.text, display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
             {icon}{title}
           </span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accentSoft, color: C.accentText, borderRadius: "20px", padding: "2px 9px", flexShrink: 0 }}>{sumQty(items)}개</span>
+          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accentSoft, color: C.accentText, borderRadius: "14px", padding: "2px 9px", flexShrink: 0 }}>{sumQty(items)}개</span>
         </div>
         {isOpen ? <div style={{ padding: "8px 8px 2px" }}>{children}</div> : null}
       </div>
@@ -817,7 +817,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     try {
       if (connected && scriptUrl) {
         for (const c of whCart) {
-          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청") });
+          const dueTag = actionType === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
+          const baseNote = whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청");
+          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
         }
         clearWarehouseCart(user, whEmpId.trim());
       }
@@ -828,6 +830,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         sub: actionType === "소모"
           ? `${total}개 물품을 소모 처리했습니다. (재고에서 차감되며 반납 대상이 아닙니다)`
           : `${total}개 물품을 대여 처리했습니다.`,
+        receipt: {
+          borrower: user,
+          date: nowString(),
+          due: actionType === "대여" && whDueDate ? whDueDate : undefined,
+          action: actionType,
+          items: whCart.map((c) => ({ name: c.name, qty: c.quantity, location: c.location })),
+        },
       });
       setMode("result");
     } catch (e: any) {
@@ -872,13 +881,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const whRacks = useMemo(() => Object.keys(whCatMapRacks).sort(), [whCatMapRacks]);
   const whSlots = whRack && whCatMapRacks[whRack] ? Array.from<string>(whCatMapRacks[whRack]).sort() : [];
   const whFiltered = useMemo(() => {
-    const q = whSearch.trim().toLowerCase();
+    const q = whSearch.trim();
     return whItems.filter((it) => {
       const { rack, slot } = parseRackSlot(it.location);
       if (whRack && rack !== whRack) return false;
       if (whSlot && slot !== whSlot) return false;
       if (!q) return true;
-      return it.name.toLowerCase().includes(q);
+      return smartMatch([it.name, it.location, it.keywords], q);
     }).sort((a, b) => compareRackSlot(a.location, b.location));
   }, [whItems, whSearch, whRack, whSlot]);
   const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
@@ -893,6 +902,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
     });
   }
+  // 목록에 없는 물품을 직접 이름으로 담는다 (rowIndex: -1 = 커스텀 항목)
+  function addCustomWhCart(name: string, location: string) {
+    const nm = name.trim();
+    if (!nm) { showToast("물품명을 입력해주세요.", "warn"); return; }
+    setWhCart((prev) => {
+      // 같은 이름의 커스텀 항목이 이미 있으면 수량 +1
+      const idx = prev.findIndex((c) => c.rowIndex === -1 && c.name === nm && c.location === location.trim());
+      if (idx !== -1) return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
+      return [...prev, { rowIndex: -1, location: location.trim(), name: nm, quantity: 1 }];
+    });
+    showToast(`'${nm}' 담았습니다.`, "ok");
+  }
+
   function chgWhCart(idx: number, d: number) {
     setWhCart((prev) => {
       const item = prev[idx]; if (!item) return prev;
@@ -912,7 +934,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
-    setWhCart([]); setWhSearch(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhReturnSel({});
+    setWhCart([]); setWhSearch(""); setWhCustomLoc(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhDueDate(""); setWhReturnSel({});
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
@@ -946,6 +968,71 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" ? 3 : mode === "b4g" || mode === "b4s" ? 4 : 0;
 
+  /* ── URL 해시로 대여 단계를 세분화 (#/borrow/<단계>) — 새로고침·공유·뒤로가기 지원 ── */
+  const MODE_SLUGS: Record<string, string> = {
+    pickBorrowKind: "kind", pickReturnKind: "kind",
+    b1: "identity", b2: "items", b3g: "general", b4g: "confirm",
+    b3s: "sid", b4s: "confirm-sid", wborrow: "warehouse", wreturn: "warehouse-return",
+    return: "return", result: "done", mode: "kind",
+  };
+  const SLUG_TO_MODE: Record<string, Mode> = {
+    kind: entry === "return" ? "pickReturnKind" : "pickBorrowKind",
+    identity: "b1", items: "b2", general: "b3g", confirm: "b4g",
+    sid: "b3s", "confirm-sid": "b4s", warehouse: "wborrow",
+    "warehouse-return": "wreturn", return: "return", done: "result",
+  };
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const suppressHashSync = useRef(false);
+
+  // 슬라이딩 방향 추적: 단계 순서를 매겨 앞으로/뒤로를 판단한다.
+  // (렌더 중 동기 계산 — key가 바뀌는 순간 올바른 방향이 즉시 적용되도록)
+  const MODE_ORDER: Record<string, number> = {
+    pickBorrowKind: 0, pickReturnKind: 0, mode: 0,
+    b1: 1, b2: 2, b3g: 3, b3s: 3, b4g: 4, b4s: 4,
+    wborrow: 1, wreturn: 1, return: 1, result: 5,
+  };
+  const prevOrderRef = useRef(MODE_ORDER[mode] ?? 0);
+  const slideDirRef = useRef<"forward" | "back">("forward");
+  const curOrder = MODE_ORDER[mode] ?? 0;
+  if (curOrder !== prevOrderRef.current) {
+    slideDirRef.current = curOrder >= prevOrderRef.current ? "forward" : "back";
+    prevOrderRef.current = curOrder;
+  }
+  const slideDir = slideDirRef.current;
+
+  // mode 변경 → 해시 반영 (뒤로가기용 히스토리 항목 생성)
+  useEffect(() => {
+    if (suppressHashSync.current) { suppressHashSync.current = false; return; }
+    const base = entry === "return" ? "return" : "borrow";
+    const slug = MODE_SLUGS[mode] || "";
+    const target = `#/${base}/${slug}`;
+    if (window.location.hash !== target) {
+      window.history.pushState(null, "", target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // 브라우저 뒤로/앞으로 → 해시에서 mode 복원. 흐름을 벗어나면 onBack.
+  useEffect(() => {
+    const onPop = () => {
+      const parts = window.location.hash.split("/");
+      const base = parts[1] || "";
+      const slug = parts[2] || "";
+      if (base !== "borrow" && base !== "return") { onBack(); return; }
+      const restored = SLUG_TO_MODE[slug];
+      if (restored && restored !== modeRef.current) {
+        suppressHashSync.current = true; // 복원은 히스토리를 새로 쌓지 않음
+        setMode(restored);
+      } else if (!restored) {
+        onBack();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ══════════════════════ 렌더 ══════════════════════ */
 
   return (
@@ -972,7 +1059,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {progressIdx > 0 ? (
           <div style={{ marginBottom: "24px" }}>
             <div style={{ width: "100%", height: "6px", background: C.border, borderRadius: "10px", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${((progressIdx - 1) / 3) * 100}%`, background: `linear-gradient(90deg, ${C.accent}, #818cf8)`, borderRadius: "10px", transition: "width 0.3s" }} />
+              <div style={{ height: "100%", width: `${((progressIdx - 1) / 3) * 100}%`, background: `linear-gradient(90deg, ${C.accent}, #94a3b8)`, borderRadius: "10px", transition: "width 0.3s" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: C.label, fontWeight: 600 }}>
               <span>정보 입력</span><span>유형 선택</span><span>물품 선택</span><span>제출</span>
@@ -981,6 +1068,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         ) : null}
 
         {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
+        <div key={mode} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {mode === "pickBorrowKind" || mode === "pickReturnKind" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <div style={{ fontSize: "13px", color: C.label, marginBottom: "4px" }}>
@@ -1027,6 +1115,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   <input
                     value={borrowerName}
                     onChange={(e) => setBorrowerName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
+                    onKeyDown={onEnter(step1Next)}
                     placeholder="성함을 입력해주세요"
                     style={{ ...inputStyle, paddingLeft: "40px" }}
                   />
@@ -1049,6 +1138,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   onChange={(e) => setEmployeeId(e.target.value.replace(/\D/g, ""))}
                   placeholder="사번을 입력해주세요 (숫자만)"
                   inputMode="numeric"
+                  onKeyDown={onEnter(step1Next)}
                   style={{ ...inputStyle, paddingLeft: "40px" }}
                 />
               </div>
@@ -1059,7 +1149,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <label style={labelStyle}>이름</label>
                 <div style={{ position: "relative" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={onEnter(step1Next)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
                   기타 소속은 Slack 이메일 없이 성함만 입력합니다. (Slack 멘션은 제공되지 않습니다)
@@ -1142,7 +1232,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ marginBottom: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <span style={{ fontSize: "13px", color: C.label }}>추가된 SID</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{sidCart.length}개</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{sidCart.length}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "220px", overflowY: "auto" }}>
                   {sidCart.map((entry, idx) => (
@@ -1316,11 +1406,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ marginBottom: "14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                   <span style={{ fontSize: "13px", color: C.label }}>담은 창고 물품</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "20px", padding: "2px 10px" }}>{whCartCount}개</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{whCartCount}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
                   {whCart.map((item, idx) => (
-                    <div key={item.rowIndex} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                    <div key={`${item.rowIndex}-${item.name}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
                         <div style={{ fontSize: "11px", color: C.label }}>{item.location}</div>
@@ -1377,9 +1467,45 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               )}
             </div>
 
+            {/* 목록에 없는 물품 직접 입력하여 담기 */}
+            <div style={{ marginTop: "10px", border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
+                <Plus size={13} /> 목록에 없는 물품 직접 대여
+              </div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <input
+                  value={whSearch}
+                  onChange={(e) => setWhSearch(e.target.value)}
+                  placeholder="물품명"
+                  style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }}
+                />
+                <input
+                  value={whCustomLoc}
+                  onChange={(e) => setWhCustomLoc(e.target.value)}
+                  placeholder="위치 (선택)"
+                  style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }}
+                />
+                <button
+                  onClick={() => { addCustomWhCart(whSearch, whCustomLoc); setWhSearch(""); setWhCustomLoc(""); }}
+                  disabled={!whSearch.trim()}
+                  style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whSearch.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whSearch.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
+                >
+                  담기
+                </button>
+              </div>
+              <div style={{ fontSize: "11px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
+                재고에 등록되지 않은 물품도 이름을 입력해 대여 기록을 남길 수 있습니다.
+              </div>
+            </div>
+
             <div style={{ marginTop: "16px" }}>
               <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
               <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
+            </div>
+            <div style={{ marginTop: "12px" }}>
+              <label style={labelStyle}>반납 예정일 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(대여 시 선택 · 연체 관리에 사용)</span></label>
+              <input type="date" value={whDueDate} onChange={(e) => setWhDueDate(e.target.value)} style={{ ...inputStyle }} />
+              {whDueDate ? <div style={{ fontSize: "11px", color: C.accentText, marginTop: "5px", fontWeight: 600 }}>이 예정일이 지나면 대여 대장에서 연체로 표시됩니다.</div> : null}
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={goPrev} style={secondaryBtn}>이전</button>
@@ -1484,11 +1610,40 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             )}
             <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>{resultInfo.title}</div>
             <div style={{ fontSize: "13px", color: C.label, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{resultInfo.sub}</div>
+
+            {resultInfo.ok && resultInfo.receipt ? (
+              <div style={{ maxWidth: "360px", margin: "24px auto 0", textAlign: "left", border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: `1px dashed ${C.border}`, background: C.cardSub, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 800 }}>📋 {resultInfo.receipt.action} 내역</span>
+                  <span style={{ fontSize: "11px", color: C.label }}>{resultInfo.receipt.date}</span>
+                </div>
+                <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                    <span style={{ color: C.label }}>대여자</span><span style={{ fontWeight: 700 }}>{resultInfo.receipt.borrower}</span>
+                  </div>
+                  {resultInfo.receipt.due ? (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                      <span style={{ color: C.label }}>반납 예정일</span><span style={{ fontWeight: 700, color: C.accentText }}>{resultInfo.receipt.due}</span>
+                    </div>
+                  ) : null}
+                </div>
+                <div style={{ padding: "0 16px 12px" }}>
+                  {resultInfo.receipt.items.map((it, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: `1px solid ${C.border}`, fontSize: "12px" }}>
+                      <span style={{ flex: 1, fontWeight: 600, wordBreak: "break-word" }}>{it.name}{it.location ? <span style={{ color: C.label, fontWeight: 400 }}> · {it.location}</span> : null}</span>
+                      <span style={{ fontWeight: 800, marginLeft: "8px" }}>{it.qty}개</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", gap: "10px", marginTop: "32px", maxWidth: "320px", margin: "32px auto 0" }}>
               <button onClick={resetAll} style={secondaryBtn}>처음으로 돌아가기</button>
             </div>
           </div>
         ) : null}
+        </div>
       </div>
 
       {/* 이미지 확대 모달 */}

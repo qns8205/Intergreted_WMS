@@ -21,7 +21,9 @@ import {
   Upload,
 } from "lucide-react";
 import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
+import { compareRackSlot } from "../utils/borrowApi";
 
 interface MobileViewPageProps {
   inventory: InventoryItem[];
@@ -29,6 +31,7 @@ interface MobileViewPageProps {
   defectLogs?: DefectLog[];
   racks?: Rack[];
   isAdmin?: boolean;
+  onOpenScenario?: () => void;
   currentUser?: WmsUser | null;
   onAddRentLog: (log: RentLog) => Promise<void>;
   onAddDefectLog?: (log: Omit<DefectLog, "rowIndex">) => Promise<void>;
@@ -65,6 +68,7 @@ export default function MobileViewPage({
   defectLogs = [],
   racks = [],
   isAdmin = false,
+  onOpenScenario,
   currentUser = null,
   onAddRentLog,
   onAddDefectLog,
@@ -78,6 +82,17 @@ export default function MobileViewPage({
   const [mode, setMode] = useState<Mode>("대여");
   const [searchQuery, setSearchQuery] = useState("");
 
+  // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
+  const TAB_ORDER: Record<string, number> = { "대여": 0, "반납": 1, "등록": 2, "불량": 3 };
+  const prevTabOrderRef = useRef(TAB_ORDER[mode] ?? 0);
+  const tabSlideDirRef = useRef<"forward" | "back">("forward");
+  const curTabOrder = TAB_ORDER[mode] ?? 0;
+  if (curTabOrder !== prevTabOrderRef.current) {
+    tabSlideDirRef.current = curTabOrder >= prevTabOrderRef.current ? "forward" : "back";
+    prevTabOrderRef.current = curTabOrder;
+  }
+  const tabSlideDir = tabSlideDirRef.current;
+
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [outstandingContext, setOutstandingContext] = useState<OutstandingRental | null>(null);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
@@ -86,6 +101,9 @@ export default function MobileViewPage({
   const [formUser, setFormUser] = useState("");
   const [formQty, setFormQty] = useState(1);
   const [formNote, setFormNote] = useState("");
+  const [formDueDate, setFormDueDate] = useState("");
+  const [customBorrowName, setCustomBorrowName] = useState("");
+  const [customBorrowLoc, setCustomBorrowLoc] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Current logged in user name or default
@@ -101,6 +119,7 @@ export default function MobileViewPage({
   const [regStock, setRegStock] = useState<string>("0");
   const [regManager, setRegManager] = useState(defaultManagerName);
   const [regNote, setRegNote] = useState("");
+  const [regKeywords, setRegKeywords] = useState("");
   const [regPhoto, setRegPhoto] = useState("");
   const [regLink, setRegLink] = useState("N/A");
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -121,6 +140,28 @@ export default function MobileViewPage({
   // --- 이미지 업로드 상태 및 헬퍼 ---
   const [isRegUploadingImage, setIsRegUploadingImage] = useState(false);
   const [isDefUploadingImage, setIsDefUploadingImage] = useState(false);
+
+  // 바텀시트가 열려 있는 동안 뒤쪽 본문이 스크롤되지 않도록 body 스크롤을 잠근다.
+  // (모바일에서 시트/키보드가 뜰 때 배경이 아래로 밀려 내려가는 문제 방지)
+  useEffect(() => {
+    if (sheetMode) {
+      const prevOverflow = document.body.style.overflow;
+      const prevPosition = document.body.style.position;
+      const prevWidth = document.body.style.width;
+      const scrollY = window.scrollY;
+      document.body.style.overflow = "hidden";
+      document.body.style.position = "fixed";
+      document.body.style.width = "100%";
+      document.body.style.top = `-${scrollY}px`;
+      return () => {
+        document.body.style.overflow = prevOverflow;
+        document.body.style.position = prevPosition;
+        document.body.style.width = prevWidth;
+        document.body.style.top = "";
+        window.scrollTo(0, scrollY);
+      };
+    }
+  }, [sheetMode]);
 
   const handleRegPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -208,8 +249,8 @@ export default function MobileViewPage({
   }, []);
 
   // ---------- 색상 토큰 (기존 데스크탑 배색과 동일하게 유지) ----------
-  const ACCENT = "#4f46e5";
-  const ACCENT_LIGHT = "#818cf8";
+  const ACCENT = "#2563eb";
+  const ACCENT_LIGHT = "#60a5fa";
   const GREEN = "#10b981";
   const GREEN_LIGHT = "#34d399";
   const DANGER = "#ef4444";
@@ -221,34 +262,26 @@ export default function MobileViewPage({
   const TEXT_MAIN = isLightMode ? "#0f172a" : "#f1f5f9";
   const TEXT_DIM = isLightMode ? "#64748b" : "#94a3b8";
   const INPUT_BG = isLightMode ? "#f8fafc" : "#0f172a";
-  const MODE_COLOR = mode === "대여" ? ACCENT : mode === "반납" ? GREEN : mode === "등록" ? "#6366f1" : AMBER;
-  const MODE_COLOR_LIGHT = mode === "대여" ? ACCENT_LIGHT : mode === "반납" ? GREEN_LIGHT : mode === "등록" ? "#818cf8" : "#fbbf24";
+  const MODE_COLOR = mode === "대여" ? ACCENT : mode === "반납" ? GREEN : mode === "등록" ? "#2563eb" : AMBER;
+  const MODE_COLOR_LIGHT = mode === "대여" ? ACCENT_LIGHT : mode === "반납" ? GREEN_LIGHT : mode === "등록" ? "#94a3b8" : "#fbbf24";
 
   // ---------- 대여 가능 여부: 숫자 재고가 0 이하일 때만 차단, N/A(문자/없음)는 항상 대여 가능 ----------
   const isRentDisabled = (item: InventoryItem) =>
     typeof item.stock === "number" && item.stock <= 0;
 
-  // ---------- 대여 탭: 전체 재고 검색 ----------
+  // ---------- 대여 탭: 전체 재고 검색 (랙 순서 정렬) ----------
   const filteredInventory = useMemo(() => {
-    if (!searchQuery.trim()) return inventory;
-    return inventory.filter(
-      (item) =>
-        isFuzzyMatch(item.name || "", searchQuery) ||
-        isFuzzyMatch(item.location || "", searchQuery) ||
-        (item.spec && isFuzzyMatch(item.spec, searchQuery))
+    const base = !searchQuery.trim() ? inventory : inventory.filter(
+      (item) => smartMatch([item.name, item.location, item.spec, item.keywords], searchQuery)
     );
+    return [...base].sort((a, b) => compareRackSlot(a.location, b.location));
   }, [inventory, searchQuery]);
 
   // ---------- 불량 탭: 불량 로그 검색 ----------
   const filteredDefectLogs = useMemo(() => {
     if (!searchQuery.trim()) return defectLogs;
     return defectLogs.filter(
-      (log) =>
-        isFuzzyMatch(log.name || "", searchQuery) ||
-        isFuzzyMatch(log.defectType || "", searchQuery) ||
-        isFuzzyMatch(log.note || "", searchQuery) ||
-        isFuzzyMatch(log.actionTaken || "", searchQuery) ||
-        isFuzzyMatch(log.manager || "", searchQuery)
+      (log) => smartMatch([log.name, log.defectType, log.note, log.actionTaken, log.manager], searchQuery)
     );
   }, [defectLogs, searchQuery]);
 
@@ -262,7 +295,13 @@ export default function MobileViewPage({
       if (!name) continue;
       const key = `${name}||${location}||${user}`;
       const qtyNum = Number(log.qty) || 0;
-      const delta = log.type === "대여" ? qtyNum : -qtyNum;
+      const note = String(log.note || "");
+      const isConsumeNote = note.indexOf("[소모완료]") !== -1 || note.indexOf("[즉시반납]") !== -1;
+      // 소모는 반납 대상이 아님: 대여량 집계에서 제외. 소모완료 note가 붙은 반납은 대여 차감.
+      let delta = 0;
+      if (log.type === "소모") delta = 0;
+      else if (log.type === "반납" || isConsumeNote) delta = -qtyNum;
+      else delta = qtyNum;
       const existing = map.get(key);
       if (existing) {
         existing.qty += delta;
@@ -283,10 +322,7 @@ export default function MobileViewPage({
   const filteredOutstanding = useMemo(() => {
     if (!searchQuery.trim()) return outstandingRentals;
     return outstandingRentals.filter(
-      (o) =>
-        isFuzzyMatch(o.name, searchQuery) ||
-        isFuzzyMatch(o.location, searchQuery) ||
-        isFuzzyMatch(o.user, searchQuery)
+      (o) => smartMatch([o.name, o.location, o.user], searchQuery)
     );
   }, [outstandingRentals, searchQuery]);
 
@@ -346,6 +382,10 @@ export default function MobileViewPage({
   const openItemDetail = (item: InventoryItem) => {
     setSelectedItem(item);
     setOutstandingContext(null);
+    if (item.rowIndex === -1) {
+      setCustomBorrowName(item.name || "");
+      setCustomBorrowLoc(item.location || "");
+    }
     const base = window.location.hash.split("/")[1] || "monitor";
     window.location.hash = `#/${base}/detail`;
   };
@@ -390,6 +430,7 @@ export default function MobileViewPage({
       setFormQty(1);
     }
     setFormNote("");
+    setFormDueDate("");
     const base = window.location.hash.split("/")[1] || "monitor";
     window.location.hash = `#/${base}/form`;
   };
@@ -406,7 +447,8 @@ export default function MobileViewPage({
       ? outstandingContext.qty
       : undefined;
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (overrideType?: "대여" | "반납" | "소모") => {
+    const actionType = overrideType || mode;
     if (!selectedItem) return;
     if (!formUser.trim()) {
       notify("이름을 입력해 주세요.", "warn");
@@ -418,7 +460,7 @@ export default function MobileViewPage({
     }
     if (maxQty !== undefined && formQty > maxQty) {
       notify(
-        mode === "대여" ? `현재고(${maxQty}개)를 초과할 수 없습니다.` : `미반납 수량(${maxQty}개)을 초과할 수 없습니다.`,
+        actionType === "반납" ? `미반납 수량(${maxQty}개)을 초과할 수 없습니다.` : `현재고(${maxQty}개)를 초과할 수 없습니다.`,
         "warn"
       );
       return;
@@ -426,20 +468,27 @@ export default function MobileViewPage({
 
     setSubmitting(true);
     try {
+      const isCustom = selectedItem.rowIndex === -1;
+      const itemName = isCustom ? customBorrowName.trim() : selectedItem.name;
+      const itemLoc = isCustom ? customBorrowLoc.trim() : selectedItem.location;
+      if (isCustom && !itemName) { notify("물품명을 입력해 주세요.", "warn"); setSubmitting(false); return; }
+      const dueTag = actionType === "대여" && formDueDate ? ` [반납예정:${formDueDate}]` : "";
       const log: RentLog = {
         timestamp: formatTimestampLocal(),
-        location: selectedItem.location,
-        name: selectedItem.name,
-        type: mode,
+        location: itemLoc,
+        name: itemName,
+        type: actionType,
         qty: formQty,
         user: formUser.trim(),
-        note: formNote.trim() || `${mode} 처리 (모바일 열람용 모드)`,
+        note: (formNote.trim() || `${actionType} 처리 (모바일 관리자)`) + dueTag,
       };
       await onAddRentLog(log);
       notify(
-        mode === "대여"
-          ? `${selectedItem.name} ${formQty}개 대여 신청이 접수되었습니다.`
-          : `${selectedItem.name} ${formQty}개 반납이 접수되었습니다.`,
+        actionType === "대여"
+          ? `${itemName} ${formQty}개 대여 신청이 접수되었습니다.`
+          : actionType === "소모"
+          ? `${itemName} ${formQty}개 소모 처리되었습니다. (반납 대상 아님)`
+          : `${itemName} ${formQty}개 반납이 접수되었습니다.`,
         "ok"
       );
       closeSheet();
@@ -482,6 +531,7 @@ export default function MobileViewPage({
         stock: numericStock,
         manager: regManager.trim(),
         note: regNote.trim(),
+        keywords: regKeywords.trim(),
         photo: regPhoto.trim(),
         link: regLink.trim() || "N/A",
         updatedAt: formatTimestampLocal(),
@@ -497,6 +547,7 @@ export default function MobileViewPage({
         setRegSpec("");
         setRegStock("0");
         setRegNote("");
+        setRegKeywords("");
         setRegPhoto("");
         setRegLink("N/A");
       } else {
@@ -724,23 +775,47 @@ export default function MobileViewPage({
           </div>
         </div>
 
-        <button
-          className="mvp-btn"
-          onClick={toggleLightMode}
-          style={{
-            width: "36px",
-            height: "36px",
-            borderRadius: "10px",
-            background: isLightMode ? "#f1f5f9" : "#1e293b",
-            color: TEXT_MAIN,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-          }}
-        >
-          {isLightMode ? <Moon size={16} /> : <Sun size={16} />}
-        </button>
+        <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
+          {isAdmin && onOpenScenario ? (
+            <button
+              className="mvp-btn"
+              onClick={onOpenScenario}
+              title="시나리오 물품 관리"
+              style={{
+                height: "36px",
+                padding: "0 12px",
+                borderRadius: "10px",
+                background: "rgba(37, 99, 235,0.15)",
+                border: "1px solid rgba(37, 99, 235,0.3)",
+                color: "#94a3b8",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                fontSize: "12px",
+                fontWeight: 800,
+              }}
+            >
+              🧩 시나리오
+            </button>
+          ) : null}
+          <button
+            className="mvp-btn"
+            onClick={toggleLightMode}
+            style={{
+              width: "36px",
+              height: "36px",
+              borderRadius: "10px",
+              background: isLightMode ? "#f1f5f9" : "#1e293b",
+              color: TEXT_MAIN,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            {isLightMode ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
+        </div>
       </header>
 
       {/* ===== 대여/반납 모드 탭 + 검색창 (고정) ===== */}
@@ -757,7 +832,7 @@ export default function MobileViewPage({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr" : "1fr 1fr",
+            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr 1fr" : "1fr 1fr",
             gap: "6px",
             background: isLightMode ? "#f1f5f9" : "#111827",
             padding: "4px",
@@ -827,13 +902,13 @@ export default function MobileViewPage({
                   borderRadius: "11px",
                   fontSize: "12px",
                   fontWeight: 800,
-                  background: mode === "등록" ? "#6366f1" : "transparent",
+                  background: mode === "등록" ? "#2563eb" : "transparent",
                   color: mode === "등록" ? "#ffffff" : TEXT_DIM,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "4px",
-                  boxShadow: mode === "등록" ? "0 6px 14px rgba(99,102,241,0.3)" : "none",
+                  boxShadow: mode === "등록" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
                 }}
               >
                 📦 등록
@@ -856,6 +931,24 @@ export default function MobileViewPage({
                 }}
               >
                 ⚠️ 불량
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={() => onOpenScenario && onOpenScenario()}
+                style={{
+                  padding: "10px 4px",
+                  borderRadius: "11px",
+                  fontSize: "12px",
+                  fontWeight: 800,
+                  background: "transparent",
+                  color: "#94a3b8",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "4px",
+                }}
+              >
+                🧩 물품
               </button>
             </>
           )}
@@ -923,8 +1016,35 @@ export default function MobileViewPage({
 
       {/* ===== 리스트 & 폼 메인 영역 ===== */}
       <main style={{ flex: 1, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto" }}>
+        <div key={mode} className={tabSlideDir === "forward" ? "step-forward" : "step-back"} style={{ display: "flex", flexDirection: "column", gap: "10px", flex: 1 }}>
         {mode === "대여" ? (
-          filteredInventory.length === 0 ? (
+          <>
+          <button
+            onClick={() => {
+              const customName = searchQuery.trim();
+              const custom: InventoryItem = {
+                rowIndex: -1,
+                location: "",
+                photo: "",
+                name: customName,
+                link: "",
+                stock: "N/A",
+                updatedAt: "",
+                manager: "",
+                note: "",
+                spec: "",
+              };
+              openItemDetail(custom);
+            }}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              padding: "11px", borderRadius: "12px", border: `1px dashed ${BORDER}`,
+              background: "transparent", color: MODE_COLOR, fontSize: "13px", fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            <Plus size={15} /> 목록에 없는 물품 직접 대여
+          </button>
+          {filteredInventory.length === 0 ? (
             <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
               <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
               검색 결과가 없습니다.
@@ -1041,7 +1161,8 @@ export default function MobileViewPage({
                 </div>
               );
             })
-          )
+          )}
+          </>
         ) : mode === "반납" ? (
           filteredOutstanding.length === 0 ? (
             <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
@@ -1148,7 +1269,7 @@ export default function MobileViewPage({
              ========================================================= */
           <form onSubmit={handleRegisterItemSubmit} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-              <Package size={20} color="#6366f1" />
+              <Package size={20} color="#2563eb" />
               <div style={{ fontSize: "16px", fontWeight: 800, color: TEXT_MAIN }}>
                 📦 신규 물품 등록하기
               </div>
@@ -1177,7 +1298,7 @@ export default function MobileViewPage({
                   onClick={() => setRegIsCustomLoc(!regIsCustomLoc)}
                   style={{
                     fontSize: "11px",
-                    color: "#6366f1",
+                    color: "#5b6472",
                     background: "transparent",
                     border: "none",
                     cursor: "pointer",
@@ -1262,7 +1383,7 @@ export default function MobileViewPage({
                     onClick={() => setRegStock("N/A")}
                     style={{
                       padding: "0 12px",
-                      background: regStock === "N/A" ? "#6366f1" : "rgba(255,255,255,0.05)",
+                      background: regStock === "N/A" ? "#2563eb" : "rgba(255,255,255,0.05)",
                       color: regStock === "N/A" ? "#ffffff" : TEXT_DIM,
                       border: `1px solid ${BORDER}`,
                       borderRadius: "12px",
@@ -1299,6 +1420,18 @@ export default function MobileViewPage({
                   placeholder="비고"
                   value={regNote}
                   onChange={(e) => setRegNote(e.target.value)}
+                  style={inputBaseStyle}
+                />
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>🔎 한글 검색어 (선택)</label>
+                <input
+                  className="mvp-input"
+                  type="text"
+                  placeholder="예: 물병, 생수 (영어 품목의 한글 별칭)"
+                  value={regKeywords}
+                  onChange={(e) => setRegKeywords(e.target.value)}
                   style={inputBaseStyle}
                 />
               </div>
@@ -1347,7 +1480,7 @@ export default function MobileViewPage({
                       style={{ width: "38px", height: "38px", borderRadius: "6px", objectFit: "cover" }}
                     />
                     <div style={{ textAlign: "left" }}>
-                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#6366f1", display: "block" }}>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: "#5b6472", display: "block" }}>
                         📸 이미지 업로드 준비 완료
                       </span>
                       <span style={{ fontSize: "10px", color: TEXT_DIM, display: "block" }}>
@@ -1412,12 +1545,12 @@ export default function MobileViewPage({
                 width: "100%",
                 padding: "15px",
                 borderRadius: "14px",
-                background: "#6366f1",
+                background: "#2563eb",
                 color: "#ffffff",
                 fontSize: "15px",
                 fontWeight: 800,
                 marginTop: "10px",
-                boxShadow: "0 6px 20px rgba(99,102,241,0.25)",
+                boxShadow: "0 6px 20px rgba(37, 99, 235,0.25)",
               }}
             >
               {regSubmitting ? "실시간 클라우드 등록 중..." : "📦 신규 물품 정식 등록"}
@@ -1857,6 +1990,7 @@ export default function MobileViewPage({
             )}
           </div>
         )}
+        </div>
       </main>
 
       {/* ===== 상세/신청 바텀시트 ===== */}
@@ -1904,7 +2038,7 @@ export default function MobileViewPage({
                     style={{
                       width: "100%",
                       aspectRatio: "1.4 / 1",
-                      borderRadius: "18px",
+                      borderRadius: "14px",
                       overflow: "hidden",
                       background: isLightMode ? "#f1f5f9" : "#0f172a",
                       display: "flex",
@@ -1940,7 +2074,7 @@ export default function MobileViewPage({
                         fontSize: "11.5px",
                         fontWeight: 700,
                         color: ACCENT_LIGHT,
-                        background: "rgba(99,102,241,0.12)",
+                        background: "rgba(37, 99, 235,0.12)",
                         padding: "4px 10px",
                         borderRadius: "999px",
                         display: "inline-flex",
@@ -2340,7 +2474,7 @@ export default function MobileViewPage({
                     >
                       <ArrowLeft size={16} />
                     </button>
-                    <h2 style={{ fontSize: "17px", fontWeight: 800, color: MODE_COLOR_LIGHT, margin: 0 }}>
+                    <h2 style={{ fontSize: "17px", fontWeight: 800, color: TEXT_MAIN, margin: 0 }}>
                       {mode === "대여" ? "📥 물품 대여 신청" : "🔄 물품 반납 접수"}
                     </h2>
                   </div>
@@ -2404,6 +2538,18 @@ export default function MobileViewPage({
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {selectedItem.rowIndex === -1 ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>물품명 <span style={{ color: DANGER }}>*</span></label>
+                          <input className="mvp-input" type="text" placeholder="물품명 입력" value={customBorrowName} onChange={(e) => setCustomBorrowName(e.target.value)} style={inputBaseStyle} />
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>위치 (선택)</label>
+                          <input className="mvp-input" type="text" placeholder="위치 입력" value={customBorrowLoc} onChange={(e) => setCustomBorrowLoc(e.target.value)} style={inputBaseStyle} />
+                        </div>
+                      </div>
+                    ) : null}
                     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                       <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>
                         {mode === "대여" ? "대여자 이름" : "반납자 이름"} <span style={{ color: DANGER }}>*</span>
@@ -2478,30 +2624,68 @@ export default function MobileViewPage({
                       />
                     </div>
 
-                    <button
-                      className="mvp-btn"
-                      onClick={handleSubmit}
-                      disabled={submitting}
-                      style={{
-                        width: "100%",
-                        background: MODE_COLOR,
-                        color: "#ffffff",
-                        borderRadius: "14px",
-                        padding: "15px",
-                        fontSize: "15px",
-                        fontWeight: 800,
-                        opacity: submitting ? 0.6 : 1,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: "6px",
-                        marginTop: "4px",
-                        boxShadow: `0 8px 20px ${mode === "대여" ? "rgba(79,70,229,0.3)" : "rgba(16,185,129,0.3)"}`,
-                      }}
-                    >
-                      <Check size={17} />
-                      {submitting ? "제출 중..." : mode === "대여" ? "대여 신청 제출" : "반납 접수 제출"}
-                    </button>
+                    {mode === "대여" ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>반납 예정일 (선택 · 연체 관리)</label>
+                        <input
+                          className="mvp-input"
+                          type="date"
+                          value={formDueDate}
+                          onChange={(e) => setFormDueDate(e.target.value)}
+                          style={{ ...inputBaseStyle, fontSize: "14px" }}
+                        />
+                      </div>
+                    ) : null}
+
+                    <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+                      {mode === "대여" && isAdmin ? (
+                        <button
+                          className="mvp-btn"
+                          onClick={() => handleSubmit("소모")}
+                          disabled={submitting}
+                          style={{
+                            flex: "0 0 auto",
+                            background: AMBER,
+                            color: "#ffffff",
+                            borderRadius: "14px",
+                            padding: "15px 18px",
+                            fontSize: "15px",
+                            fontWeight: 800,
+                            opacity: submitting ? 0.6 : 1,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "6px",
+                            boxShadow: "0 8px 20px rgba(245,158,11,0.3)",
+                          }}
+                        >
+                          🔥 소모
+                        </button>
+                      ) : null}
+                      <button
+                        className="mvp-btn"
+                        onClick={() => handleSubmit()}
+                        disabled={submitting}
+                        style={{
+                          flex: 1,
+                          background: MODE_COLOR,
+                          color: "#ffffff",
+                          borderRadius: "14px",
+                          padding: "15px",
+                          fontSize: "15px",
+                          fontWeight: 800,
+                          opacity: submitting ? 0.6 : 1,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          boxShadow: `0 8px 20px ${mode === "대여" ? "rgba(79,70,229,0.3)" : "rgba(16,185,129,0.3)"}`,
+                        }}
+                      >
+                        <Check size={17} />
+                        {submitting ? "제출 중..." : mode === "대여" ? "대여 제출" : "반납 제출"}
+                      </button>
+                    </div>
                   </div>
                 </>
               )}

@@ -36,11 +36,9 @@ export default function LandingPage({
         alignItems: "center",
         justifyContent: "center",
         minHeight: "100vh",
-        background: isLightMode
-          ? "radial-gradient(circle at top, #f8fafc 0%, #e2e8f0 100%)"
-          : "radial-gradient(circle at top, #0f172a 0%, #020617 100%)",
-        color: isLightMode ? "#0f172a" : "#f1f5f9",
-        padding: "40px 20px",
+        background: isLightMode ? "radial-gradient(circle at top, #f8fafc 0%, #e2e8f0 100%)" : "radial-gradient(circle at top, #0f172a 0%, #020617 100%)",
+        color: isLightMode ? "#111827" : "#f1f5f9",
+        padding: "32px 20px",
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
       }}
     >
@@ -59,24 +57,22 @@ export default function LandingPage({
             justifyContent: "center",
             width: "64px",
             height: "64px",
-            borderRadius: "20px",
-            background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+            borderRadius: "16px",
+            background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
             color: "#ffffff",
             marginBottom: "20px",
-            boxShadow: "0 10px 25px -5px rgba(79, 70, 229, 0.4)",
+            boxShadow: "0 10px 25px -5px rgba(37, 99, 235, 0.4)",
           }}
         >
           <PackageCheck size={32} />
         </div>
         <h1
           style={{
-            fontSize: "36px",
+            fontSize: "30px",
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            background: "linear-gradient(to right, #818cf8, #6366f1, #4f46e5)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
+            color: isLightMode ? "#2b303a" : "#e8eaed",
           }}
         >
           자재 대여 · 반납 · 관리
@@ -86,7 +82,7 @@ export default function LandingPage({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
           gap: "16px",
           maxWidth: "620px",
           width: "100%",
@@ -124,37 +120,37 @@ export default function LandingPage({
             style={{
               background: isLightMode ? "#ffffff" : "#1e293b",
               border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-              borderRadius: "24px",
-              padding: "28px 24px",
+              borderRadius: "16px",
+              padding: "20px 20px",
               cursor: "pointer",
-              transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-              boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+              transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
+              boxShadow: "var(--shadow-sm)",
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-start",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-4px)";
-              e.currentTarget.style.boxShadow = "0 20px 25px -5px rgba(99, 102, 241, 0.25)";
-              e.currentTarget.style.borderColor = "#6366f1";
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
+              e.currentTarget.style.borderColor = "#2563eb";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "0 4px 6px -1px rgba(0, 0, 0, 0.1)";
+              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
               e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
             }}
           >
             <div
               style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "14px",
-                background: "rgba(99, 102, 241, 0.15)",
-                color: "#818cf8",
+                width: "40px",
+                height: "40px",
+                borderRadius: "11px",
+                background: "rgba(37, 99, 235, 0.13)",
+                color: "#94a3b8",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                marginBottom: "18px",
+                marginBottom: "14px",
               }}
             >
               {c.icon}
@@ -164,7 +160,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#0f172a" : "#f1f5f9",
+                color: isLightMode ? "#111827" : "#f1f5f9",
               }}
             >
               {c.title}
@@ -173,7 +169,7 @@ export default function LandingPage({
               style={{
                 fontSize: "13px",
                 lineHeight: 1.6,
-                color: isLightMode ? "#475569" : "#94a3b8",
+                color: isLightMode ? "#5b6472" : "#c2c7d0",
                 marginBottom: "20px",
               }}
             >
@@ -183,7 +179,7 @@ export default function LandingPage({
               style={{
                 marginTop: "auto",
                 padding: "9px 16px",
-                background: "#4f46e5",
+                background: "#334155",
                 color: "#ffffff",
                 borderRadius: "12px",
                 fontSize: "13px",
@@ -218,7 +214,7 @@ export default function LandingPage({
           boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#6366f1";
+          e.currentTarget.style.borderColor = "#2563eb";
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
@@ -232,8 +228,8 @@ export default function LandingPage({
             width: "44px",
             height: "44px",
             borderRadius: "12px",
-            background: "rgba(99, 102, 241, 0.15)",
-            color: "#818cf8",
+            background: "rgba(37, 99, 235, 0.15)",
+            color: "#94a3b8",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -246,20 +242,20 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#0f172a" : "#f1f5f9",
+              color: isLightMode ? "#111827" : "#f1f5f9",
               marginBottom: "3px",
             }}
           >
             🛠️ 관리 모드
           </div>
-          <div style={{ fontSize: "12px", color: isLightMode ? "#475569" : "#94a3b8" }}>
+          <div style={{ fontSize: "12px", color: isLightMode ? "#2563eb" : "#94a3b8" }}>
             창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
           </div>
         </div>
         <div
           style={{
             padding: "9px 18px",
-            background: "#4f46e5",
+            background: "#334155",
             color: "#ffffff",
             borderRadius: "12px",
             fontSize: "13px",
@@ -275,7 +271,7 @@ export default function LandingPage({
         style={{
           marginTop: "48px",
           fontSize: "11px",
-          color: isLightMode ? "#94a3b8" : "#475569",
+          color: isLightMode ? "#94a3b8" : "#2563eb",
           display: "flex",
           alignItems: "center",
           gap: "4px",

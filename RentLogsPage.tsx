@@ -8,6 +8,7 @@ import {
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, resizeAndCompressImage } from "../utils/drive";
+import { smartMatch } from "../utils/search";
 
 interface Props {
   scriptUrl: string;
@@ -21,14 +22,14 @@ type EditForm = Partial<ScenarioObjectAdmin> & { rowIndex?: number };
 export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, showToast }: Props) {
   const C = {
     bg: isLightMode ? "#f8fafc" : "#0b0f19",
-    card: isLightMode ? "#ffffff" : "#1e293b",
-    cardSub: isLightMode ? "#f8fafc" : "#151d30",
-    border: isLightMode ? "#e2e8f0" : "#334155",
-    text: isLightMode ? "#0f172a" : "#f1f5f9",
-    label: isLightMode ? "#475569" : "#94a3b8",
-    accent: "#6366f1",
-    accentSoft: "rgba(99, 102, 241, 0.15)",
-    accentText: isLightMode ? "#4f46e5" : "#818cf8",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -69,14 +70,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   }, [items]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim();
     return items.filter((it) => {
       if (cat && it.category !== cat) return false;
       if (!q) return true;
       const slotPad = padSlot(it.rootSlot);
-      return it.name.toLowerCase().includes(q) || it.id.includes(q) ||
-        (it.category || "").toLowerCase().includes(q) || (it.subcategory || "").toLowerCase().includes(q) ||
-        slotPad.includes(q);
+      return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
     }).sort((a, b) => {
       // Location(rootSlot) 기준 정렬 (숫자 오름차순, 위치 없는 항목은 뒤로)
       const na = parseInt(String(a.rootSlot ?? "").replace(/\D/g, ""), 10);
@@ -202,7 +201,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       {/* 편집 모달 (뷰포트 중앙 고정 — 사이드바 영향 없이 화면 정중앙) */}
       {editing ? createPortal(
         <div onClick={() => !saving && setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)", maxHeight: "90vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}` }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)", maxHeight: "90vh", overflowY: "auto", background: C.card, borderRadius: "14px", border: `1px solid ${C.border}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
               <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>{isNew ? "새 시나리오 물품" : "시나리오 물품 편집"}</h2>
               <button onClick={() => !saving && setEditing(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>

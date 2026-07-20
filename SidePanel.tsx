@@ -17,6 +17,7 @@ import {
   AlertCircle 
 } from "lucide-react";
 import { parseDateString } from "../utils/date";
+import { smartMatch } from "../utils/search";
 
 interface RentLogsPageProps {
   rentLogs: RentLog[];
@@ -32,7 +33,7 @@ interface RentLogsPageProps {
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
+const ACCENT = "#2563eb";
 const DANGER = "#f43f5e";
 const OK = "#10b981";
 const WARNING = "#f59e0b";
@@ -122,6 +123,8 @@ export default function RentLogsPage({
   // Search and Filter states
   const [filterQuery, setFilterQuery] = useState("");
   const [filterType, setFilterType] = useState("전체");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   // Collapsible Registration Form State (Guest Mode defaults to true)
   const [showAddForm, setShowAddForm] = useState(isGuestMode);
@@ -234,13 +237,9 @@ export default function RentLogsPage({
 
   // Filter inventory for dropdown autocomplete
   const filteredInventoryItems = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
+    const q = searchQuery.trim();
     if (!q) return inventory;
-    return inventory.filter(
-      (item) =>
-        item.name.toLowerCase().includes(q) ||
-        item.location.toLowerCase().includes(q)
-    );
+    return inventory.filter((item) => smartMatch([item.name, item.location, item.keywords], q));
   }, [inventory, searchQuery]);
 
   // Handle local form submission
@@ -394,16 +393,20 @@ export default function RentLogsPage({
   // Filter logs for table rendering
   const filteredLogs = useMemo(() => {
     const filtered = rentLogs.filter((log) => {
-      const matchesQuery =
-        !filterQuery ||
-        log.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        log.user.toLowerCase().includes(filterQuery.toLowerCase()) ||
-        (log.location && log.location.toLowerCase().includes(filterQuery.toLowerCase())) ||
-        (log.note && log.note.toLowerCase().includes(filterQuery.toLowerCase()));
+      const matchesQuery = !filterQuery || smartMatch([log.name, log.user, log.location, log.note], filterQuery);
 
       const matchesType = filterType === "전체" || log.type === filterType;
 
-      return matchesQuery && matchesType;
+      // 날짜 범위 필터 (기록 시간 기준)
+      let matchesDate = true;
+      if (dateFrom || dateTo) {
+        const ts = String(log.timestamp || "").slice(0, 10); // YYYY-MM-DD
+        if (dateFrom && ts && ts < dateFrom) matchesDate = false;
+        if (dateTo && ts && ts > dateTo) matchesDate = false;
+        if (!ts) matchesDate = false;
+      }
+
+      return matchesQuery && matchesType && matchesDate;
     });
 
     // Sort by timestamp descending (newest first)
@@ -417,7 +420,7 @@ export default function RentLogsPage({
       const rowB = b.rowIndex || 0;
       return rowB - rowA; // Higher row index (newer) first
     });
-  }, [rentLogs, filterQuery, filterType]);
+  }, [rentLogs, filterQuery, filterType, dateFrom, dateTo]);
 
   return (
     <div
@@ -470,9 +473,9 @@ export default function RentLogsPage({
         <button
           onClick={() => setShowAddForm((prev) => !prev)}
           style={{
-            background: showAddForm ? "rgba(239, 68, 68, 0.15)" : `rgba(99, 102, 241, 0.15)`,
+            background: showAddForm ? "rgba(239, 68, 68, 0.15)" : `rgba(37, 99, 235, 0.15)`,
             color: showAddForm ? DANGER : ACCENT,
-            border: `1px solid ${showAddForm ? "rgba(239, 68, 68, 0.3)" : "rgba(99, 102, 241, 0.3)"}`,
+            border: `1px solid ${showAddForm ? "rgba(239, 68, 68, 0.3)" : "rgba(37, 99, 235, 0.3)"}`,
             borderRadius: "8px",
             padding: "6px 14px",
             fontSize: "12px",
@@ -688,8 +691,8 @@ export default function RentLogsPage({
                             padding: "10px 12px",
                             borderBottom: `1px solid ${PANEL_BORDER}`,
                             cursor: "pointer",
-                            background: "rgba(99, 102, 241, 0.12)",
-                            color: "#818cf8",
+                            background: "rgba(37, 99, 235, 0.12)",
+                            color: "#94a3b8",
                           }}
                         >
                           <span style={{ fontSize: "14px" }}>➕</span>
@@ -727,7 +730,7 @@ export default function RentLogsPage({
                               color: TEXT_MAIN,
                               display: "flex",
                               justifyContent: "space-between",
-                              background: selectedItem?.rowIndex === item.rowIndex ? "rgba(99, 102, 241, 0.1)" : "transparent",
+                              background: selectedItem?.rowIndex === item.rowIndex ? "rgba(37, 99, 235, 0.1)" : "transparent",
                             }}
                           >
                             <span style={{ fontWeight: 600 }}>{item.name}</span>
@@ -895,13 +898,23 @@ export default function RentLogsPage({
                     fontWeight: 700,
                     border: "none",
                     cursor: "pointer",
-                    background: filterType === t ? (t === "대여" ? "rgba(99,102,241,0.2)" : t === "반납" ? "rgba(16,185,129,0.2)" : t === "소모" ? "rgba(245,158,11,0.2)" : "rgba(255,255,255,0.1)") : "transparent",
+                    background: filterType === t ? (t === "대여" ? "rgba(37, 99, 235,0.2)" : t === "반납" ? "rgba(16,185,129,0.2)" : t === "소모" ? "rgba(245,158,11,0.2)" : "rgba(255,255,255,0.1)") : "transparent",
                     color: filterType === t ? (t === "대여" ? ACCENT : t === "반납" ? OK : t === "소모" ? WARNING : TEXT_MAIN) : TEXT_DIM,
                   }}
                 >
                   {t}
                 </button>
               ))}
+            </div>
+
+            {/* 날짜 범위 필터 */}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--panel-bg, #0f172a)", padding: "3px 8px", borderRadius: 6, border: `1px solid ${PANEL_BORDER}` }}>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="시작일" style={{ background: "transparent", border: "none", color: TEXT_MAIN, fontSize: 11, outline: "none" }} />
+              <span style={{ color: TEXT_DIM, fontSize: 11 }}>~</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="종료일" style={{ background: "transparent", border: "none", color: TEXT_MAIN, fontSize: 11, outline: "none" }} />
+              {(dateFrom || dateTo) ? (
+                <button onClick={() => { setDateFrom(""); setDateTo(""); }} title="날짜 필터 해제" style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: 13, padding: "0 2px" }}>✕</button>
+              ) : null}
             </div>
           </div>
 
@@ -954,12 +967,18 @@ export default function RentLogsPage({
                         );
                       }
 
+                      // 반납 예정일 파싱 및 연체 판단 (대여 건이고, 미반납이며, 예정일이 오늘보다 이전)
+                      const dueMatch = log.note ? log.note.match(/\[반납예정:(\d{4}-\d{2}-\d{2})\]/) : null;
+                      const dueDate = dueMatch ? dueMatch[1] : "";
+                      const todayStr = new Date().toISOString().slice(0, 10);
+                      const isOverdue = log.type === "대여" && !isReturned && dueDate && dueDate < todayStr;
+
                       return (
                         <tr
                           key={index}
                           style={{
                             borderBottom: `1px solid ${PANEL_BORDER}`,
-                            background: index % 2 === 1 ? "rgba(255,255,255,0.01)" : "transparent",
+                            background: isOverdue ? "rgba(239,68,68,0.10)" : index % 2 === 1 ? "rgba(255,255,255,0.01)" : "transparent",
                           }}
                         >
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, whiteSpace: "nowrap" }}>
@@ -973,7 +992,7 @@ export default function RentLogsPage({
                                 borderRadius: 4,
                                 fontSize: 10,
                                 fontWeight: 800,
-                                background: log.type === "대여" ? "rgba(99, 102, 241, 0.15)" : log.type === "소모" ? "rgba(245, 158, 11, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                                background: log.type === "대여" ? "rgba(37, 99, 235, 0.15)" : log.type === "소모" ? "rgba(245, 158, 11, 0.15)" : "rgba(16, 185, 129, 0.15)",
                                 color: log.type === "대여" ? ACCENT : log.type === "소모" ? WARNING : OK,
                               }}
                             >
@@ -995,7 +1014,12 @@ export default function RentLogsPage({
                             {log.user}
                           </td>
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.note}>
-                            {log.note || "-"}
+                            {dueDate ? (
+                              <span style={{ display: "inline-block", marginRight: 6, fontSize: 10, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: isOverdue ? "rgba(239,68,68,0.2)" : "rgba(37, 99, 235,0.15)", color: isOverdue ? "#f87171" : ACCENT }}>
+                                {isOverdue ? `연체 (예정 ${dueDate})` : `예정 ${dueDate}`}
+                              </span>
+                            ) : null}
+                            {(log.note || "-").replace(/\s*\[반납예정:\d{4}-\d{2}-\d{2}\]/, "") || "-"}
                           </td>
                           <td style={{ padding: "11px 14px", textAlign: "center" }}>
                             {log.type === "대여" ? (

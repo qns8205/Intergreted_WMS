@@ -20,8 +20,8 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#6366f1";
-const ACCENT_SOFT = "#818cf8";
+const ACCENT = "#2563eb";
+const ACCENT_SOFT = "#94a3b8";
 
 export default function ItemFormModal({
   item,
@@ -58,6 +58,7 @@ export default function ItemFormModal({
           manager: defaultManager || "관리자",
           note: "",
           spec: defaultSpec || "",
+          keywords: "",
         }
   );
 
@@ -183,8 +184,8 @@ export default function ItemFormModal({
             transition: border-color 0.15s ease-in-out !important;
           }
           .item-modal input:focus, .item-modal select:focus, .item-modal textarea:focus {
-            border-color: #6366f1 !important;
-            box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+            border-color: #2563eb !important;
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
           }
         `}</style>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -373,6 +374,18 @@ export default function ItemFormModal({
             />
           </Field>
 
+          <Field label="🔎 한글 검색어 (선택)">
+            <input
+              value={form.keywords || ""}
+              onChange={(e) => update("keywords", e.target.value)}
+              placeholder="예: 물병, 생수, 페트병 (쉼표로 구분)"
+              style={{ width: "100%" }}
+            />
+            <div style={{ fontSize: 11, color: "var(--text-dim, #94a3b8)", marginTop: 5, lineHeight: 1.5 }}>
+              품목명이 영어일 때, 여기에 한글 별칭을 넣어두면 그 단어로도 검색됩니다. (예: "Bottled water" 물품에 "물병, 생수"를 넣으면 물병으로 검색 가능)
+            </div>
+          </Field>
+
           <div style={{ display: "flex", gap: 10 }}>
             <Field label="재고 수량" style={{ flex: 1 }}>
               <div style={{ display: "flex", gap: 6 }}>
@@ -397,7 +410,7 @@ export default function ItemFormModal({
                   type="button"
                   onClick={() => update("stock", "N/A")}
                   style={{
-                    background: form.stock === "N/A" ? "#6366f1" : "rgba(255, 255, 255, 0.05)",
+                    background: form.stock === "N/A" ? "#2563eb" : "rgba(255, 255, 255, 0.05)",
                     border: "1px solid var(--panel-border, #334155)",
                     borderRadius: "6px",
                     padding: "0 10px",
@@ -446,8 +459,8 @@ export default function ItemFormModal({
                 }
               }}
               style={{
-                border: `1px dashed ${isDragging ? "#6366f1" : PANEL_BORDER}`,
-                background: isDragging ? "rgba(99, 102, 241, 0.05)" : "rgba(255, 255, 255, 0.02)",
+                border: `1px dashed ${isDragging ? "#2563eb" : PANEL_BORDER}`,
+                background: isDragging ? "rgba(37, 99, 235, 0.05)" : "rgba(255, 255, 255, 0.02)",
                 borderRadius: 8,
                 padding: "14px",
                 textAlign: "center",
@@ -476,7 +489,7 @@ export default function ItemFormModal({
                     style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }}
                   />
                   <div style={{ textAlign: "left" }}>
-                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#6366f1", display: "block" }}>
+                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#5b6472", display: "block" }}>
                       📸 이미지 직접 등록 준비 완료
                     </span>
                     <span style={{ fontSize: 9.5, color: TEXT_DIM, display: "block" }}>
@@ -508,7 +521,7 @@ export default function ItemFormModal({
                 <span style={{ fontSize: 11, color: TEXT_DIM }}>이미지 변환 및 등록 대기 중...</span>
               ) : (
                 <>
-                  <Upload size={16} color={isDragging ? "#6366f1" : TEXT_DIM} />
+                  <Upload size={16} color={isDragging ? "#2563eb" : TEXT_DIM} />
                   <span style={{ fontSize: 11.5, color: TEXT_MAIN, fontWeight: 500 }}>
                     클릭하거나 이미지 파일을 여기로 드래그하여 직접 업로드
                   </span>
