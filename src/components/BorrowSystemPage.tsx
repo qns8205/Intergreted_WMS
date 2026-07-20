@@ -1341,8 +1341,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 {returnTree.map(({ borrower, items }) => {
                   const all = sortByLoc(items);
                   const scenarioItems = all.filter((it) => it.sheetType === "scenario");
-                  const additionalItems = all.filter((it) => it.sheetType === "general" && it.generalOption === "추가 물품 대여");
-                  const generalItems = all.filter((it) => it.sheetType === "general" && it.generalOption !== "추가 물품 대여");
+                  const additionalItems = all.filter((it) => it.sheetType === "general" && it.generalOption === "SID 추가 물품");
+                  const generalItems = all.filter((it) => it.sheetType === "general" && it.generalOption !== "SID 추가 물품");
                   return (
                     <GroupSection key={borrower} gKey={borrower} title={borrower} items={all} level={1}>
                       {(scenarioItems.length || additionalItems.length) ? (
