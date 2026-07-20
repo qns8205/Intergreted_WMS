@@ -72,7 +72,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            color: isLightMode ? "#2b303a" : "#e8eaed",
+            color: isLightMode ? "#2563eb" : "#60a5fa",
           }}
         >
           자재 대여 · 반납 · 관리
@@ -145,8 +145,8 @@ export default function LandingPage({
                 width: "40px",
                 height: "40px",
                 borderRadius: "11px",
-                background: "rgba(37, 99, 235, 0.13)",
-                color: "#94a3b8",
+                background: "rgba(37, 99, 235, 0.12)",
+                color: "#2563eb",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -160,7 +160,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#111827" : "#f1f5f9",
+                color: isLightMode ? "#2563eb" : "#60a5fa",
               }}
             >
               {c.title}
@@ -179,7 +179,7 @@ export default function LandingPage({
               style={{
                 marginTop: "auto",
                 padding: "9px 16px",
-                background: "#334155",
+                background: "#2563eb",
                 color: "#ffffff",
                 borderRadius: "12px",
                 fontSize: "13px",
@@ -228,8 +228,8 @@ export default function LandingPage({
             width: "44px",
             height: "44px",
             borderRadius: "12px",
-            background: "rgba(37, 99, 235, 0.15)",
-            color: "#94a3b8",
+            background: "rgba(37, 99, 235, 0.12)",
+            color: "#2563eb",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -242,20 +242,20 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#111827" : "#f1f5f9",
+              color: isLightMode ? "#2563eb" : "#60a5fa",
               marginBottom: "3px",
             }}
           >
             🛠️ 관리 모드
           </div>
-          <div style={{ fontSize: "12px", color: isLightMode ? "#2563eb" : "#94a3b8" }}>
+          <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
             창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
           </div>
         </div>
         <div
           style={{
             padding: "9px 18px",
-            background: "#334155",
+            background: "#2563eb",
             color: "#ffffff",
             borderRadius: "12px",
             fontSize: "13px",
@@ -271,7 +271,7 @@ export default function LandingPage({
         style={{
           marginTop: "48px",
           fontSize: "11px",
-          color: isLightMode ? "#94a3b8" : "#2563eb",
+          color: isLightMode ? "#94a3b8" : "#94a3b8",
           display: "flex",
           alignItems: "center",
           gap: "4px",
