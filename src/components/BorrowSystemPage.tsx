@@ -263,193 +263,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
   };
 
-  function StockBadges({ stock, rented }: { stock: number; rented: number }) {
-    return (
-      <div style={{ display: "flex", gap: "6px", marginTop: "4px", fontSize: "11px", fontWeight: 600 }}>
-        <span style={{ color: C.success, background: C.successSoft, padding: "2px 8px", borderRadius: "6px" }}>재고 {stock ?? 0}</span>
-        <span style={{ color: C.accentText, background: C.accentSoft, padding: "2px 8px", borderRadius: "6px" }}>대여 중 {rented ?? 0}</span>
-      </div>
-    );
-  }
 
-  function LocBadge({ slot }: { slot?: string }) {
-    if (!slot) return null;
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 8px", fontFamily: "monospace" }}>
-        <MapPin size={11} />{padSlot(slot)}
-      </span>
-    );
-  }
-
-  function Thumb({ url, size = 48 }: { url?: string; size?: number }) {
-    if (!url) return null;
-    const src = getGoogleDriveImageUrl(url);
-    return (
-      <div
-        onClick={(e) => { e.stopPropagation(); setImageModalUrl(src); }}
-        style={{ flex: `0 0 ${size}px`, width: size, height: size, borderRadius: "8px", overflow: "hidden", border: `1px solid ${C.border}`, cursor: "zoom-in", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center" }}
-      >
-        <img src={src} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "cover" }} />
-      </div>
-    );
-  }
-
-  function Spinner({ size = 18, light = false }: { size?: number; light?: boolean }) {
-    return (
-      <span style={{
-        width: size, height: size, borderRadius: "50%", display: "inline-block",
-        border: `3px solid ${light ? "rgba(255,255,255,0.35)" : C.border}`,
-        borderTopColor: light ? "#fff" : C.accent, animation: "bsp-spin 0.9s linear infinite",
-      }} />
-    );
-  }
-
-  function TypeCard({ active, icon, text, onClick, small }: { active: boolean; icon: React.ReactNode; text: string; onClick: () => void; small?: boolean }) {
-    return (
-      <div
-        onClick={onClick}
-        style={{
-          flex: 1, cursor: "pointer", borderRadius: "14px", textAlign: "center",
-          padding: small ? "12px 6px" : "20px 10px",
-          border: `1px solid ${active ? C.accent : C.border}`,
-          background: active ? C.accentSoft : C.card,
-          color: active ? C.accentText : C.label,
-          display: "flex", flexDirection: "column", alignItems: "center", gap: "8px",
-          transition: "all 0.15s",
-        }}
-      >
-        {icon}
-        <span style={{ fontWeight: 700, fontSize: small ? "12px" : "13px", color: active ? C.accentText : C.text }}>{text}</span>
-      </div>
-    );
-  }
-
-  /* ══════════════════════ 물품 피커 (일반/추가 공용) ══════════════════════ */
-
-  function toggleCart(list: CartItem[], setList: (v: CartItem[]) => void, item: ObjectItem) {
-    const idx = list.findIndex((c) => c.id === item.id);
-    if (idx === -1) {
-      if ((item.stock || 0) < 1) { showToast("재고가 부족하여 대여할 수 없습니다. (현재 재고: 0)", "warn"); return; }
-      setList([...list, { id: item.id, name: item.name, quantity: 1, rootSlot: item.rootSlot }]);
-    } else {
-      setList(list.filter((_, i) => i !== idx));
-    }
-  }
-
-  function changeQty(list: CartItem[], setList: (v: CartItem[]) => void, idx: number, delta: number) {
-    const item = list[idx];
-    const orig = objectItems.find((o) => o.id === item.id);
-    const maxStock = orig ? orig.stock || 0 : 0;
-    const next = item.quantity + delta;
-    if (delta > 0 && next > maxStock) { showToast(`재고가 부족합니다. (최대 재고: ${maxStock}개)`, "warn"); return; }
-    if (next < 1) return;
-    setList(list.map((c, i) => (i === idx ? { ...c, quantity: next } : c)));
-  }
-
-  function CartBox({ list, setList, emptyText }: { list: CartItem[]; setList: (v: CartItem[]) => void; emptyText: string }) {
-    return (
-      <div style={{ marginBottom: "14px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-          <span style={{ fontSize: "13px", color: C.label }}>선택된 물품</span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{list.length}개</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
-          {list.length === 0 ? (
-            <div style={{ textAlign: "center", color: C.label, fontSize: "12px", padding: "12px 0", border: `1px dashed ${C.border}`, borderRadius: "10px" }}>{emptyText}</div>
-          ) : (
-            list.map((item, idx) => (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
-                  <div style={{ fontSize: "11px", color: C.label }}>ID: {item.id}</div>
-                  {item.rootSlot ? <div style={{ marginTop: "3px" }}><LocBadge slot={item.rootSlot} /></div> : null}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-                  <button onClick={() => changeQty(list, setList, idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
-                  <span style={{ fontWeight: 700, minWidth: "20px", textAlign: "center", color: C.text, fontSize: "13px" }}>{item.quantity}</span>
-                  <button onClick={() => changeQty(list, setList, idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
-                </div>
-                <button onClick={() => setList(list.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  function ItemPicker({
-    list, setList, search, setSearch, cat, setCat, sub, setSub,
-  }: {
-    list: CartItem[]; setList: (v: CartItem[]) => void;
-    search: string; setSearch: (v: string) => void;
-    cat: string; setCat: (v: string) => void;
-    sub: string; setSub: (v: string) => void;
-  }) {
-    const filtered = useMemo(
-      () => objectItems.filter((it) => matchesFilters(it, search.trim(), cat, sub)),
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [objectItems, search, cat, sub]
-    );
-    const selectStyle: React.CSSProperties = { ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 };
-    return (
-      <div>
-        <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-          <select value={cat} onChange={(e) => { setCat(e.target.value); setSub(""); }} style={selectStyle}>
-            <option value="">전체 카테고리</option>
-            {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <select value={sub} onChange={(e) => setSub(e.target.value)} style={selectStyle}>
-            <option value="">전체 서브카테고리</option>
-            {subsOf(cat).map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        <div style={{ position: "relative", marginBottom: "8px" }}>
-          <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID · 물품명 · 위치(예: 000060)로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-        </div>
-        <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "260px", overflowY: "auto" }}>
-          {!itemsLoaded ? (
-            <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-              <Spinner /> 물품 목록을 불러오는 중...
-            </div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
-          ) : (
-            filtered.map((it) => {
-              const inCart = list.some((c) => c.id === it.id);
-              return (
-                <div
-                  key={it.id}
-                  onClick={() => toggleCart(list, setList, it)}
-                  style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}
-                >
-                  <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
-                  <Thumb url={it.image} size={44} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
-                    <div style={{ fontSize: "11px", color: C.label }}>ID: {it.id}</div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", marginTop: "2px" }}>
-                      {it.category ? (
-                        <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.accentSoft, color: C.accentText }}>
-                          {it.category}{it.subcategory ? ` · ${it.subcategory}` : ""}
-                        </span>
-                      ) : null}
-                      <LocBadge slot={it.rootSlot} />
-                    </div>
-                    <StockBadges stock={it.stock} rented={it.rented} />
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-        <div style={{ fontSize: "11px", color: C.label, textAlign: "right", marginTop: "4px" }}>
-          {itemsLoaded ? `${filtered.length} / ${objectItems.length}개 물품` : ""}
-        </div>
-      </div>
-    );
-  }
 
   /* ══════════════════════ 대여 신청 흐름 ══════════════════════ */
 
@@ -831,153 +645,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     });
   }
 
-  function GroupCheckbox({ items }: { items: UnreturnedItem[] }) {
-    const ref = useRef<HTMLInputElement>(null);
-    const checkedCount = items.filter((it) => selectedReturn[keyOf(it)] !== undefined).length;
-    const all = items.length > 0 && checkedCount === items.length;
-    useEffect(() => {
-      if (ref.current) ref.current.indeterminate = checkedCount > 0 && !all;
-    }, [checkedCount, all]);
-    return (
-      <input
-        ref={ref} type="checkbox" checked={all}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => toggleReturnKeys(items, e.target.checked)}
-        style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0, cursor: "pointer" }}
-      />
-    );
-  }
 
-  function GroupSection({ gKey, title, icon, items, level, children }: {
-    key?: string | number; gKey: string; title: React.ReactNode; icon?: React.ReactNode; items: UnreturnedItem[]; level: number; children: React.ReactNode;
-  }) {
-    const hasQuery = !!returnSearch.trim();
-    const isOpen = expanded[gKey] !== undefined ? expanded[gKey] : (hasQuery ? true : false);
-
-    const isBorrowerLevel = level === 1 && typeof title === "string";
-    const headerBg = level === 1 ? (isLightMode ? "#ffffff" : "#1e293b") : "transparent";
-
-    const cardStyle: React.CSSProperties = level === 1 ? {
-      border: `2px solid ${isOpen ? C.accent : C.border}`,
-      boxShadow: isOpen ? "0 4px 12px rgba(37,99,235,0.08)" : "0 2px 4px rgba(0,0,0,0.02)",
-      borderRadius: "14px",
-      marginBottom: "12px",
-      overflow: "hidden",
-      transition: "all 0.2s ease-in-out",
-      background: C.card
-    } : {
-      border: `1px ${level >= 3 ? "dashed" : "solid"} ${C.border}`,
-      borderRadius: "12px",
-      marginBottom: "8px",
-      overflow: "hidden"
-    };
-
-    const avatar = isBorrowerLevel ? getAvatarColor(title as string) : null;
-
-    return (
-      <div style={cardStyle}>
-        <div
-          onClick={() => setExpanded((p) => ({ ...p, [gKey]: !isOpen }))}
-          className="responsive-group-header"
-          style={{
-            background: headerBg,
-            borderBottom: isOpen ? `1px solid ${C.border}` : "none"
-          }}
-        >
-          <GroupCheckbox items={items} />
-
-          {isBorrowerLevel && avatar ? (
-            <div 
-              className="responsive-avatar"
-              style={{
-                background: avatar.bg,
-                color: avatar.text
-              }}
-            >
-              {(title as string).substring(0, 1)}
-            </div>
-          ) : (
-            <ChevronRight size={14} style={{ color: C.label, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
-          )}
-
-          <span 
-            className="responsive-group-title"
-            style={{
-              color: level === 1 ? (isLightMode ? "#1e293b" : "#f1f5f9") : C.text
-            }}
-          >
-            {icon}
-            {title}
-            {level === 1 && (
-              <span style={{ fontSize: "11px", fontWeight: 400, color: C.label, marginLeft: "4px" }}>
-                님의 미반납 내역
-              </span>
-            )}
-          </span>
-
-          <span 
-            className="responsive-badge"
-            style={{
-              background: isOpen ? C.accent : C.accentSoft,
-              color: isOpen ? "#ffffff" : C.accentText
-            }}
-          >
-            {sumQty(items)}개 품목
-          </span>
-
-          {level === 1 && (
-            <ChevronRight size={16} style={{ color: C.label, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0, marginLeft: "4px" }} />
-          )}
-        </div>
-        {isOpen ? <div style={{ padding: "10px 10px 4px", background: isLightMode ? "#fafbfc" : "#111827" }}>{children}</div> : null}
-      </div>
-    );
-  }
-
-  function ReturnItemCard({ item }: { key?: string | number; item: UnreturnedItem }) {
-    const k = keyOf(item);
-    const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
-    const selectedQty = selectedReturn[k];
-    const checked = selectedQty !== undefined;
-    const badgeText = item.sheetType === "scenario"
-      ? (item.itemKind === "대여 물품" ? "필요 물품" : "추가 물품")
-      : (item.generalOption || "일반");
-    return (
-      <div
-        onClick={() => toggleReturnKeys([item], !checked)}
-        className="responsive-item-card"
-        style={{ border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent" }}
-      >
-        <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
-        <div className="responsive-item-thumb" style={{ flexShrink: 0, width: "44px", height: "44px", borderRadius: "8px", overflow: "hidden" }}>
-          <Thumb url={item.image} size={44} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="responsive-item-title" style={{ color: C.text }}>
-            <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", marginRight: "5px", background: C.accentSoft, color: C.accentText }}>{badgeText}</span>
-            {item.sheetType === "scenario" && item.scenarioId ? (
-              <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", marginRight: "5px", background: C.successSoft, color: C.success }}>{item.scenarioId}</span>
-            ) : null}
-            {item.itemLabel}
-          </div>
-          <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
-            대여일: {item.borrowDate}{item.borrowPurpose ? ` · ${item.borrowPurpose}` : ""}
-          </div>
-          <div style={{ marginTop: "4px" }}><LocBadge slot={item.location} /></div>
-          <StockBadges stock={item.stock} rented={item.rented} />
-          {maxQty > 1 ? (
-            <div onClick={(e) => e.stopPropagation()} className="responsive-control-row">
-              <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
-              <button onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.max(1, (p[k] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
-              <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", color: C.text, fontSize: "13px" }}>{selectedQty ?? maxQty}</span>
-              <button onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.min(maxQty, (p[k] ?? maxQty) + 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={12} /></button>
-              <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
 
   async function handleReturnSubmit() {
     const keys = Object.keys(selectedReturn);
@@ -1595,8 +1263,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <div>
             <label style={labelStyle}>대여 유형</label>
             <div style={{ display: "flex", gap: "12px", marginBottom: "24px" }}>
-              <TypeCard active={itemType === "scenario"} icon={<Fingerprint size={26} />} text="SID 기반 대여" onClick={() => { setItemType("scenario"); setMode("b3s"); }} />
-              <TypeCard active={itemType === "general"} icon={<Boxes size={26} />} text="일반 대여" onClick={() => { setItemType("general"); setMode("b3g"); }} />
+              <TypeCard active={itemType === "scenario"} icon={<Fingerprint size={26} />} text="SID 기반 대여" onClick={() => { setItemType("scenario"); setMode("b3s"); }} C={C} />
+              <TypeCard active={itemType === "general"} icon={<Boxes size={26} />} text="일반 대여" onClick={() => { setItemType("general"); setMode("b3g"); }} C={C} />
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => (rootMode === "b1" ? onBack() : setMode("b1"))} style={secondaryBtn}>이전</button>
@@ -1609,8 +1277,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {mode === "b3g" ? (
           <div>
             <label style={labelStyle}>대여 물품 선택</label>
-            <CartBox list={cart} setList={setCart} emptyText="아래 목록에서 물품을 선택해주세요" />
-            <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} />
+            <CartBox list={cart} setList={setCart} emptyText="아래 목록에서 물품을 선택해주세요" C={C} objectItems={objectItems} showToast={showToast} />
+            <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} />
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={() => setMode("b2")} style={secondaryBtn}>이전</button>
               <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } setMode("b4g"); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
@@ -1623,16 +1291,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <div>
             <label style={labelStyle}>대여 구분 <span style={{ fontWeight: 400, color: C.error, fontSize: "12px" }}>(필수)</span></label>
             <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
-              <TypeCard small active={generalOption === "추가 물품 대여"} icon={<PlusCircle size={18} />} text="추가 물품 대여" onClick={() => setGeneralOption("추가 물품 대여")} />
-              <TypeCard small active={generalOption === "Light Scenario"} icon={<Feather size={18} />} text="Light Scenario" onClick={() => setGeneralOption("Light Scenario")} />
-              <TypeCard small active={generalOption === "Wild Scenario"} icon={<Flame size={18} />} text="Wild Scenario" onClick={() => setGeneralOption("Wild Scenario")} />
+              <TypeCard small active={generalOption === "추가 물품 대여"} icon={<PlusCircle size={18} />} text="추가 물품 대여" onClick={() => setGeneralOption("추가 물품 대여")} C={C} />
+              <TypeCard small active={generalOption === "Light Scenario"} icon={<Feather size={18} />} text="Light Scenario" onClick={() => setGeneralOption("Light Scenario")} C={C} />
+              <TypeCard small active={generalOption === "Wild Scenario"} icon={<Flame size={18} />} text="Wild Scenario" onClick={() => setGeneralOption("Wild Scenario")} C={C} />
             </div>
             <label style={labelStyle}>대여 목적</label>
             <textarea value={purposeGeneral} onChange={(e) => setPurposeGeneral(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "90px", resize: "none", marginBottom: "20px" }} />
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3g")} style={secondaryBtn}>이전</button>
               <button onClick={handleBorrowSubmit} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light /> 처리 중...</> : "신청하기"}
+                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : "신청하기"}
               </button>
             </div>
           </div>
@@ -1741,8 +1409,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
 
             <label style={labelStyle}>추가 물품 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(필요 물품과 별도로 필요한 물품만 선택하세요. 추가 물품은 일반 대여로 처리됩니다.)</span></label>
-            <CartBox list={reqCart} setList={setReqCart} emptyText="필요하다면 아래 목록에서 물품을 선택해주세요" />
-            <ItemPicker list={reqCart} setList={setReqCart} search={reqSearch} setSearch={setReqSearch} cat={reqCat} setCat={setReqCat} sub={reqSub} setSub={setReqSub} />
+            <CartBox list={reqCart} setList={setReqCart} emptyText="필요하다면 아래 목록에서 물품을 선택해주세요" C={C} objectItems={objectItems} showToast={showToast} />
+            <ItemPicker list={reqCart} setList={setReqCart} search={reqSearch} setSearch={setReqSearch} cat={reqCat} setCat={setReqCat} sub={reqSub} setSub={setReqSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} />
 
             <div style={{ marginTop: "18px" }}>
               <label style={labelStyle}>대여 목적</label>
@@ -1751,7 +1419,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3s")} style={secondaryBtn}>이전</button>
               <button onClick={handleBorrowSubmit} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light /> 처리 중...</> : "신청하기"}
+                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : "신청하기"}
               </button>
             </div>
           </div>
@@ -1768,7 +1436,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
             {returnLoading ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "48px 0", color: C.label }}>
-                <Spinner size={30} /> 미반납 목록을 불러오는 중입니다...
+                <Spinner size={30} C={C} /> 미반납 목록을 불러오는 중입니다...
               </div>
             ) : unreturned.length === 0 ? (
               <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>
@@ -1784,19 +1452,121 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const additionalItems = all.filter((it) => it.sheetType === "general" && it.generalOption === "SID 추가 물품");
                   const generalItems = all.filter((it) => it.sheetType === "general" && it.generalOption !== "SID 추가 물품");
                   return (
-                    <GroupSection key={borrower} gKey={borrower} title={borrower} items={all} level={1}>
+                    <GroupSection
+                      key={borrower}
+                      gKey={borrower}
+                      title={borrower}
+                      items={all}
+                      level={1}
+                      expanded={expanded}
+                      setExpanded={setExpanded}
+                      returnSearch={returnSearch}
+                      isLightMode={isLightMode}
+                      C={C}
+                      getAvatarColor={getAvatarColor}
+                      sumQty={sumQty}
+                      toggleReturnKeys={toggleReturnKeys}
+                      selectedReturn={selectedReturn}
+                      keyOf={keyOf}
+                    >
                       {(scenarioItems.length || additionalItems.length) ? (
-                        <GroupSection gKey={`${borrower}|sid`} title="SID 대여" icon={<Fingerprint size={13} style={{ color: C.accentText }} />} items={[...scenarioItems, ...additionalItems]} level={2}>
+                        <GroupSection
+                          gKey={`${borrower}|sid`}
+                          title="SID 대여"
+                          icon={<Fingerprint size={13} style={{ color: C.accentText }} />}
+                          items={[...scenarioItems, ...additionalItems]}
+                          level={2}
+                          expanded={expanded}
+                          setExpanded={setExpanded}
+                          returnSearch={returnSearch}
+                          isLightMode={isLightMode}
+                          C={C}
+                          getAvatarColor={getAvatarColor}
+                          sumQty={sumQty}
+                          toggleReturnKeys={toggleReturnKeys}
+                          selectedReturn={selectedReturn}
+                          keyOf={keyOf}
+                        >
                           {groupBy(scenarioItems, (it) => it.scenarioId || "(SID 없음)").map((grp) => (
-                            <GroupSection key={grp.key} gKey={`${borrower}|sid|${grp.key}`} title={grp.key} items={grp.items} level={3}>
-                              {sortByLoc(grp.items).map((item) => <ReturnItemCard key={keyOf(item)} item={item} />)}
+                            <GroupSection
+                              key={grp.key}
+                              gKey={`${borrower}|sid|${grp.key}`}
+                              title={grp.key}
+                              items={grp.items}
+                              level={3}
+                              expanded={expanded}
+                              setExpanded={setExpanded}
+                              returnSearch={returnSearch}
+                              isLightMode={isLightMode}
+                              C={C}
+                              getAvatarColor={getAvatarColor}
+                              sumQty={sumQty}
+                              toggleReturnKeys={toggleReturnKeys}
+                              selectedReturn={selectedReturn}
+                              keyOf={keyOf}
+                            >
+                              {sortByLoc(grp.items).map((item) => (
+                                <ReturnItemCard
+                                  key={keyOf(item)}
+                                  item={item}
+                                  selectedReturn={selectedReturn}
+                                  setSelectedReturn={setSelectedReturn}
+                                  toggleReturnKeys={toggleReturnKeys}
+                                  C={C}
+                                  keyOf={keyOf}
+                                  setImageModalUrl={setImageModalUrl}
+                                />
+                              ))}
                             </GroupSection>
                           ))}
                           {additionalItems.length ? (
-                            <GroupSection gKey={`${borrower}|add`} title="추가 대여" icon={<PlusCircle size={13} style={{ color: C.warn }} />} items={additionalItems} level={3}>
+                            <GroupSection
+                              gKey={`${borrower}|add`}
+                              title="추가 대여"
+                              icon={<PlusCircle size={13} style={{ color: C.warn }} />}
+                              items={additionalItems}
+                              level={3}
+                              expanded={expanded}
+                              setExpanded={setExpanded}
+                              returnSearch={returnSearch}
+                              isLightMode={isLightMode}
+                              C={C}
+                              getAvatarColor={getAvatarColor}
+                              sumQty={sumQty}
+                              toggleReturnKeys={toggleReturnKeys}
+                              selectedReturn={selectedReturn}
+                              keyOf={keyOf}
+                            >
                               {groupBy(additionalItems, borrowDateKey).map((grp) => (
-                                <GroupSection key={grp.key} gKey={`${borrower}|add|${grp.key}`} title={grp.key} items={grp.items} level={4}>
-                                  {sortByLoc(grp.items).map((item) => <ReturnItemCard key={keyOf(item)} item={item} />)}
+                                <GroupSection
+                                  key={grp.key}
+                                  gKey={`${borrower}|add|${grp.key}`}
+                                  title={grp.key}
+                                  items={grp.items}
+                                  level={4}
+                                  expanded={expanded}
+                                  setExpanded={setExpanded}
+                                  returnSearch={returnSearch}
+                                  isLightMode={isLightMode}
+                                  C={C}
+                                  getAvatarColor={getAvatarColor}
+                                  sumQty={sumQty}
+                                  toggleReturnKeys={toggleReturnKeys}
+                                  selectedReturn={selectedReturn}
+                                  keyOf={keyOf}
+                                >
+                                  {sortByLoc(grp.items).map((item) => (
+                                    <ReturnItemCard
+                                      key={keyOf(item)}
+                                      item={item}
+                                      selectedReturn={selectedReturn}
+                                      setSelectedReturn={setSelectedReturn}
+                                      toggleReturnKeys={toggleReturnKeys}
+                                      C={C}
+                                      keyOf={keyOf}
+                                      setImageModalUrl={setImageModalUrl}
+                                    />
+                                  ))}
                                 </GroupSection>
                               ))}
                             </GroupSection>
@@ -1804,10 +1574,53 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         </GroupSection>
                       ) : null}
                       {generalItems.length ? (
-                        <GroupSection gKey={`${borrower}|gen`} title="일반 대여" icon={<Boxes size={13} style={{ color: C.accentText }} />} items={generalItems} level={2}>
+                        <GroupSection
+                          gKey={`${borrower}|gen`}
+                          title="일반 대여"
+                          icon={<Boxes size={13} style={{ color: C.accentText }} />}
+                          items={generalItems}
+                          level={2}
+                          expanded={expanded}
+                          setExpanded={setExpanded}
+                          returnSearch={returnSearch}
+                          isLightMode={isLightMode}
+                          C={C}
+                          getAvatarColor={getAvatarColor}
+                          sumQty={sumQty}
+                          toggleReturnKeys={toggleReturnKeys}
+                          selectedReturn={selectedReturn}
+                          keyOf={keyOf}
+                        >
                           {groupBy(generalItems, borrowDateKey).map((grp) => (
-                            <GroupSection key={grp.key} gKey={`${borrower}|gen|${grp.key}`} title={grp.key} items={grp.items} level={3}>
-                              {sortByLoc(grp.items).map((item) => <ReturnItemCard key={keyOf(item)} item={item} />)}
+                            <GroupSection
+                              key={grp.key}
+                              gKey={`${borrower}|gen|${grp.key}`}
+                              title={grp.key}
+                              items={grp.items}
+                              level={3}
+                              expanded={expanded}
+                              setExpanded={setExpanded}
+                              returnSearch={returnSearch}
+                              isLightMode={isLightMode}
+                              C={C}
+                              getAvatarColor={getAvatarColor}
+                              sumQty={sumQty}
+                              toggleReturnKeys={toggleReturnKeys}
+                              selectedReturn={selectedReturn}
+                              keyOf={keyOf}
+                            >
+                              {sortByLoc(grp.items).map((item) => (
+                                <ReturnItemCard
+                                  key={keyOf(item)}
+                                  item={item}
+                                  selectedReturn={selectedReturn}
+                                  setSelectedReturn={setSelectedReturn}
+                                  toggleReturnKeys={toggleReturnKeys}
+                                  C={C}
+                                  keyOf={keyOf}
+                                  setImageModalUrl={setImageModalUrl}
+                                />
+                              ))}
                             </GroupSection>
                           ))}
                         </GroupSection>
@@ -1826,7 +1639,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   disabled={Object.keys(selectedReturn).length === 0 || returnSubmitting}
                   style={{ ...primaryBtn, opacity: Object.keys(selectedReturn).length === 0 || returnSubmitting ? 0.5 : 1 }}
                 >
-                  {returnSubmitting ? <><Spinner size={16} light /> 처리 중...</> : `반납 처리하기${Object.keys(selectedReturn).length ? ` (${Object.keys(selectedReturn).length}건)` : ""}`}
+                  {returnSubmitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : `반납 처리하기${Object.keys(selectedReturn).length ? ` (${Object.keys(selectedReturn).length}건)` : ""}`}
                 </button>
               </div>
             </div>
@@ -1898,7 +1711,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   return (
                     <div key={it.rowIndex} onClick={() => addWhCart(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}>
                       <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
-                      <Thumb url={it.photo} size={44} />
+                      <Thumb url={it.photo} size={44} C={C} setImageModalUrl={setImageModalUrl} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
                         <div style={{ marginTop: "3px", display: "flex", gap: "5px", flexWrap: "wrap" }}>
@@ -2113,6 +1926,584 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <img src={imageModalUrl} alt="" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px", objectFit: "contain", boxShadow: "0 4px 24px rgba(0,0,0,0.6)" }} onClick={(e) => e.stopPropagation()} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────
+// Standalone React Subcomponents to Avoid Hook Violations
+// ────────────────────────────────────────────────────────
+
+function StockBadges({ stock, rented, C }: { stock: number; rented: number; C?: any }) {
+  const successColor = C ? C.success : "#10b981";
+  const successSoftBg = C ? C.successSoft : "rgba(16,185,129,0.1)";
+  const accentTextColor = C ? C.accentText : "#2563eb";
+  const accentSoftBg = C ? C.accentSoft : "rgba(37,99,235,0.1)";
+  return (
+    <div style={{ display: "flex", gap: "6px", marginTop: "4px", fontSize: "11px", fontWeight: 600 }}>
+      <span style={{ color: successColor, background: successSoftBg, padding: "2px 8px", borderRadius: "6px" }}>재고 {stock ?? 0}</span>
+      <span style={{ color: accentTextColor, background: accentSoftBg, padding: "2px 8px", borderRadius: "6px" }}>대여 중 {rented ?? 0}</span>
+    </div>
+  );
+}
+
+function LocBadge({ slot, C }: { slot?: string; C?: any }) {
+  if (!slot) return null;
+  const warnColor = C ? C.warn : "#f59e0b";
+  const warnSoftBg = C ? C.warnSoft : "rgba(245,158,11,0.1)";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: warnColor, background: warnSoftBg, borderRadius: "6px", padding: "2px 8px", fontFamily: "monospace" }}>
+      <MapPin size={11} />{padSlot(slot)}
+    </span>
+  );
+}
+
+function Thumb({ url, size = 48, C, setImageModalUrl }: { url?: string; size?: number; C?: any; setImageModalUrl: (url: string) => void }) {
+  if (!url) return null;
+  const src = getGoogleDriveImageUrl(url);
+  const borderCol = C ? C.border : "#e6e9ef";
+  const cardSubBg = C ? C.cardSub : "#f7f9fa";
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); setImageModalUrl(src); }}
+      style={{ flex: `0 0 ${size}px`, width: size, height: size, borderRadius: "8px", overflow: "hidden", border: `1px solid ${borderCol}`, cursor: "zoom-in", background: cardSubBg, display: "flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <img src={src} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "cover" }} />
+    </div>
+  );
+}
+
+function Spinner({ size = 20, light = false, C }: { size?: number; light?: boolean; C?: any }) {
+  const accentText = C ? C.accentText : "#2563eb";
+  const color = light ? "#ffffff" : accentText;
+  return (
+    <div style={{ display: "inline-block", width: size, height: size, border: `2px solid ${color}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", verticalAlign: "middle" }} />
+  );
+}
+
+function TypeCard({
+  active,
+  icon,
+  text,
+  onClick,
+  small = false,
+  C,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  text: string;
+  onClick: () => void;
+  small?: boolean;
+  C?: any;
+}) {
+  const accent = C ? C.accent : "#2563eb";
+  const textCol = C ? C.text : "#1e293b";
+  const borderCol = C ? C.border : "#e6e9ef";
+  const labelCol = C ? C.label : "#64748b";
+  const activeBg = C ? C.accentSoft : "rgba(37,99,235,0.06)";
+  
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        flex: 1,
+        padding: small ? "12px 10px" : "20px 14px",
+        borderRadius: "14px",
+        border: `1.5px solid ${active ? accent : borderCol}`,
+        background: active ? activeBg : "transparent",
+        color: active ? accent : textCol,
+        textAlign: "center",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: small ? "4px" : "10px",
+        transition: "all 0.15s ease",
+      }}
+    >
+      <div style={{ color: active ? accent : labelCol }}>{icon}</div>
+      <div style={{ fontWeight: 800, fontSize: small ? "12px" : "14px" }}>{text}</div>
+    </div>
+  );
+}
+
+interface CartItem {
+  id: string;
+  name: string;
+  quantity: number;
+  [key: string]: any;
+}
+
+function CartBox({
+  list,
+  setList,
+  emptyText,
+  C,
+  objectItems,
+  showToast,
+}: {
+  list: CartItem[];
+  setList: (val: any) => void;
+  emptyText: string;
+  C: any;
+  objectItems: any[];
+  showToast: (msg: string, type?: string) => void;
+}) {
+  const chgQty = (id: string, delta: number) => {
+    const orig = objectItems.find((x) => x.id === id);
+    const stock = orig ? Number(orig.stock || 0) : 999;
+    setList((prev: CartItem[]) => {
+      const match = prev.find((x) => x.id === id);
+      if (!match) return prev;
+      const target = match.quantity + delta;
+      if (target <= 0) {
+        return prev.filter((x) => x.id !== id);
+      }
+      if (target > stock) {
+        showToast(`최대 재고(${stock}개)까지만 선택 가능합니다.`, "warn");
+        return prev;
+      }
+      return prev.map((x) => (x.id === id ? { ...x, quantity: target } : x));
+    });
+  };
+
+  const remove = (id: string) => {
+    setList((prev: CartItem[]) => prev.filter((x) => x.id !== id));
+  };
+
+  if (list.length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 16px", border: `1px dashed ${C.border}`, borderRadius: "14px", background: C.cardSub, color: C.label, fontSize: "13px", marginBottom: "18px" }}>
+        {emptyText}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "18px", maxHeight: "180px", overflowY: "auto" }}>
+      {list.map((it) => {
+        const orig = objectItems.find((x) => x.id === it.id);
+        return (
+          <div key={it.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
+              <div style={{ fontSize: "11px", color: C.label, display: "flex", gap: "6px" }}>
+                <span>ID: {it.id}</span>
+                {orig?.location ? <span>• {padSlot(orig.location)}</span> : null}
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <button onClick={() => chgQty(it.id, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
+              <span style={{ fontWeight: 800, minWidth: "20px", textAlign: "center", fontSize: "13px" }}>{it.quantity}</span>
+              <button onClick={() => chgQty(it.id, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
+            </div>
+            <button onClick={() => remove(it.id)} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ItemPicker({
+  list,
+  setList,
+  search,
+  setSearch,
+  cat,
+  setCat,
+  sub,
+  setSub,
+  C,
+  isLightMode,
+  objectItems,
+  itemsLoaded,
+  categories,
+  subsOf,
+  matchesFilters,
+  showToast,
+  setImageModalUrl,
+}: {
+  list: CartItem[];
+  setList: (val: any) => void;
+  search: string;
+  setSearch: (v: string) => void;
+  cat: string;
+  setCat: (v: string) => void;
+  sub: string;
+  setSub: (v: string) => void;
+  C: any;
+  isLightMode: boolean;
+  objectItems: any[];
+  itemsLoaded: boolean;
+  categories: string[];
+  subsOf: (cat: string) => string[];
+  matchesFilters: (it: any, query: string, c: string, s: string) => boolean;
+  showToast: (msg: string, type?: string) => void;
+  setImageModalUrl: (url: string) => void;
+}) {
+  const inputStyle = {
+    width: "100%",
+    padding: "10px 12px 10px 38px",
+    background: C.cardSub,
+    border: `1.5px solid ${C.border}`,
+    borderRadius: "12px",
+    color: C.text,
+    fontSize: "13px",
+    outline: "none",
+  };
+
+  const selectStyle = {
+    flex: 1,
+    padding: "8px 10px",
+    background: C.card,
+    border: `1px solid ${C.border}`,
+    borderRadius: "10px",
+    color: C.text,
+    fontSize: "12px",
+    outline: "none",
+  };
+
+  const itemBtnStyle = (inCart: boolean) => ({
+    padding: "6px 12px",
+    borderRadius: "8px",
+    border: "none",
+    background: inCart ? C.errorSoft : C.accent,
+    color: inCart ? "#ffffff" : "#ffffff",
+    fontSize: "11px",
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+  });
+
+  const filtered = objectItems.filter((it) => matchesFilters(it, search, cat, sub));
+
+  const toggleItem = (it: any) => {
+    const inCart = list.some((x) => x.id === it.id);
+    if (inCart) {
+      setList((prev: CartItem[]) => prev.filter((x) => x.id !== it.id));
+    } else {
+      const stock = Number(it.stock || 0);
+      if (stock <= 0) {
+        showToast("재고가 없는 물품입니다.", "warn");
+        return;
+      }
+      setList((prev: CartItem[]) => [...prev, { id: it.id, name: it.name, quantity: 1 }]);
+    }
+  };
+
+  return (
+    <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: "16px", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품 ID 또는 물품명으로 검색..." style={inputStyle} />
+      </div>
+
+      <div style={{ display: "flex", gap: "8px" }}>
+        <select value={cat} onChange={(e) => { setCat(e.target.value); setSub("전체"); }} style={selectStyle}>
+          <option value="전체">대분류 (전체)</option>
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={sub} onChange={(e) => setSub(e.target.value)} style={selectStyle} disabled={cat === "전체"}>
+          <option value="전체">소분류 (전체)</option>
+          {subsOf(cat).map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
+      {!itemsLoaded ? (
+        <div style={{ display: "flex", justifySelf: "center", alignItems: "center", gap: "8px", padding: "32px 0", color: C.label, fontSize: "12px", justifyContent: "center" }}>
+          <Spinner size={16} C={C} /> 물품 목록 로딩 중...
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "12px" }}>조건에 맞는 물품이 없습니다.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "240px", overflowY: "auto", paddingRight: "2px" }}>
+          {filtered.slice(0, 100).map((it) => {
+            const inCart = list.some((x) => x.id === it.id);
+            const stock = Number(it.stock || 0);
+            const rented = Number(it.rented || 0);
+            return (
+              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px", background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                <Thumb url={it.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 800, fontSize: "12px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</span>
+                    <span style={{ fontSize: "10px", color: C.label, fontFamily: "monospace" }}>({it.id})</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
+                    <LocBadge slot={it.location} C={C} />
+                    <StockBadges stock={stock} rented={rented} C={C} />
+                  </div>
+                </div>
+                <button onClick={() => toggleItem(it)} style={itemBtnStyle(inCart)}>
+                  {inCart ? "취소" : "선택"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GroupCheckbox({
+  gKey,
+  items,
+  toggleReturnKeys,
+  selectedReturn,
+  keyOf,
+  C,
+}: {
+  gKey: string;
+  items: any[];
+  toggleReturnKeys: (items: any[], force: boolean) => void;
+  selectedReturn: Record<string, boolean>;
+  keyOf: (it: any) => string;
+  C: any;
+}) {
+  const itemKeys = items.map(keyOf);
+  const checkedCount = itemKeys.filter((k) => !!selectedReturn[k]).length;
+  const isAll = checkedCount === items.length && items.length > 0;
+  const isSome = checkedCount > 0 && checkedCount < items.length;
+
+  const handleToggle = () => {
+    toggleReturnKeys(items, !isAll);
+  };
+
+  return (
+    <div
+      onClick={(e) => { e.stopPropagation(); handleToggle(); }}
+      style={{
+        width: 17,
+        height: 17,
+        borderRadius: "5px",
+        border: `1.5px solid ${isAll || isSome ? C.accent : C.border}`,
+        background: isAll ? C.accent : isSome ? C.accentSoft : "transparent",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flexShrink: 0,
+        position: "relative"
+      }}
+    >
+      {isAll ? <Check size={11} strokeWidth={3} style={{ color: "#ffffff" }} /> : null}
+      {isSome ? <div style={{ width: 7, height: 7, background: C.accent, borderRadius: "2px" }} /> : null}
+    </div>
+  );
+}
+
+function GroupSection({
+  gKey,
+  title,
+  icon,
+  items,
+  level = 1,
+  children,
+  expanded,
+  setExpanded,
+  returnSearch,
+  isLightMode,
+  C,
+  getAvatarColor,
+  sumQty,
+  toggleReturnKeys,
+  selectedReturn,
+  keyOf,
+}: {
+  key?: string | number;
+  gKey: string;
+  title: string;
+  icon?: React.ReactNode;
+  items: any[];
+  level?: number;
+  children: React.ReactNode;
+  expanded: Record<string, boolean>;
+  setExpanded: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  returnSearch: string;
+  isLightMode: boolean;
+  C: any;
+  getAvatarColor: (name: string) => { bg: string; text: string; };
+  sumQty: (items: any[]) => number;
+  toggleReturnKeys: (items: any[], force: boolean) => void;
+  selectedReturn: Record<string, boolean>;
+  keyOf: (it: any) => string;
+}) {
+  const isExp = expanded[gKey] !== false; // default expanded
+
+  const toggleExp = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded((prev) => ({ ...prev, [gKey]: !isExp }));
+  };
+
+  const itemKeys = items.map(keyOf);
+  const checkedCount = itemKeys.filter((k) => !!selectedReturn[k]).length;
+  const isAll = checkedCount === items.length && items.length > 0;
+  const totalQty = sumQty(items);
+
+  // Styling based on level
+  let headerStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: level === 1 ? "12px 14px" : "10px 12px",
+    background: level === 1 ? C.card : level === 2 ? C.cardSub : "transparent",
+    borderBottom: level < 3 ? `1px solid ${C.border}` : "none",
+    cursor: "pointer",
+    userSelect: "none",
+  };
+
+  if (level === 1) {
+    headerStyle = {
+      ...headerStyle,
+      borderRadius: "14px",
+      border: `1.5px solid ${isAll ? C.accent : C.border}`,
+      boxShadow: "0 2px 12px rgba(0,0,0,0.02)",
+      marginBottom: "10px",
+    };
+  } else if (level === 2) {
+    headerStyle = {
+      ...headerStyle,
+      borderRadius: "10px",
+      border: `1px solid ${C.border}`,
+      marginTop: "8px",
+      marginBottom: "4px",
+    };
+  } else if (level === 3) {
+    headerStyle = {
+      ...headerStyle,
+      padding: "6px 8px 4px",
+      fontSize: "12px",
+      fontWeight: 800,
+      color: C.label,
+    };
+  } else {
+    headerStyle = {
+      ...headerStyle,
+      padding: "4px 8px",
+      fontSize: "11px",
+      color: C.label,
+    };
+  }
+
+  const avatar = level === 1 ? getAvatarColor(title) : null;
+  const avatarBg = avatar ? avatar.bg : "transparent";
+  const avatarText = avatar ? avatar.text : "transparent";
+
+  return (
+    <div style={{ marginBottom: level === 1 ? "14px" : "0" }}>
+      <div onClick={toggleExp} style={headerStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0 }}>
+          {level === 1 ? (
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: avatarBg, color: avatarText, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "12px", flexShrink: 0 }}>
+              {title.slice(0, 1)}
+            </div>
+          ) : null}
+          {icon ? <span style={{ flexShrink: 0, display: "inline-flex" }}>{icon}</span> : null}
+          <span style={{ fontWeight: level === 1 ? 800 : 700, fontSize: level === 1 ? "14px" : "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {title}
+          </span>
+          <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>
+            {totalQty}개
+          </span>
+          {checkedCount > 0 ? (
+            <span style={{ fontSize: "10px", fontWeight: 700, color: C.success, background: C.successSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>
+              {checkedCount}개 선택됨
+            </span>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }} onClick={(e) => e.stopPropagation()}>
+          <GroupCheckbox gKey={gKey} items={items} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
+          <button onClick={toggleExp} style={{ border: "none", background: "none", color: C.label, cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ChevronRight size={16} style={{ transform: isExp ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }} />
+          </button>
+        </div>
+      </div>
+      {isExp ? (
+        <div style={{ paddingLeft: level === 1 ? "12px" : level === 2 ? "10px" : "8px", borderLeft: level < 3 ? `1px dashed ${C.border}` : "none", marginLeft: level === 1 ? "16px" : level === 2 ? "12px" : "4px" }}>
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ReturnItemCard({
+  item,
+  selectedReturn,
+  setSelectedReturn,
+  toggleReturnKeys,
+  C,
+  keyOf,
+  setImageModalUrl,
+}: {
+  key?: string | number;
+  item: any;
+  selectedReturn: Record<string, boolean>;
+  setSelectedReturn: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  toggleReturnKeys: (items: any[], force: boolean) => void;
+  C: any;
+  keyOf: (it: any) => string;
+  setImageModalUrl: (url: string) => void;
+}) {
+  const k = keyOf(item);
+  const isSel = !!selectedReturn[k];
+
+  const handleToggle = () => {
+    setSelectedReturn((prev) => {
+      const next = { ...prev };
+      if (next[k]) {
+        delete next[k];
+      } else {
+        next[k] = true;
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div
+      onClick={handleToggle}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "10px",
+        padding: "10px 12px",
+        background: isSel ? C.accentSoft : C.card,
+        border: `1px solid ${isSel ? C.accent : C.border}`,
+        borderRadius: "10px",
+        cursor: "pointer",
+        marginTop: "4px",
+        userSelect: "none",
+        transition: "all 0.15s ease",
+      }}
+    >
+      <Thumb url={item.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {item.name}
+        </div>
+        <div style={{ display: "flex", gap: "6px", fontSize: "11px", color: C.label, marginTop: "2px", alignItems: "center" }}>
+          <span>{item.id}</span>
+          <span>•</span>
+          <span>{item.quantity || 1}개 대여</span>
+          {item.generalOption === "SID 추가 물품" ? (
+            <>
+              <span>•</span>
+              <span style={{ color: C.warn, fontWeight: 700 }}>추가</span>
+            </>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", gap: "4px", marginTop: "2px" }}>
+          <LocBadge slot={item.location} C={C} />
+        </div>
+      </div>
+      <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        <GroupCheckbox gKey={k} items={[item]} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
+      </div>
     </div>
   );
 }

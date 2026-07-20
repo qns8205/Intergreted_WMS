@@ -43,7 +43,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzudlerLV-FeVEOA5BU5LILcJgJLfQCMFJ6MSPqsztaedTQNu6SzOJvh8gVDV0u5yTu/exec";
+const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbweQRYbULpEEFjZuY_DT8QYY8uNb51M6oHAZIZaVbP37P2oVd8eoo-xY9WGNPLYQ2YR/exec";
 
 const DEMO_DEFECT_LOGS: DefectLog[] = [
   {
@@ -327,6 +327,7 @@ export default function App() {
     const saved = localStorage.getItem("wms_script_url");
     // 이 기기(특히 모바일)에 예전 배포 URL이 저장돼 있으면 최신 URL로 자동 교체.
     const LEGACY_SCRIPT_URLS = [
+      "https://script.google.com/macros/s/AKfycbzudlerLV-FeVEOA5BU5LILcJgJLfQCMFJ6MSPqsztaedTQNu6SzOJvh8gVDV0u5yTu/exec",
       "https://script.google.com/macros/s/AKfycbwc5YXabteLtTakGJqNo74AHD_AchtBw1bLlXEBiwmyk7CVdKsesrqSx8FZMOM1LrhuYQ/exec",
       "https://script.google.com/macros/s/AKfycby5Way2Bq9NEqxv96yDsKwgCmNw-MLh0ms0Z8XlTKEcjw4n0j4L_xPUEN42RNQDqQ686A/exec",
       "https://script.google.com/macros/s/AKfycbxt86U_xFleI59RbVu-7RMa-zQOgs2J-pLHZQ_acZkQoEdFo9tTOvNv4v9uSWMhZndFgA/exec",
