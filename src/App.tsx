@@ -1749,11 +1749,6 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
         @keyframes searchPulse { 0% { box-shadow: 0 0 0 0px rgba(37, 99, 235,0.4); } 100% { box-shadow: 0 0 0 14px rgba(37, 99, 235,0); } }
-        /* 흐름 단계 슬라이딩 전환 */
-        @keyframes slideInRight { from { opacity: 0.2; transform: translateX(80px); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes slideInLeft { from { opacity: 0.2; transform: translateX(-80px); } to { opacity: 1; transform: translateX(0); } }
-        .step-forward { animation: slideInRight 0.5s cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
-        .step-back { animation: slideInLeft 0.5s cubic-bezier(0.16, 1, 0.3, 1); will-change: transform, opacity; }
         .canvas-bg { user-select: none; }
       `}</style>
 
