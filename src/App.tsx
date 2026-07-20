@@ -43,7 +43,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxWI_byjRAxNQ0Li1EC6CwinNu336h-minlRqMS8Ll6Hl85pl_JCY_jgl67mRft2YXq/exec";
+const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzudlerLV-FeVEOA5BU5LILcJgJLfQCMFJ6MSPqsztaedTQNu6SzOJvh8gVDV0u5yTu/exec";
 
 const DEMO_DEFECT_LOGS: DefectLog[] = [
   {
@@ -330,6 +330,7 @@ export default function App() {
       "https://script.google.com/macros/s/AKfycbwc5YXabteLtTakGJqNo74AHD_AchtBw1bLlXEBiwmyk7CVdKsesrqSx8FZMOM1LrhuYQ/exec",
       "https://script.google.com/macros/s/AKfycby5Way2Bq9NEqxv96yDsKwgCmNw-MLh0ms0Z8XlTKEcjw4n0j4L_xPUEN42RNQDqQ686A/exec",
       "https://script.google.com/macros/s/AKfycbxt86U_xFleI59RbVu-7RMa-zQOgs2J-pLHZQ_acZkQoEdFo9tTOvNv4v9uSWMhZndFgA/exec",
+      "https://script.google.com/macros/s/AKfycbxWI_byjRAxNQ0Li1EC6CwinNu336h-minlRqMS8Ll6Hl85pl_JCY_jgl67mRft2YXq/exec",
     ];
     if (saved && LEGACY_SCRIPT_URLS.indexOf(saved.trim()) !== -1) {
       safeSetLocalStorage("wms_script_url", DEFAULT_SCRIPT_URL);

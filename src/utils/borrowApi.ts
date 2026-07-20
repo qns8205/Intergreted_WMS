@@ -34,6 +34,9 @@ export interface ScenarioDefinition {
   highLevelEn: string;
   highLevelKo: string;
   items: ScenarioItem[];
+  errorMessage?: string; // 진단용: 서버 처리 중 문제가 있었다면 이유가 담긴다.
+  rowsScanned?: number;  // 진단용: Scenario 시트에서 실제로 읽은 행 수
+  fetchError?: string;   // 프론트 전용: 네트워크/파싱 등 요청 자체가 실패했을 때의 이유
 }
 
 export interface UnreturnedItem {
