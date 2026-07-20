@@ -55,3 +55,77 @@ export interface Rack {
   color: string;
   shelves: string[];
 }
+
+export interface ScenarioObjectItem {
+  id: string;
+  name: string;
+  sector: string;
+  rootSlot: string;
+  category: string;
+  subcategory: string;
+  image: string;
+  stock: number;
+  rented: number;
+}
+
+export type Affiliation = "cfgw" | "configds" | "other";
+
+export interface CartItem {
+  id: string;
+  name: string;
+  quantity: number;
+}
+
+export interface ScenarioItem {
+  id: string;
+  name: string;
+  quantity: number;
+  rootSlot?: string;
+  category?: string;
+  subcategory?: string;
+  image?: string;
+  stock?: number;
+  rented?: number;
+}
+
+export interface ScenarioDefinition {
+  sid: string;
+  found: boolean;
+  syncNeeded: boolean;
+  blocked: boolean;
+  blockReason: string;
+  highLevelEn: string;
+  highLevelKo: string;
+  items: ScenarioItem[];
+  errorMessage?: string;
+  rowsScanned?: number;
+  fetchError?: string;
+}
+
+export interface SidCartEntry {
+  sid: string;
+  loading: boolean;
+  scenario: ScenarioDefinition | null;
+}
+
+export interface UnreturnedItem {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  borrowerName: string;
+  scenarioId?: string;
+  itemLabel: string;
+  itemKind?: string;
+  location: string;
+  quantity: number;
+  borrowDate: string;
+  submitGroupKey?: string;
+  submitDisplay?: string;
+  borrowPurpose: string;
+  email: string;
+  batchId: string;
+  generalOption?: string;
+  image: string;
+  stock: number;
+  rented: number;
+}
+

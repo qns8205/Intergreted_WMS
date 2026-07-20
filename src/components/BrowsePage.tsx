@@ -269,7 +269,13 @@ export default function BrowsePage({
         // 시트 기준으로 분리: SID대여 시트(scenario) vs 일반대여 시트(general)
         const scenarioOnly = (sc || []).filter((it: any) => it.sheetType === "scenario");
         const generalOnly = (sc || []).filter((it: any) => it.sheetType === "general");
-        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: wh });
+        // GAS 스크립트에서 전체 목록을 반환하는 경우를 대비해 클라이언트 사이드에서 한 번 더 필터링 보강
+        const filteredWh = (wh || []).filter((it: any) => {
+          const u = String(it.user || it.borrowerName || "").trim().toLowerCase();
+          const target = identName.trim().toLowerCase();
+          return u === target && u !== "";
+        });
+        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: filteredWh });
       } else {
         setMyResult({ scenario: [], general: [], warehouse: [] });
       }

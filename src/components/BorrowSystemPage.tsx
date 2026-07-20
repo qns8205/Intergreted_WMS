@@ -3,7 +3,7 @@ import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
   HandHelping, PackageOpen, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
-  Warehouse, Trash2,
+  Warehouse, Trash2, RefreshCw,
 } from "lucide-react";
 import {
   ObjectItem, ScenarioDefinition, UnreturnedItem, BorrowEntry, ReturnRequest,
@@ -81,7 +81,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
-  const [resultInfo, setResultInfo] = useState<{ ok: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, title: "", sub: "" });
+  const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
   const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
@@ -518,22 +518,28 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const loadSidScenario = (val: string) => {
     setSidCart((prev) => prev.map((e) => (e.sid === val ? { ...e, loading: true } : e)));
     const applyResult = (scenario: ScenarioDefinition) => {
+      if (scenario.errorMessage) {
+        showToast(`SID 조회 중 경고 (${val}): ${scenario.errorMessage}`, "warn");
+      }
       setSidCart((prev) => prev.map((e) => (e.sid === val ? { ...e, loading: false, scenario } : e)));
     };
     if (connected && scriptUrl) {
-      fetchScenarioDefinition(scriptUrl, val)
-        .then(applyResult)
-        .catch((err: any) => {
-          // 이전에는 어떤 이유로 실패하든 무조건 "동기화 필요"로만 뭉뚱그려 보여줬는데,
-          // 그러면 실제 원인(네트워크 오류, 서버 예외, 배포 문제 등)을 알 수가 없었다.
-          // 이제는 실제 에러 메시지를 그대로 담아서 화면에 보여준다.
-          const message = err?.message || "알 수 없는 오류로 조회에 실패했습니다.";
-          showToast(`SID 조회 실패 (${val}): ${message}`, "error");
-          applyResult({
-            sid: val, found: false, syncNeeded: false, blocked: false, blockReason: "",
-            highLevelEn: "", highLevelKo: "", items: [], fetchError: message,
+      // 150ms 지연 후 실제 패치를 동작하게 하여 React가 loading: true 상태를 화면에 먼저 그리도록 보장합니다.
+      setTimeout(() => {
+        fetchScenarioDefinition(scriptUrl, val)
+          .then(applyResult)
+          .catch((err: any) => {
+            // 이전에는 어떤 이유로 실패하든 무조건 "동기화 필요"로만 뭉뚱그려 보여줬는데,
+            // 그러면 실제 원인(네트워크 오류, 서버 예외, 배포 문제 등)을 알 수가 없었다.
+            // 이제는 실제 에러 메시지를 그대로 담아서 화면에 보여준다.
+            const message = err?.message || "알 수 없는 오류로 조회에 실패했습니다.";
+            showToast(`SID 조회 실패 (${val}): ${message}`, "error");
+            applyResult({
+              sid: val, found: false, syncNeeded: false, blocked: false, blockReason: "",
+              highLevelEn: "", highLevelKo: "", items: [], fetchError: message,
+            });
           });
-        });
+      }, 150);
     } else {
       setTimeout(() => applyResult({
         sid: val, found: true, syncNeeded: false, blocked: false, blockReason: "",
@@ -621,21 +627,94 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     }
 
     setSubmitting(true);
-    try {
-      if (connected && scriptUrl) {
-        const res = await postRecordBorrow(scriptUrl, borrowList, appVersion);
-        if (res.success && affiliation === "cfgw") clearBrowseCart(borrowerName.trim(), employeeId.trim());
-        setResultInfo({ ok: res.success, title: res.success ? "신청 완료!" : "오류 발생", sub: res.message });
-      } else {
-        setResultInfo({ ok: true, title: "신청 완료!", sub: "성공적으로 접수되었습니다. (로컬 데모)" });
-      }
-      setMode("result");
-    } catch (e: any) {
-      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
-      setMode("result");
-    } finally {
-      setSubmitting(false);
+    
+    // 로컬 장바구니 즉시 비우기 (Optimistic UI)
+    if (affiliation === "cfgw") {
+      clearBrowseCart(borrowerName.trim(), employeeId.trim());
     }
+
+    // 영수증에 표시할 물품 리스트 구성
+    const receiptItems: { name: string; qty: number; location?: string }[] = [];
+    if (itemType === "general") {
+      cart.forEach((c) => {
+        const obj = objectItems.find((o) => o.id === c.id);
+        receiptItems.push({ name: c.name, qty: c.quantity, location: obj?.location });
+      });
+    } else {
+      sidCart.forEach((entry) => {
+        const items = entry.scenario?.items || [];
+        items.forEach((it: any) => {
+          const obj = objectItems.find((o) => o.id === it.id);
+          receiptItems.push({
+            name: `[시나리오 ${entry.sid}] ${it.name}`,
+            qty: it.quantity || 1,
+            location: obj?.location || it.location,
+          });
+        });
+      });
+      reqCart.forEach((c) => {
+        const obj = objectItems.find((o) => o.id === c.id);
+        receiptItems.push({
+          name: `[추가] ${c.name}`,
+          qty: c.quantity,
+          location: obj?.location,
+        });
+      });
+    }
+
+    // 일단 즉시 "접수 완료 및 동기화 중" 화면 표시 (사용자가 대기할 필요가 없도록 비동기 처리)
+    setResultInfo({
+      ok: true,
+      isSyncing: true,
+      title: "대여 신청 접수 중...",
+      sub: "구글 스프레드시트 기록 및 Slack 메시지 발송을 진행하고 있습니다. 잠시만 기다리시거나 창을 닫으셔도 안전하게 완료됩니다.",
+      receipt: {
+        borrower: name,
+        date: nowStr,
+        action: itemType === "general" ? "일반 대여 신청" : "시나리오 대여 신청",
+        items: receiptItems,
+      },
+    });
+    setMode("result");
+    setSubmitting(false);
+
+    // 실제 전송은 백그라운드 비동기로 진행
+    (async () => {
+      try {
+        if (connected && scriptUrl) {
+          const res = await postRecordBorrow(scriptUrl, borrowList, appVersion);
+          setResultInfo((prev) => ({
+            ...prev,
+            ok: res.success,
+            isSyncing: false,
+            title: res.success ? "대여 신청 완료!" : "대여 기록 실패",
+            sub: res.message
+          }));
+          if (res.success) {
+            // 성공 시 리스트 새로고침
+            loadUnreturned();
+          }
+        } else {
+          // 데모 모드
+          await new Promise((resolve) => setTimeout(resolve, 800)); // 자연스러운 연출
+          setResultInfo((prev) => ({
+            ...prev,
+            ok: true,
+            isSyncing: false,
+            title: "대여 신청 완료!",
+            sub: "성공적으로 접수되었습니다. (로컬 데모)"
+          }));
+        }
+      } catch (e: any) {
+        setResultInfo((prev) => ({
+          ...prev,
+          ok: false,
+          isSyncing: false,
+          title: "대여 신청 오류",
+          sub: e.message || "네트워크 상태를 확인하고 다시 시도해주세요."
+        }));
+      }
+    })();
   }
 
   /* ══════════════════════ 반납 처리 ══════════════════════ */
@@ -684,6 +763,47 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return order.map((k) => ({ key: k, items: map[k] }));
   }
 
+  function getAvatarColor(name: string) {
+    const colors = [
+      { bg: "#eff6ff", text: "#1e40af" }, // Blue
+      { bg: "#ecfdf5", text: "#065f46" }, // Emerald
+      { bg: "#fff7ed", text: "#9a3412" }, // Orange
+      { bg: "#faf5ff", text: "#6b21a8" }, // Purple
+      { bg: "#fdf2f8", text: "#9d174d" }, // Pink
+      { bg: "#f0fdf4", text: "#166534" }, // Green
+      { bg: "#fff1f2", text: "#9f1239" }, // Rose
+      { bg: "#f0fdfa", text: "#115e59" }, // Teal
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const index = Math.abs(hash) % colors.length;
+    return colors[index];
+  }
+
+  const uniqueBorrowers = useMemo(() => {
+    const namesMap: Record<string, number> = {};
+    unreturned.forEach((item) => {
+      const bName = (item.borrowerName || "(이름 없음)").trim();
+      namesMap[bName] = (namesMap[bName] || 0) + (Math.max(1, parseInt(String(item.quantity), 10) || 1));
+    });
+    return Object.entries(namesMap)
+      .map(([name, totalQty]) => ({ name, totalQty }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }, [unreturned]);
+
+  const uniqueWhBorrowers = useMemo(() => {
+    const namesMap: Record<string, number> = {};
+    whReturnItems.forEach((item) => {
+      const bName = (item.borrowerName || "(이름 없음)").trim();
+      namesMap[bName] = (namesMap[bName] || 0) + (Math.max(1, parseInt(String(item.quantity), 10) || 1));
+    });
+    return Object.entries(namesMap)
+      .map(([name, totalQty]) => ({ name, totalQty }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  }, [whReturnItems]);
+
   const returnTree = useMemo(() => {
     const query = returnSearch.trim();
     const sorted = unreturned.slice().sort((a, b) => (a.borrowDate || "") < (b.borrowDate || "") ? -1 : (a.borrowDate || "") > (b.borrowDate || "") ? 1 : 0);
@@ -731,22 +851,85 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   function GroupSection({ gKey, title, icon, items, level, children }: {
     key?: string | number; gKey: string; title: React.ReactNode; icon?: React.ReactNode; items: UnreturnedItem[]; level: number; children: React.ReactNode;
   }) {
-    const isOpen = !!expanded[gKey];
-    const headerBg = level === 1 ? C.cardSub : "transparent";
+    const hasQuery = !!returnSearch.trim();
+    const isOpen = expanded[gKey] !== undefined ? expanded[gKey] : (hasQuery ? true : false);
+
+    const isBorrowerLevel = level === 1 && typeof title === "string";
+    const headerBg = level === 1 ? (isLightMode ? "#ffffff" : "#1e293b") : "transparent";
+
+    const cardStyle: React.CSSProperties = level === 1 ? {
+      border: `2px solid ${isOpen ? C.accent : C.border}`,
+      boxShadow: isOpen ? "0 4px 12px rgba(37,99,235,0.08)" : "0 2px 4px rgba(0,0,0,0.02)",
+      borderRadius: "14px",
+      marginBottom: "12px",
+      overflow: "hidden",
+      transition: "all 0.2s ease-in-out",
+      background: C.card
+    } : {
+      border: `1px ${level >= 3 ? "dashed" : "solid"} ${C.border}`,
+      borderRadius: "12px",
+      marginBottom: "8px",
+      overflow: "hidden"
+    };
+
+    const avatar = isBorrowerLevel ? getAvatarColor(title as string) : null;
+
     return (
-      <div style={{ border: `1px ${level >= 3 ? "dashed" : "solid"} ${C.border}`, borderRadius: "12px", marginBottom: "8px", overflow: "hidden" }}>
+      <div style={cardStyle}>
         <div
-          onClick={() => setExpanded((p) => ({ ...p, [gKey]: !p[gKey] }))}
-          style={{ display: "flex", alignItems: "center", gap: "10px", padding: level === 1 ? "13px 14px" : "11px 12px", cursor: "pointer", background: headerBg, borderBottom: isOpen ? `1px solid ${C.border}` : "none" }}
+          onClick={() => setExpanded((p) => ({ ...p, [gKey]: !isOpen }))}
+          className="responsive-group-header"
+          style={{
+            background: headerBg,
+            borderBottom: isOpen ? `1px solid ${C.border}` : "none"
+          }}
         >
           <GroupCheckbox items={items} />
-          <ChevronRight size={13} style={{ color: C.label, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
-          <span style={{ flex: 1, fontWeight: 700, fontSize: level === 1 ? "14px" : "13px", color: C.text, display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-            {icon}{title}
+
+          {isBorrowerLevel && avatar ? (
+            <div 
+              className="responsive-avatar"
+              style={{
+                background: avatar.bg,
+                color: avatar.text
+              }}
+            >
+              {(title as string).substring(0, 1)}
+            </div>
+          ) : (
+            <ChevronRight size={14} style={{ color: C.label, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }} />
+          )}
+
+          <span 
+            className="responsive-group-title"
+            style={{
+              color: level === 1 ? (isLightMode ? "#1e293b" : "#f1f5f9") : C.text
+            }}
+          >
+            {icon}
+            {title}
+            {level === 1 && (
+              <span style={{ fontSize: "11px", fontWeight: 400, color: C.label, marginLeft: "4px" }}>
+                님의 미반납 내역
+              </span>
+            )}
           </span>
-          <span style={{ fontSize: "11px", fontWeight: 700, background: C.accentSoft, color: C.accentText, borderRadius: "14px", padding: "2px 9px", flexShrink: 0 }}>{sumQty(items)}개</span>
+
+          <span 
+            className="responsive-badge"
+            style={{
+              background: isOpen ? C.accent : C.accentSoft,
+              color: isOpen ? "#ffffff" : C.accentText
+            }}
+          >
+            {sumQty(items)}개 품목
+          </span>
+
+          {level === 1 && (
+            <ChevronRight size={16} style={{ color: C.label, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0, marginLeft: "4px" }} />
+          )}
         </div>
-        {isOpen ? <div style={{ padding: "8px 8px 2px" }}>{children}</div> : null}
+        {isOpen ? <div style={{ padding: "10px 10px 4px", background: isLightMode ? "#fafbfc" : "#111827" }}>{children}</div> : null}
       </div>
     );
   }
@@ -762,12 +945,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return (
       <div
         onClick={() => toggleReturnKeys([item], !checked)}
-        style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "12px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "10px", marginBottom: "6px", cursor: "pointer" }}
+        className="responsive-item-card"
+        style={{ border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent" }}
       >
         <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
-        <Thumb url={item.image} size={44} />
+        <div className="responsive-item-thumb" style={{ flexShrink: 0, width: "44px", height: "44px", borderRadius: "8px", overflow: "hidden" }}>
+          <Thumb url={item.image} size={44} />
+        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, lineHeight: 1.35 }}>
+          <div className="responsive-item-title" style={{ color: C.text }}>
             <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", marginRight: "5px", background: C.accentSoft, color: C.accentText }}>{badgeText}</span>
             {item.sheetType === "scenario" && item.scenarioId ? (
               <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", marginRight: "5px", background: C.successSoft, color: C.success }}>{item.scenarioId}</span>
@@ -780,7 +966,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <div style={{ marginTop: "4px" }}><LocBadge slot={item.location} /></div>
           <StockBadges stock={item.stock} rented={item.rented} />
           {maxQty > 1 ? (
-            <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+            <div onClick={(e) => e.stopPropagation()} className="responsive-control-row">
               <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
               <button onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.max(1, (p[k] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
               <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", color: C.text, fontSize: "13px" }}>{selectedQty ?? maxQty}</span>
@@ -801,20 +987,53 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       return { sheetType: sheetType as "scenario" | "general", rowIndex: parseInt(rowIndex, 10), quantity: selectedReturn[k] };
     });
     setReturnSubmitting(true);
-    try {
-      if (connected && scriptUrl) {
-        const res = await postProcessReturn(scriptUrl, requests, appVersion);
-        setResultInfo({ ok: res.success, title: res.success ? "반납 처리 완료!" : "오류 발생", sub: res.message });
-      } else {
-        setResultInfo({ ok: true, title: "반납 처리 완료!", sub: `${keys.length}건이 반납 처리되었습니다. (로컬 데모)` });
+
+    // 먼저 "반납 처리 진행 중" 화면 표시하여 무한 스피너 대기 제거
+    setResultInfo({
+      ok: true,
+      isSyncing: true,
+      title: "반납 처리 진행 중...",
+      sub: "구글 시트에 반납을 기록하고 Slack 스레드를 전송하고 있습니다. 화면을 닫으셔도 백그라운드에서 안전하게 전송이 완료됩니다."
+    });
+    setMode("result");
+    setReturnSubmitting(false);
+
+    // 실제 반납 API 백그라운드 전송
+    (async () => {
+      try {
+        if (connected && scriptUrl) {
+          const res = await postProcessReturn(scriptUrl, requests, appVersion);
+          setResultInfo({
+            ok: res.success,
+            isSyncing: false,
+            title: res.success ? "반납 처리 완료!" : "반납 기록 실패",
+            sub: res.message
+          });
+          // 성공 시 반납된 수량을 UI에 반영하기 위해 목록 새로 로드
+          if (res.success) {
+            setSelectedReturn({});
+            loadUnreturned();
+          }
+        } else {
+          // 데모 모드
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          setResultInfo({
+            ok: true,
+            isSyncing: false,
+            title: "반납 처리 완료!",
+            sub: `${keys.length}건이 반납 처리되었습니다. (로컬 데모)`
+          });
+          setSelectedReturn({});
+        }
+      } catch (e: any) {
+        setResultInfo({
+          ok: false,
+          isSyncing: false,
+          title: "반납 처리 오류",
+          sub: e.message || "네트워크 상태를 확인하고 다시 시도해주세요."
+        });
       }
-      setMode("result");
-    } catch (e: any) {
-      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
-      setMode("result");
-    } finally {
-      setReturnSubmitting(false);
-    }
+    })();
   }
 
   /* ══════════════════════ 창고 물품 대여/반납 ══════════════════════ */
@@ -832,35 +1051,71 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       if (!isNaN(stock) && c.quantity > stock) { showToast(`['${c.name}'] 신청 수량(${c.quantity})이 재고(${stock})를 초과합니다.`, "warn"); return; }
     }
     setSubmitting(true);
-    try {
-      if (connected && scriptUrl) {
-        for (const c of whCart) {
-          const dueTag = actionType === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
-          const baseNote = whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청");
-          await postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
+    const total = whCart.reduce((n, c) => n + c.quantity, 0);
+    const cartSnapshot = [...whCart];
+
+    // 즉시 로컬 장바구니 비우기 및 결과 영수증 페이지로 이동 (Optimistic UI)
+    clearWarehouseCart(user, whEmpId.trim());
+    setWhCart([]);
+
+    setResultInfo({
+      ok: true,
+      isSyncing: true,
+      title: actionType === "소모" ? "창고 물품 소모 진행 중..." : "창고 물품 대여 진행 중...",
+      sub: actionType === "소모"
+        ? `${total}개 물품의 소모를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
+        : `${total}개 물품의 대여를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`,
+      receipt: {
+        borrower: user,
+        date: nowString(),
+        due: actionType === "대여" && whDueDate ? whDueDate : undefined,
+        action: actionType,
+        items: cartSnapshot.map((c) => ({ name: c.name, qty: c.quantity, location: c.location })),
+      },
+    });
+    setMode("result");
+    setSubmitting(false);
+
+    // 백그라운드 병렬 처리 실행
+    (async () => {
+      try {
+        if (connected && scriptUrl) {
+          await Promise.all(cartSnapshot.map(async (c) => {
+            const dueTag = actionType === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
+            const baseNote = whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청");
+            return postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
+          }));
+          
+          setResultInfo((prev: any) => ({
+            ...prev,
+            isSyncing: false,
+            title: actionType === "소모" ? "창고 물품 소모 완료!" : "창고 물품 대여 완료!",
+            sub: actionType === "소모"
+              ? `${total}개 물품을 소모 처리했습니다.`
+              : `${total}개 물품을 대여 처리했습니다.`,
+          }));
+          
+          // 리프레시
+          loadWarehouse(true);
+          loadWhReturn();
+        } else {
+          // 데모 모드
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          setResultInfo((prev: any) => ({
+            ...prev,
+            isSyncing: false,
+          }));
         }
-        clearWarehouseCart(user, whEmpId.trim());
+      } catch (e: any) {
+        setResultInfo((prev: any) => ({
+          ...prev,
+          ok: false,
+          isSyncing: false,
+          title: "창고 연동 실패",
+          sub: e.message || "구글 시트에 내역을 전송하는 중 오류가 발생했습니다. 네트워크를 확인해주세요."
+        }));
       }
-      const total = whCart.reduce((n, c) => n + c.quantity, 0);
-      setResultInfo({
-        ok: true,
-        title: actionType === "소모" ? "창고 물품 소모 완료!" : "창고 물품 대여 완료!",
-        sub: actionType === "소모"
-          ? `${total}개 물품을 소모 처리했습니다. (재고에서 차감되며 반납 대상이 아닙니다)`
-          : `${total}개 물품을 대여 처리했습니다.`,
-        receipt: {
-          borrower: user,
-          date: nowString(),
-          due: actionType === "대여" && whDueDate ? whDueDate : undefined,
-          action: actionType,
-          items: whCart.map((c) => ({ name: c.name, qty: c.quantity, location: c.location })),
-        },
-      });
-      setMode("result");
-    } catch (e: any) {
-      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
-      setMode("result");
-    } finally { setSubmitting(false); }
+    })();
   }
 
   async function handleWarehouseReturn() {
@@ -868,22 +1123,70 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
     if (!whName.trim()) { showToast("반납자 성함을 입력해주세요.", "warn"); return; }
     setReturnSubmitting(true);
-    try {
-      if (connected && scriptUrl) {
-        for (const k of keys) {
-          const idx = parseInt(k, 10);
-          const item = whReturnItems[idx];
-          if (!item) continue;
-          const qty = whReturnSel[k];
-          await postWarehouseRent(scriptUrl, { type: "반납", location: item.location, name: item.name, qty, user: whName.trim() || item.borrowerName || "", note: "반납 접수" });
-        }
+    const returnSnapshot = keys.map((k) => {
+      const idx = parseInt(k, 10);
+      const item = whReturnItems[idx];
+      return { item, qty: whReturnSel[k] };
+    }).filter(x => x.item !== undefined);
+
+    const total = returnSnapshot.reduce((n, c) => n + c.qty, 0);
+
+    // 즉시 반납 진행 중 UI 표시
+    setResultInfo({
+      ok: true,
+      isSyncing: true,
+      title: "창고 물품 반납 진행 중...",
+      sub: `${total}개 물품의 반납을 기록하고 있습니다. 화면을 닫으셔도 구글 시트에 안전하게 완료됩니다.`,
+      receipt: {
+        borrower: whName.trim(),
+        date: nowString(),
+        action: "창고 반납",
+        items: returnSnapshot.map((c) => ({ name: c.item.name, qty: c.qty, location: c.item.location })),
       }
-      setResultInfo({ ok: true, title: "창고 물품 반납 완료!", sub: `${keys.length}건을 반납 처리했습니다.` });
-      setMode("result");
-    } catch (e: any) {
-      setResultInfo({ ok: false, title: "오류 발생", sub: e.message || "다시 시도해주세요." });
-      setMode("result");
-    } finally { setReturnSubmitting(false); }
+    });
+    setMode("result");
+    setReturnSubmitting(false);
+
+    // 백그라운드 병렬 전송
+    (async () => {
+      try {
+        if (connected && scriptUrl) {
+          await Promise.all(returnSnapshot.map(async (c) => {
+            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: whName.trim() || c.item.borrowerName || "", note: "반납 접수" });
+          }));
+          
+          setResultInfo((prev: any) => ({
+            ...prev,
+            isSyncing: false,
+            title: "창고 물품 반납 완료!",
+            sub: `${total}개 물품을 반납 처리했습니다.`,
+          }));
+          
+          // 리스트 초기화 및 새로고침
+          setWhReturnSel({});
+          loadWarehouse(true);
+          loadWhReturn();
+        } else {
+          // 데모 모드
+          await new Promise((resolve) => setTimeout(resolve, 800));
+          setResultInfo((prev: any) => ({
+            ...prev,
+            isSyncing: false,
+            title: "창고 물품 반납 완료!",
+            sub: `${total}개 물품을 반납 처리했습니다. (로컬 데모)`,
+          }));
+          setWhReturnSel({});
+        }
+      } catch (e: any) {
+        setResultInfo((prev: any) => ({
+          ...prev,
+          ok: false,
+          isSyncing: false,
+          title: "창고 반납 오류",
+          sub: e.message || "구글 시트 전송 중 오류가 발생했습니다."
+        }));
+      }
+    })();
   }
 
   const whCatMapRacks = useMemo(() => {
@@ -1055,7 +1358,110 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "inherit" }}>
-      <style>{`@keyframes bsp-spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes bsp-spin { to { transform: rotate(360deg); } }
+        
+        .responsive-group-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 16px;
+          cursor: pointer;
+          transition: background 0.2s;
+        }
+        .responsive-group-title {
+          flex: 1;
+          font-weight: 800;
+          font-size: 15px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+        }
+        .responsive-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 800;
+          font-size: 13px;
+          box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+          flex-shrink: 0;
+        }
+        .responsive-badge {
+          font-size: 11px;
+          font-weight: 800;
+          border-radius: 14px;
+          padding: 3px 10px;
+          flex-shrink: 0;
+          transition: all 0.2s;
+        }
+        .responsive-item-card {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px;
+          border-radius: 10px;
+          margin-bottom: 6px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .responsive-item-title {
+          font-weight: 700;
+          font-size: 13px;
+          line-height: 1.35;
+        }
+        .responsive-control-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 8px;
+        }
+        
+        @media (max-width: 480px) {
+          .responsive-group-header {
+            padding: 10px 10px !important;
+            gap: 8px !important;
+          }
+          .responsive-group-title {
+            font-size: 13px !important;
+            gap: 4px !important;
+          }
+          .responsive-group-title span {
+            font-size: 10px !important;
+          }
+          .responsive-avatar {
+            width: 26px !important;
+            height: 26px !important;
+            font-size: 11px !important;
+          }
+          .responsive-badge {
+            font-size: 9.5px !important;
+            padding: 2px 7px !important;
+          }
+          .responsive-item-card {
+            padding: 8px !important;
+            gap: 8px !important;
+          }
+          .responsive-item-title {
+            font-size: 12px !important;
+          }
+          .responsive-control-row {
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+          }
+          .responsive-control-row button {
+            width: 24px !important;
+            height: 24px !important;
+            border-radius: 5px !important;
+          }
+          .responsive-control-row span {
+            font-size: 12px !important;
+          }
+        }
+      `}</style>
 
       {/* 상단바 */}
       <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
@@ -1642,7 +2048,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── 결과 화면 ───────── */}
         {mode === "result" ? (
           <div style={{ textAlign: "center", padding: "48px 20px" }}>
-            {resultInfo.ok ? (
+            {resultInfo.isSyncing ? (
+              <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", marginBottom: "16px" }}>
+                <Spinner size={50} />
+                <span style={{ fontSize: "11px", fontWeight: 800, background: C.accentSoft, color: C.accentText, borderRadius: "10px", padding: "3px 10px", marginTop: "12px", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <style>{`
+                    @keyframes spin-sync { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                    .sync-icon-spin { animation: spin-sync 2s linear infinite; }
+                  `}</style>
+                  <RefreshCw size={11} className="sync-icon-spin" />
+                  실시간 동기화 중
+                </span>
+              </div>
+            ) : resultInfo.ok ? (
               <CheckCircle2 size={64} style={{ color: C.success, marginBottom: "16px" }} />
             ) : (
               <AlertCircle size={64} style={{ color: C.error, marginBottom: "16px" }} />

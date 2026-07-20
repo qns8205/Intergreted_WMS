@@ -150,8 +150,12 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
   try {
     res = await fetch(url, { signal: controller.signal });
   } catch (e: any) {
-    if (e?.name === "AbortError") throw new Error("서버 응답이 지연되어 요청을 취소했습니다. 네트워크 상태를 확인하고 다시 시도해주세요.");
-    throw new Error(e?.message || "네트워크 오류가 발생했습니다.");
+    if (e?.name === "AbortError") throw new Error(`서버 응답이 지연되어 요청을 취소했습니다. (액션: ${action}, 네트워크 상태를 확인하고 다시 시도해주세요.)`);
+    let errMsg = e?.message || "서버와 연결할 수 없습니다.";
+    if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
+      errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
+    }
+    throw new Error(`[네트워크 오류] ${errMsg} (요청 URL: ${url.substring(0, 80)}...)`);
   } finally {
     clearTimeout(timer);
   }
@@ -160,7 +164,16 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error("서버가 올바르지 않은 응답을 반환했습니다. 웹앱 배포 상태를 확인하세요.");
+    const trimmedText = text.trim();
+    if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
+      throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. Apps Script에서 '배포 > 새 배포 > 웹앱'으로 배포하여 생성된 '.../exec'로 끝나는 배포 URL을 입력해주세요.");
+    }
+    if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
+      throw new Error("Apps Script 웹앱의 액세스 권한 설정 오류입니다. Apps Script 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 로그인이 불필요합니다.");
+    }
+    // HTML 형식의 서버 에러(런타임 에러) 메시지가 있는 경우 첫 150글자를 추출하여 노출시킵니다.
+    const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
+    throw new Error(`서버가 올바르지 않은 응답(HTML)을 반환했습니다. Apps Script 코드 오류 또는 권한 문제일 수 있습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
   }
   if (!data.success) {
     // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
@@ -168,23 +181,42 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
       const shown = normalizeScriptUrl(scriptUrl);
       throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
     }
-    throw new Error(data.error || "요청 실패");
+    throw new Error(data.error || `요청 실패 (액션: ${action})`);
   }
   return data;
 }
 
 async function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
-  const res = await fetch(normalizeScriptUrl(scriptUrl), {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify({ action, payload }),
-  });
+  const cleanUrl = normalizeScriptUrl(scriptUrl);
+  let res: Response;
+  try {
+    res = await fetch(cleanUrl, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ action, payload }),
+    });
+  } catch (e: any) {
+    let errMsg = e?.message || "서버와 연결 불가";
+    if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
+      errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
+    }
+    throw new Error(`[네트워크 오류] POST 요청 실패: ${errMsg}`);
+  }
   const text = await res.text();
   try {
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    return data;
   } catch {
-    throw new Error("서버가 올바르지 않은 응답을 반환했습니다. 웹앱 배포 상태를 확인하세요.");
+    const trimmedText = text.trim();
+    if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
+      throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. '배포 > 새 배포'를 통해 생성된 웹앱 URL을 입력해주세요.");
+    }
+    if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
+      throw new Error("Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 합니다.");
+    }
+    const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
+    throw new Error(`서버가 올바르지 않은 POST 응답(HTML)을 반환했습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
   }
 }
 
@@ -199,7 +231,7 @@ export async function fetchObjectItems(scriptUrl: string): Promise<ObjectItem[]>
 }
 
 export async function fetchScenarioDefinition(scriptUrl: string, sid: string): Promise<ScenarioDefinition> {
-  const data = await apiGet(scriptUrl, "getScenarioDefinition", { sid });
+  const data = await apiGet(scriptUrl, "getScenarioDefinition", { scenarioId: sid });
   return (data.scenario || { sid, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }) as ScenarioDefinition;
 }
 
