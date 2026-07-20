@@ -1585,7 +1585,7 @@ function padSlot_(raw) {
   return s.length < 6 ? s.padStart(6, "0") : s;
 }
 
-function normalizeSid_(sid) { return String(sid || "").trim().toUpperCase(); }
+function normalizeSid_(sid) { return String(sid || "").trim().toUpperCase().replace(/\s+/g, ""); }
 
 // ─────────────────────────────────────────────
 // Scenario 시트 upsert (구 SID별 필요물품 대체)
@@ -1909,6 +1909,8 @@ function readScenarioIndex_() {
     index.sids[sid] = true;
     var parts = parseSidParts_(sid);
     if (!parts) return;
+    // 앞자리 0 유무가 다른 표기(예: "S120"과 "S0120")도 같은 SID로 인식되도록 정규화 키를 함께 등록한다.
+    index.sids[parts.prefix + parts.num] = true;
     if (parts.num > index.maxNum) { index.maxNum = parts.num; index.maxSid = sid; }
   });
   return index;
@@ -1917,8 +1919,9 @@ function readScenarioIndex_() {
 function evaluateSidUsable_(sid, index) {
   var target = normalizeSid_(sid);
   var res = { blocked: false, reason: "" };
-  if (!target || index.sids[target]) return res;
   var parts = parseSidParts_(target);
+  var normalizedKey = parts ? (parts.prefix + parts.num) : target;
+  if (!target || index.sids[target] || index.sids[normalizedKey]) return res;
   if (!parts) return res;
   if (index.maxNum === undefined || index.maxNum < 0) return res;
   if (parts.num <= index.maxNum) {
@@ -1937,11 +1940,15 @@ function getScenarioDefinition(sid) {
   if (!sheet || sheet.getLastRow() < 2) return empty;
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 6).getValues();
   var maxNum = -1, maxSid = "";
+  // 앞자리 0 표기 차이(예: "S120" vs "S0120")로 인한 불일치를 막기 위해
+  // 문자열 완전일치가 아니라 접두문자+숫자값이 같은지로 비교한다.
+  var targetParts = parseSidParts_(target);
   data.forEach(function (row) {
     var rowSid = normalizeSid_(row[0]);
     var rp = parseSidParts_(rowSid);
     if (rp && rp.num > maxNum) { maxNum = rp.num; maxSid = rowSid; }
-    if (rowSid !== target) return;
+    var isMatch = rowSid === target || (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num);
+    if (!isMatch) return;
     empty.found = true;
     empty.syncNeeded = false;
     empty.highLevelEn = empty.highLevelEn || String(row[1] || "").trim();
