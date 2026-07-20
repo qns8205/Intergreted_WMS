@@ -1,1088 +1,316 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
-import { InventoryItem, RentLog } from "../types";
-import { ArrowLeft, Search, Check, ChevronDown, Package, User, Calendar, FileText, Image as ImageIcon } from "lucide-react";
-import { formatTimestampLocal, getGoogleDriveImageUrl, isFuzzyMatch } from "../utils/drive";
+import React, { useState } from "react";
+// @ts-ignore
+import scriptCode from "../../AppsScript_Code.gs?raw";
 
-interface RentalPageProps {
-  inventory: InventoryItem[];
-  onAddRentLog: (log: RentLog) => Promise<void>;
-  onBack: () => void;
-  isLightMode: boolean;
-  showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
+
+interface SetupModalProps {
+  scriptUrl: string;
+  setScriptUrl: (url: string) => void;
+  connecting: boolean;
+  connectError: string;
   connected: boolean;
-  lastSync: Date | null;
-  onOpenSetup: () => void;
+  onConnect: () => void;
+  onClose: () => void;
+  onDisconnect: () => void;
 }
 
-export default function RentalPage({
-  inventory,
-  onAddRentLog,
-  onBack,
-  isLightMode,
-  showToast,
+const PANEL = "var(--panel-bg, #1e293b)";
+const PANEL_BORDER = "var(--panel-border, #334155)";
+const TEXT_MAIN = "var(--text-main, #f1f5f9)";
+const TEXT_DIM = "var(--text-dim, #94a3b8)";
+const ACCENT = "#2563eb";
+const DANGER = "#f43f5e";
+const OK = "#10b981";
+
+export default function SetupModal({
+  scriptUrl,
+  setScriptUrl,
+  connecting,
+  connectError,
   connected,
-  lastSync,
-  onOpenSetup,
-}: RentalPageProps) {
-  // 상태 선언
-  const [rentUser, setRentUser] = useState("");
-  const [actionType, setActionType] = useState<"대여" | "반납" | "소모">("대여");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
-  const [rentQty, setRentQty] = useState(1);
-  const [noteInput, setNoteInput] = useState("");
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  onConnect,
+  onClose,
+  onDisconnect,
+}: SetupModalProps) {
+  const [copied, setCopied] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
 
-  // 리스트에 없는 임시 물품 추가 모드 상태
-  const [isCustomMode, setIsCustomMode] = useState(false);
-  const [customName, setCustomName] = useState("");
-  const [customLocation, setCustomLocation] = useState("기타");
-
-  // Cart for multiple items
-  const [cart, setCart] = useState<{
-    id: string;
-    item: InventoryItem;
-    qty: number;
-    type: "대여" | "반납";
-    note: string;
-  }[]>([]);
-
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // 드롭다운 외부 클릭 감지하여 닫기
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsDropdownOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
-
-  // 검색 쿼리에 따라 물품 필터링
-  const filteredItems = useMemo(() => {
-    if (!searchQuery.trim()) return inventory;
-    return inventory.filter(
-      (item) =>
-        isFuzzyMatch(item.name || "", searchQuery) ||
-        isFuzzyMatch(item.location || "", searchQuery) ||
-        (item.spec && isFuzzyMatch(item.spec, searchQuery))
-    );
-  }, [inventory, searchQuery]);
-
-  // 아이템 선택 시 기본 대여량 조절
-  const handleSelectItem = (item: InventoryItem) => {
-    setSelectedItem(item);
-    setRentQty(1);
-    setNoteInput("");
-    setIsDropdownOpen(false);
-  };
-
-  // 장바구니에 품목 임시 추가
-  const handleAddToCart = () => {
-    if (isCustomMode) {
-      if (!customName.trim()) {
-        showToast("물품 이름을 입력해 주세요.", "warn");
-        return;
-      }
-      if (rentQty <= 0) {
-        showToast("수량은 1개 이상이어야 합니다.", "warn");
-        return;
-      }
-
-      const customItem: InventoryItem = {
-        rowIndex: -1,
-        location: customLocation.trim() || "기타",
-        photo: "",
-        name: customName.trim(),
-        link: "N/A",
-        stock: "N/A",
-        updatedAt: "",
-        manager: "",
-        note: "리스트 외 임시 품목",
-        spec: "",
-      };
-
-      const newCartItem = {
-        id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
-        item: customItem,
-        qty: rentQty,
-        type: actionType,
-        note: noteInput.trim() || `${actionType} 신청 (리스트 외 품목)`,
-      };
-
-      setCart((prev) => [...prev, newCartItem]);
-      showToast(`${customItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
-
-      // 자재 입력 영역 리셋
-      setCustomName("");
-      setCustomLocation("기타");
-      setRentQty(1);
-      setNoteInput("");
-      return;
-    }
-
-    let activeItem = selectedItem;
-    let isTempItem = false;
-
-    if (!activeItem && searchQuery.trim()) {
-      // 드롭다운에 없는 것을 직접 입력한 경우, 임시 품목으로 자동 처리
-      activeItem = {
-        rowIndex: -1,
-        location: "기타",
-        photo: "",
-        name: searchQuery.trim(),
-        link: "N/A",
-        stock: "N/A",
-        updatedAt: "",
-        manager: "",
-        note: "리스트 외 임시 품목",
-        spec: "",
-      };
-      isTempItem = true;
-    }
-
-    if (!activeItem) {
-      showToast("대여 또는 반납할 품목을 선택하거나 검색창에 직접 입력해 주세요.", "warn");
-      return;
-    }
-    if (rentQty <= 0) {
-      showToast("수량은 1개 이상이어야 합니다.", "warn");
-      return;
-    }
-
-    // 대여 또는 소모일 때 재고 검증 (재고 수량이 숫자일 때만 수행)
-    if ((actionType === "대여" || actionType === "소모") && typeof activeItem.stock === "number") {
-      const currentStock = activeItem.stock ?? 0;
-      if (currentStock <= 0) {
-        showToast("선택한 물품의 현재고가 부족하여 대여/소모할 수 없습니다.", "error");
-        return;
-      }
-      
-      // 장바구니에 담긴 동일 품목의 대여/소모 수량 합산
-      const alreadyInCartQty = cart
-        .filter((c) => c.item.name === activeItem!.name && (c.type === "대여" || c.type === "소모"))
-        .reduce((acc, c) => acc + c.qty, 0);
-
-      if ((rentQty + alreadyInCartQty) > currentStock) {
-        showToast(`현재고(${currentStock}개)를 초과하여 신청 장바구니에 담을 수 없습니다. (현재 장바구니: ${alreadyInCartQty}개)`, "warn");
-        return;
-      }
-    }
-
-    const newCartItem = {
-      id: Date.now().toString() + Math.random().toString(36).substring(2, 5),
-      item: activeItem,
-      qty: rentQty,
-      type: actionType,
-      note: noteInput.trim() || `${actionType} 신청${isTempItem ? " (리스트 외 임시 품목)" : ""}`,
-    };
-
-    setCart((prev) => [...prev, newCartItem]);
-    showToast(`${activeItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
-
-    // 자재 입력 영역만 리셋 (담당자는 유지)
-    setSelectedItem(null);
-    setRentQty(1);
-    setNoteInput("");
-    setSearchQuery("");
-  };
-
-  // 장바구니에서 특정 행 삭제
-  const handleRemoveFromCart = (id: string) => {
-    setCart((prev) => prev.filter((item) => item.id !== id));
-    showToast("신청 목록에서 제외했습니다.", "info");
-  };
-
-  // 대여/반납 신청서 일괄 제출 처리
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!rentUser.trim()) {
-      const roleName = actionType === "대여" ? "대여자" : actionType === "반납" ? "반납자" : "소모자";
-      showToast(`${roleName} 이름을 입력해 주세요.`, "warn");
-      return;
-    }
-    if (cart.length === 0) {
-      showToast("신청 목록에 품목을 1개 이상 추가해 주세요.", "warn");
-      return;
-    }
-
-    setSubmitting(true);
+  const handleCopyShareLink = () => {
+    if (!scriptUrl) return;
     try {
-      const now = new Date();
-      // 순차적으로 등록
-      for (let i = 0; i < cart.length; i++) {
-        const cartItem = cart[i];
-        
-        // 시간 중복으로 인한 스프레드시트 덮어쓰기 등을 막기 위해 미세 조정한 로컬 타임스탬프 구성
-        const baseTime = new Date(now.getTime() + i * 1000);
-        const pad = (n: number) => String(n).padStart(2, "0");
-        const customTsStr = `${baseTime.getFullYear()}-${pad(baseTime.getMonth() + 1)}-${pad(baseTime.getDate())} ${pad(baseTime.getHours())}:${pad(baseTime.getMinutes())}:${pad(baseTime.getSeconds())}`;
-
-        const log: RentLog = {
-          timestamp: customTsStr,
-          location: cartItem.item.location,
-          name: cartItem.item.name,
-          type: cartItem.type,
-          qty: cartItem.qty,
-          user: rentUser.trim(),
-          note: cartItem.note,
-        };
-        await onAddRentLog(log);
-      }
-
-      // 초기화
-      setCart([]);
-      setRentUser("");
-      showToast(`총 ${cart.length}건의 대여/반납 신청서가 성공적으로 일괄 접수되었습니다!`, "ok");
-    } catch (err: any) {
-      showToast("신청 처리에 실패했습니다: " + err.message, "error");
-    } finally {
-      setSubmitting(false);
+      const currentOrigin = window.location.origin + window.location.pathname;
+      const shareLink = `${currentOrigin}?script_url=${encodeURIComponent(scriptUrl.trim())}`;
+      navigator.clipboard.writeText(shareLink);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch (e) {
+      console.error("Failed to copy link:", e);
     }
+  };
+
+  // scriptCode is now imported dynamically from '../../AppsScript_Code.gs' at build time to prevent code drift and redundancy.
+
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(scriptCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div
       style={{
-        minHeight: "100vh",
-        background: isLightMode ? "#f8fafc" : "#0b0f19",
-        color: isLightMode ? "#0f172a" : "#f1f5f9",
-        padding: "40px 20px",
-        fontFamily: "var(--font-sans, system-ui, sans-serif)",
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,10,11,0.7)",
         display: "flex",
-        flexDirection: "column",
         alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        backdropFilter: "blur(2px)",
+      }}
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
       }}
     >
-      {/* 뒤로가기 버튼 */}
-      <div style={{ maxWidth: "1000px", width: "100%", marginBottom: "24px", display: "flex", justifyContent: "flex-start" }}>
-        <button
-          onClick={onBack}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            background: isLightMode ? "#ffffff" : "#1e293b",
-            border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-            color: isLightMode ? "#2563eb" : "#94a3b8",
-            fontSize: "13px",
-            fontWeight: 700,
-            cursor: "pointer",
-            padding: "10px 16px",
-            borderRadius: "12px",
-            boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
-            transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = "translateX(-2px)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = "translateX(0)";
-          }}
-        >
-          <ArrowLeft size={16} />
-          처음 화면으로
-        </button>
-      </div>
-
-      {/* 실시간 연동 상태 바 */}
       <div
         style={{
-          maxWidth: "1000px",
-          width: "100%",
-          background: connected ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.08)",
-          border: connected ? "1px solid rgba(16, 185, 129, 0.25)" : "1px solid rgba(245, 158, 11, 0.25)",
-          borderRadius: "14px",
-          padding: "12px 20px",
-          marginBottom: "24px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "12px",
+          width: 560,
+          maxWidth: "92vw",
+          maxHeight: "86vh",
+          overflowY: "auto",
+          background: PANEL,
+          border: `1px solid ${PANEL_BORDER}`,
+          borderRadius: 12,
+          padding: 24,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <span
-            style={{
-              width: "10px",
-              height: "10px",
-              borderRadius: "50%",
-              background: connected ? "#10b981" : "#f59e0b",
-              boxShadow: connected ? "0 0 10px #10b981" : "0 0 10px #f59e0b",
-              display: "inline-block",
-            }}
-          />
-          <div style={{ fontSize: "13px" }}>
-            <span style={{ fontWeight: 700, color: connected ? (isLightMode ? "#047857" : "#34d399") : (isLightMode ? "#b45309" : "#fbbf24"), marginRight: "8px" }}>
-              {connected ? "구글 시트 실시간 연동 활성화" : "데모 가상 모드 작동 중"}
-            </span>
-            <span style={{ color: isLightMode ? "#2563eb" : "#94a3b8", fontSize: "12px" }}>
-              {connected 
-                ? `(10초 주기 실시간 자동 동기화 중 | 최근 동기화: ${lastSync ? lastSync.toLocaleTimeString() : "진행 중..."})`
-                : "(스프레드시트 미연동 상태로, 기록이 파일에 보존되지 않습니다)"}
-            </span>
-          </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>구글 스프레드시트 실시간 연동 설정</div>
+          <button
+            onClick={onClose}
+            style={{ background: "transparent", border: "none", color: TEXT_DIM, fontSize: 18, cursor: "pointer" }}
+          >
+            ✕
+          </button>
         </div>
-        <button
-          onClick={onOpenSetup}
-          style={{
-            background: connected ? "rgba(37, 99, 235, 0.15)" : "#f59e0b",
-            color: connected ? "#2563eb" : "#ffffff",
-            border: "none",
-            borderRadius: "8px",
-            padding: "6px 14px",
-            fontSize: "12px",
-            fontWeight: 700,
-            cursor: "pointer",
-            transition: "all 0.2s",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-1px)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
-        >
-          {connected ? "연동 설정 확인" : "구글 시트 연동 설정하기"}
-        </button>
-      </div>
 
-      <div
-        style={{
-          maxWidth: "1000px",
-          width: "100%",
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-          gap: "32px",
-        }}
-      >
-        {/* 왼쪽: 대여/반납 신청 폼 */}
-        <div
-          style={{
-            background: isLightMode ? "#ffffff" : "#151d30",
-            border: `1px solid ${isLightMode ? "#e2e8f0" : "#222f4b"}`,
-            borderRadius: "24px",
-            padding: "32px",
-            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)",
-          }}
-        >
-          <h2 style={{ fontSize: "20px", fontWeight: 800, color: isLightMode ? "#0f172a" : "#f1f5f9", marginBottom: "8px" }}>
-            📋 대여 및 반납 신청서
-          </h2>
-          <p style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "24px" }}>
-            필요한 자재의 대여 또는 반납을 신청하면 실시간으로 재고가 정산됩니다.
-          </p>
+        <div style={{ fontSize: 13, color: TEXT_DIM, lineHeight: 1.7, marginBottom: 16 }}>
+          Google Apps Script 웹앱 URL을 입력하여 스프레드시트의 재고 목록을 실시간으로 관리할 수 있습니다. 
+          아래 단계를 따라서 스크립트를 최초 1회 설치 및 배포해 주세요.
+        </div>
 
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-            
-            {/* 대여 / 반납 / 소모 토글 */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
-                구분
-              </label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", background: isLightMode ? "#f1f5f9" : "#0f172a", padding: "4px", borderRadius: "10px" }}>
-                <button
-                  type="button"
-                  onClick={() => setActionType("대여")}
-                  style={{
-                    padding: "8px",
-                    borderRadius: "8px",
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                    background: actionType === "대여" ? "#334155" : "transparent",
-                    color: actionType === "대여" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
-                    transition: "all 0.2s",
-                  }}
-                >
-                  📥 자재 대여
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActionType("반납")}
-                  style={{
-                    padding: "8px",
-                    borderRadius: "8px",
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                    background: actionType === "반납" ? "#10b981" : "transparent",
-                    color: actionType === "반납" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
-                    transition: "all 0.2s",
-                  }}
-                >
-                  🔄 자재 반납
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActionType("소모")}
-                  style={{
-                    padding: "8px",
-                    borderRadius: "8px",
-                    fontSize: "13px",
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                    background: actionType === "소모" ? "#f59e0b" : "transparent",
-                    color: actionType === "소모" ? "#ffffff" : (isLightMode ? "#2563eb" : "#94a3b8"),
-                    transition: "all 0.2s",
-                  }}
-                >
-                  🔥 자재 소모
-                </button>
-              </div>
-            </div>
-
-            {/* 대여자 / 반납자 / 소모자 이름 */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
-                {actionType === "대여" ? "대여자" : actionType === "반납" ? "반납자" : "소모자"} <span style={{ color: "#ef4444" }}>*</span>
-              </label>
-              <div style={{ position: "relative" }}>
-                <User size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: isLightMode ? "#94a3b8" : "#64748b" }} />
-                <input
-                  type="text"
-                  placeholder="예: 홍길동"
-                  value={rentUser}
-                  onChange={(e) => setRentUser(e.target.value)}
-                  style={{
-                    width: "100%",
-                    background: isLightMode ? "#f8fafc" : "#0f172a",
-                    border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    borderRadius: "10px",
-                    padding: "10px 12px 10px 38px",
-                    color: isLightMode ? "#0f172a" : "#f1f5f9",
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* 대여 품목 선택 드롭다운 및 검색창 */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
-                  품목 검색 및 선택 <span style={{ color: "#ef4444" }}>*</span>
-                </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCustomMode(!isCustomMode);
-                    setSelectedItem(null);
-                  }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "#5b6472",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    textDecoration: "underline",
-                    padding: 0,
-                  }}
-                >
-                  {isCustomMode ? "🔍 기존 리스트에서 선택" : "✏️ 리스트에 없는 새 물건 입력"}
-                </button>
-              </div>
-              
-              {isCustomMode ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: "10px", background: isLightMode ? "rgba(37, 99, 235, 0.03)" : "rgba(37, 99, 235, 0.05)", padding: "14px", borderRadius: "12px", border: `1px dashed ${isLightMode ? "#cbd5e1" : "#334155"}` }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>임시 품목명</span>
-                    <input
-                      type="text"
-                      placeholder="예: 특수 고정용 고무 밴드"
-                      value={customName}
-                      onChange={(e) => setCustomName(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: isLightMode ? "#ffffff" : "#0f172a",
-                        border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                        borderRadius: "8px",
-                        padding: "8px 12px",
-                        color: isLightMode ? "#0f172a" : "#f1f5f9",
-                        fontSize: "13px",
-                        outline: "none",
-                      }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <span style={{ fontSize: "10px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>보관 위치</span>
-                    <input
-                      type="text"
-                      placeholder="예: 기타, N/A, A-1-1"
-                      value={customLocation}
-                      onChange={(e) => setCustomLocation(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: isLightMode ? "#ffffff" : "#0f172a",
-                        border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                        borderRadius: "8px",
-                        padding: "8px 12px",
-                        color: isLightMode ? "#0f172a" : "#f1f5f9",
-                        fontSize: "13px",
-                        outline: "none",
-                      }}
-                    />
-                  </div>
-                  <p style={{ fontSize: "10.5px", color: isLightMode ? "#64748b" : "#94a3b8", lineHeight: "1.4", margin: 0 }}>
-                    ⚠️ 입력하신 물품명과 위치는 <strong>일회성 로그</strong>에만 기록되며, 메인 창고 자재 마스터 목록에는 저장되지 않습니다.
-                  </p>
-                </div>
-              ) : (
-                <div ref={dropdownRef} style={{ position: "relative" }}>
-                {/* 검색 필드 */}
-                <div style={{ position: "relative", marginBottom: "4px" }}>
-                  <Search size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: isLightMode ? "#94a3b8" : "#64748b" }} />
-                  <input
-                    type="text"
-                    placeholder="품목 이름, 규격 또는 위치 검색..."
-                    value={searchQuery}
-                    onChange={(e) => {
-                      setSearchQuery(e.target.value);
-                      setIsDropdownOpen(true);
-                    }}
-                    onFocus={() => setIsDropdownOpen(true)}
-                    style={{
-                      width: "100%",
-                      background: isLightMode ? "#f8fafc" : "#0f172a",
-                      border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                      borderRadius: "10px",
-                      padding: "10px 12px 10px 38px",
-                      color: isLightMode ? "#0f172a" : "#f1f5f9",
-                      fontSize: "13px",
-                      outline: "none",
-                    }}
-                  />
-                </div>
-
-                {/* 선택된 품목 트리거 버튼 (드롭다운 열기/닫기) */}
-                <button
-                  type="button"
-                  onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                  style={{
-                    width: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: isLightMode ? "#f8fafc" : "#0f172a",
-                    border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    borderRadius: "10px",
-                    padding: "12px",
-                    color: selectedItem ? (isLightMode ? "#0f172a" : "#f1f5f9") : (isLightMode ? "#94a3b8" : "#64748b"),
-                    fontSize: "13px",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  {selectedItem ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      {selectedItem.photo ? (
-                        <img
-                          src={getGoogleDriveImageUrl(selectedItem.photo)}
-                          alt={selectedItem.name}
-                          referrerPolicy="no-referrer"
-                          style={{
-                            width: "30px",
-                            height: "30px",
-                            borderRadius: "6px",
-                            objectFit: "cover",
-                            border: "1px solid rgba(0,0,0,0.1)",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          style={{
-                            width: "30px",
-                            height: "30px",
-                            borderRadius: "6px",
-                            background: "rgba(37, 99, 235,0.1)",
-                            color: "#5b6472",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                          }}
-                        >
-                          <Package size={16} />
-                        </div>
-                      )}
-                      <div>
-                        <div style={{ fontWeight: 700 }}>{selectedItem.name}</div>
-                        <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                          위치: {selectedItem.location} | 재고: {selectedItem.stock === "N/A" || selectedItem.stock === null ? "N/A" : `${selectedItem.stock}개`}
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <span>--- 대여할 품목을 선택해 주세요 ---</span>
-                  )}
-                  <ChevronDown size={16} style={{ color: isLightMode ? "#64748b" : "#94a3b8" }} />
-                </button>
-
-                {/* 커스텀 이미지 드롭다운 메뉴 */}
-                {isDropdownOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "100%",
-                      left: 0,
-                      right: 0,
-                      background: isLightMode ? "#ffffff" : "#1e293b",
-                      border: `1px solid ${isLightMode ? "#cbd5e1" : "#334155"}`,
-                      borderRadius: "12px",
-                      marginTop: "6px",
-                      maxHeight: "260px",
-                      overflowY: "auto",
-                      zIndex: 1000,
-                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.2)",
-                    }}
-                  >
-                    {searchQuery.trim() !== "" && (
-                      <div
-                        onClick={() => {
-                          const tempItem: InventoryItem = {
-                            rowIndex: -1,
-                            location: "기타",
-                            photo: "",
-                            name: searchQuery.trim(),
-                            link: "N/A",
-                            stock: "N/A",
-                            updatedAt: "",
-                            manager: "",
-                            note: "리스트 외 임시 품목",
-                            spec: "",
-                          };
-                          handleSelectItem(tempItem);
-                        }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "12px",
-                          padding: "10px 12px",
-                          borderBottom: `1px solid ${isLightMode ? "#cbd5e1" : "#334155"}`,
-                          cursor: "pointer",
-                          background: isLightMode ? "rgba(37, 99, 235, 0.05)" : "rgba(37, 99, 235, 0.12)",
-                          color: "#5b6472",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: "36px",
-                            height: "36px",
-                            borderRadius: "8px",
-                            background: "rgba(37, 99, 235, 0.15)",
-                            color: "#5b6472",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "14px"
-                          }}
-                        >
-                          ➕
-                        </div>
-                        <div style={{ textAlign: "left" }}>
-                          <div style={{ fontSize: "13px", fontWeight: 700 }}>
-                            "{searchQuery.trim()}" (새 임시 물품으로 직접 대여/반납 신청)
-                          </div>
-                          <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                            목록에 없으므로 임시 지정하여 대여/반납 목록에 추가합니다.
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {filteredItems.length === 0 ? (
-                      searchQuery.trim() === "" ? (
-                        <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                          일치하는 자재 품목이 없습니다.
-                        </div>
-                      ) : null
-                    ) : (
-                      filteredItems.map((item) => {
-                        const isSelected = selectedItem?.rowIndex === item.rowIndex;
-                        return (
-                          <div
-                            key={item.rowIndex}
-                            onClick={() => handleSelectItem(item)}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              padding: "10px 12px",
-                              borderBottom: `1px solid ${isLightMode ? "#f1f5f9" : "#222f4b"}`,
-                              cursor: "pointer",
-                              background: isSelected
-                                ? "rgba(37, 99, 235,0.08)"
-                                : "transparent",
-                              transition: "background 0.2s",
-                            }}
-                            onMouseEnter={(e) => {
-                              if (!isSelected) e.currentTarget.style.background = isLightMode ? "#f8fafc" : "#273549";
-                            }}
-                            onMouseLeave={(e) => {
-                              if (!isSelected) e.currentTarget.style.background = "transparent";
-                            }}
-                          >
-                            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                              {item.photo ? (
-                                <img
-                                  src={getGoogleDriveImageUrl(item.photo)}
-                                  alt={item.name}
-                                  referrerPolicy="no-referrer"
-                                  style={{
-                                    width: "36px",
-                                    height: "36px",
-                                    borderRadius: "8px",
-                                    objectFit: "cover",
-                                    border: "1px solid rgba(0,0,0,0.1)",
-                                  }}
-                                />
-                              ) : (
-                                <div
-                                  style={{
-                                    width: "36px",
-                                    height: "36px",
-                                    borderRadius: "8px",
-                                    background: "rgba(37, 99, 235,0.08)",
-                                    color: "#5b6472",
-                                    display: "flex",
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                  }}
-                                >
-                                  <Package size={18} />
-                                </div>
-                              )}
-                              <div style={{ textAlign: "left" }}>
-                                <div style={{ fontSize: "13px", fontWeight: 700, color: isLightMode ? "#1e293b" : "#f1f5f9" }}>{item.name}</div>
-                                <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                                  위치: <span style={{ color: "#5b6472", fontWeight: 600 }}>{item.location}</span> | 재고: <span style={{ color: "#10b981", fontWeight: 600 }}>{item.stock ?? 0}개</span>
-                                </div>
-                              </div>
-                            </div>
-                            {isSelected && <Check size={16} style={{ color: "#5b6472" }} />}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-              </div>
-              )}
-            </div>
-
-            {/* 수량 입력 */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={{ fontSize: "11px", fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>
-                대여/반납 수량 <span style={{ color: "#ef4444" }}>*</span>
-              </label>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <button
-                  type="button"
-                  onClick={() => setRentQty((prev) => Math.max(1, prev - 1))}
-                  style={{
-                    padding: "10px",
-                    borderRadius: "10px",
-                    background: isLightMode ? "#f1f5f9" : "#0f172a",
-                    border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    color: isLightMode ? "#2563eb" : "#f1f5f9",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    fontWeight: "bold",
-                    width: "40px",
-                  }}
-                >
-                  -
-                </button>
-                <input
-                  type="number"
-                  min={1}
-                  value={rentQty}
-                  onChange={(e) => setRentQty(Math.max(1, parseInt(e.target.value) || 1))}
-                  style={{
-                    flex: 1,
-                    textAlign: "center",
-                    background: isLightMode ? "#f8fafc" : "#0f172a",
-                    border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    borderRadius: "10px",
-                    padding: "10px 12px",
-                    color: isLightMode ? "#0f172a" : "#f1f5f9",
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if ((actionType === "대여" || actionType === "소모") && selectedItem && rentQty >= (selectedItem.stock ?? 0)) {
-                      showToast("재고를 초과할 수 없습니다.", "warn");
-                      return;
-                    }
-                    setRentQty((prev) => prev + 1);
-                  }}
-                  style={{
-                    padding: "10px",
-                    borderRadius: "10px",
-                    background: isLightMode ? "#f1f5f9" : "#0f172a",
-                    border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                    color: isLightMode ? "#2563eb" : "#f1f5f9",
-                    cursor: "pointer",
-                    fontSize: "14px",
-                    fontWeight: "bold",
-                    width: "40px",
-                  }}
-                >
-                  +
-                </button>
-              </div>
-              {(actionType === "대여" || actionType === "소모") && selectedItem && (selectedItem.stock ?? 0) < rentQty && (
-                <span style={{ fontSize: "11px", color: "#ef4444", marginTop: "2px" }}>
-                  ⚠️ 현재고({selectedItem.stock ?? 0}개)를 초과했습니다. 대여/소모 신청을 완료할 수 없습니다.
-                </span>
-              )}
-            </div>
-
-            {/* 특이사항 / 대여 용도 */}
-            {/* 장바구니 담기 버튼 */}
+        <div style={{ marginBottom: 16, background: "var(--input-bg, #0f172a)", padding: 12, borderRadius: 8, border: `1px solid ${PANEL_BORDER}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: OK }}>Apps Script 복사하기</span>
             <button
-              type="button"
-              onClick={handleAddToCart}
-              disabled={submitting}
+              onClick={handleCopy}
               style={{
-                width: "100%",
-                background: actionType === "대여" ? "#334155" : actionType === "소모" ? "#f59e0b" : "#10b981",
+                background: copied ? OK : ACCENT,
                 color: "#ffffff",
                 border: "none",
-                borderRadius: "12px",
-                padding: "12px",
-                fontSize: "14px",
+                borderRadius: 4,
+                padding: "4px 10px",
+                fontSize: 11.5,
                 fontWeight: 700,
                 cursor: "pointer",
-                transition: "all 0.2s",
-                boxShadow: `0 4px 14px ${actionType === "대여" ? "rgba(37, 99, 235, 0.3)" : actionType === "소모" ? "rgba(245, 158, 11, 0.3)" : "rgba(16, 185, 129, 0.3)"}`,
-                opacity: submitting ? 0.5 : 1,
-                marginTop: "10px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "6px"
               }}
             >
-              <Check size={16} />
-              신청 목록에 담기
+              {copied ? "✓ 복사 완료!" : "코드 복사하기"}
             </button>
-          </form>
+          </div>
+          <p style={{ fontSize: 11.5, color: TEXT_DIM, margin: 0, lineHeight: 1.5 }}>
+            이 코드에는 <b>Column H (특이사항)</b> 매핑, 구글 드라이브 사진 연동 지원, 그리고 <b>'불량로그' 사진 등록(7번째 열) 및 자동 생성, 실시간 양방향 동기화 기능</b>이 완벽하게 반영되어 있습니다. <span style={{ color: OK, fontWeight: "bold" }}>(이미 연동 중이신 분들은 아래의 코드를 다시 복사하여 확장 프로그램 → Apps Script에 붙여넣으신 후, [배포] → [새 배포(또는 새 버전)]로 반드시 업데이트하셔야 사진이 유실되지 않고 정상 저장됩니다!)</span>
+          </p>
         </div>
 
-        {/* 오른쪽: 신청 목록 장바구니 (Cart) 및 최종 제출 */}
-        <div
+        <details style={{ marginBottom: 16 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12.5, color: ACCENT, fontWeight: 600, marginBottom: 8 }}>
+            설치 가이드 (상세설명 펼치기)
+          </summary>
+          <ol style={{ fontSize: 12.5, color: TEXT_DIM, lineHeight: 1.9, paddingLeft: 18, marginTop: 10 }}>
+            <li>
+              구글 시트 접속 후 상단 메뉴의 <b>확장 프로그램 (Extensions) → Apps Script</b>를 선택합니다.
+            </li>
+            <li>
+              위의 <b>[코드 복사하기]</b> 버튼을 눌러 복사한 스크립트를 전체 붙여넣기합니다.
+            </li>
+            <li>
+              <span style={{ color: OK, fontWeight: "bold" }}>[업데이트 완료 - 시트명 자동 감지]</span> 이제 스크립트 상단의 <span className="mono" style={{ color: TEXT_MAIN }}>INVENTORY_SHEET_NAME</span>(시트명)을 수동으로 고칠 필요가 없습니다! 스크립트가 스프레드시트 내 "관리시트", "시트1", "Sheet1" 또는 "재고", "인벤토리" 단어가 들어간 탭을 자동으로 찾아 연동합니다.
+            </li>
+            <li>
+              <b>[구글 드라이브 권한(DriveApp) 승인 팝업 띄우기 (필수)]</b>: 에디터 화면 상단 툴바의 함수 선택 창(기본값: doGet)에서 <b style={{ color: OK }}>testDrivePermission</b>을 선택한 뒤, 바로 왼쪽의 <b style={{ color: OK }}>실행(Run)</b> 단추를 누릅니다.
+            </li>
+            <li>
+              화면에 <b>'권한 승인 필요(Authorization Required)'</b> 팝업창이 나타납니다. <b>[권한 검토]</b> → 계정 선택 → <b>[고급(Advanced)]</b> → <b>[Untitled project(으)로 이동]</b> → <b>[허용(Allow)]</b>을 순서대로 진행하여 권한을 꼭 승인해 주세요. (이 과정을 거쳐야 사진이 구글 드라이브에 정상 저장됩니다!)
+            </li>
+            <li>
+              권한 허용 완료 후, 우측 상단의 <b>배포 (Deploy) → 새 배포 (New Deployment)</b>를 누릅니다. (이미 기존 배포가 있다면, <b>배포 관리 → 수정(연필) → 버전 선택에서 '새 버전' 선택</b>으로 교체하여 배포하셔도 됩니다.)
+            </li>
+            <li>
+              유형 선택 톱니바퀴에서 <b>웹 앱 (Web App)</b>을 고르고, 실행 사용자는 <b>나 (Me)</b>, 액세스할 수 있는 사람은 <b>모든 사람 (Anyone)</b>으로 지정해 배포를 누릅니다.
+            </li>
+            <li>
+              생성된 <b>웹 앱 URL</b>을 아래 입력란에 넣고 연동을 시작합니다.
+            </li>
+          </ol>
+        </details>
+
+        <div style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.3)", color: "#34d399", borderRadius: "8px", padding: "12px 14px", fontSize: "11.5px", marginBottom: "16px", lineHeight: "1.6" }}>
+          🚀 <b>[업데이트 완료: 구글 드라이브(DriveApp) 원본 화질 자동 저장 지원!]</b><br />
+          불량로그 등록 시 사진을 선택하거나 드래그앤드롭하면, 무손실 원본 화질의 이미지가 구글 드라이브의 전용 폴더에 안전하게 업로드되어 스프레드시트에 고정 주소로 연동됩니다.<br />
+          사내 보안 정책 등으로 인해 전체 공개 링크 생성이 제한되는 기업 계정 환경에서도 도메인 내 공유(setSharing) 권한을 자동으로 시도 및 처리하도록 완벽히 설계되어 안심하고 사용하실 수 있습니다!
+        </div>
+
+        <label style={{ fontSize: 12, color: TEXT_DIM, display: "block", marginBottom: 6 }}>
+          Apps Script 웹앱 URL (웹 앱 주소)
+        </label>
+        <input
+          value={scriptUrl}
+          onChange={(e) => setScriptUrl(e.target.value)}
+          placeholder="https://script.google.com/macros/s/AKfycb.../exec"
           style={{
-            background: isLightMode ? "#ffffff" : "#151d30",
-            border: `1px solid ${isLightMode ? "#e2e8f0" : "#222f4b"}`,
-            borderRadius: "24px",
-            padding: "32px",
-            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)",
-            display: "flex",
-            flexDirection: "column",
-            gap: "24px",
+            width: "100%",
+            marginBottom: 8,
+            background: "var(--input-bg, #0f172a)",
+            border: `1px solid ${PANEL_BORDER}`,
+            color: "var(--text-main, #f1f5f9)",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            fontSize: "13px"
           }}
-        >
-          {/* 장바구니 영역 */}
-          <div>
-            <h2 style={{ fontSize: "20px", fontWeight: 800, color: isLightMode ? "#0f172a" : "#f1f5f9", marginBottom: "8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>🛒 대여/반납 신청 대기 목록</span>
-              {cart.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setCart([])}
-                  style={{
-                    background: "transparent",
-                    color: "#ef4444",
-                    border: "none",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    cursor: "pointer"
-                  }}
-                >
-                  비우기
-                </button>
-              )}
-            </h2>
-            <p style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "16px" }}>
-              왼쪽에서 품목을 입력해 담은 후, 아래 제출 버튼을 클릭해 최종 접수하세요.
-            </p>
-
-            {cart.length === 0 ? (
-              <div
-                style={{
-                  border: `2px dashed ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                  borderRadius: "16px",
-                  padding: "40px 20px",
-                  textAlign: "center",
-                  color: isLightMode ? "#94a3b8" : "#2563eb",
-                  fontSize: "13px",
-                }}
-              >
-                <Package size={36} style={{ margin: "0 auto 8px", opacity: 0.5 }} />
-                신청 대기 목록이 비어 있습니다.
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", maxHeight: "240px", overflowY: "auto", paddingRight: "4px" }}>
-                {cart.map((c) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      background: isLightMode ? "#f8fafc" : "#0f172a",
-                      border: `1px solid ${isLightMode ? "#e2e8f0" : "#222f4b"}`,
-                      borderRadius: "14px",
-                      padding: "12px 16px",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: "14px", fontWeight: 800, color: isLightMode ? "#1e293b" : "#f1f5f9" }}>
-                        {c.item.name}
-                      </div>
-                      <div style={{ display: "flex", gap: "10px", fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8", marginTop: "4px" }}>
-                        <span
-                          style={{
-                            fontWeight: 800,
-                            color: c.type === "대여" ? "#334155" : c.type === "소모" ? "#f59e0b" : "#10b981",
-                          }}
-                        >
-                          [{c.type}]
-                        </span>
-                        <span>{c.qty}개</span>
-                        <span>위치: {c.item.location}</span>
-                      </div>
-                      {c.note && (
-                        <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#64748b", marginTop: "2px", fontStyle: "italic" }}>
-                          사유: {c.note}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveFromCart(c.id)}
-                      style={{
-                        background: "rgba(239, 68, 68, 0.1)",
-                        color: "#ef4444",
-                        border: "none",
-                        width: "28px",
-                        height: "28px",
-                        borderRadius: "8px",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: "bold",
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+        />
+        {scriptUrl.includes("docs.google.com") && (
+          <div style={{ background: "rgba(244, 63, 94, 0.12)", border: `1px solid ${DANGER}`, color: "#fca5a5", borderRadius: "6px", padding: "10px", fontSize: "12px", marginBottom: "12px", lineHeight: "1.5" }}>
+            ⚠️ <b>입력하신 주소는 구글 스프레드시트 자체의 웹 브라우저 주소입니다.</b>
+            <br />
+            연동을 위해서는 스프레드시트 자체가 아닌, 스프레드시트 내 <b>[확장 프로그램] → [Apps Script]</b>에서 복사한 코드를 넣고 <b>[배포]</b>하여 발급받은 <b>웹 앱 URL(https://script.google.com/macros/s/.../exec)</b>을 입력해 주세요. (위의 설치 가이드를 클릭해 상세 설명을 확인하세요!)
           </div>
-
-          {/* 최종 제출 폼 */}
-          <form onSubmit={handleSubmit} style={{ marginTop: "auto", borderTop: `1px solid ${isLightMode ? "#e2e8f0" : "#222f4b"}`, paddingTop: "24px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", fontSize: "14px" }}>
-              <span style={{ fontWeight: 700, color: isLightMode ? "#2563eb" : "#94a3b8" }}>총 대기 품목</span>
-              <span style={{ fontWeight: 800, color: "#334155" }}>{cart.length}개 건</span>
+        )}
+        {connectError && (
+          <div style={{ marginTop: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: DANGER, marginBottom: 10, whiteSpace: "pre-line", background: "rgba(239, 68, 68, 0.08)", padding: 12, borderRadius: 6, border: "1px solid rgba(239, 68, 68, 0.3)" }}>
+              ❌ {connectError}
             </div>
-
-            <button
-              type="submit"
-              disabled={submitting || cart.length === 0}
-              style={{
-                width: "100%",
-                background: "#334155",
-                color: "#ffffff",
-                border: "none",
-                borderRadius: "14px",
-                padding: "14px",
-                fontSize: "15px",
-                fontWeight: 800,
-                cursor: (submitting || cart.length === 0) ? "not-allowed" : "pointer",
-                boxShadow: "0 10px 15px -3px rgba(37, 99, 235, 0.3)",
-                opacity: (submitting || cart.length === 0) ? 0.5 : 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px"
-              }}
-            >
-              {submitting ? "구글 시트 전송 중..." : `대여/반납 신청서 일괄 제출하기 (총 ${cart.length}건)`}
-            </button>
-          </form>
-
-          <div style={{ height: "1px", background: isLightMode ? "#e2e8f0" : "#222f4b" }} />
-
-          {/* 선택한 품목 상세 요약 (간략히 제공) */}
-          {selectedItem ? (
-            <div
-              style={{
-                background: isLightMode ? "#f8fafc" : "#0f172a",
-                border: `1px solid ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
-                borderRadius: "16px",
-                padding: "16px",
-                display: "flex",
-                gap: "12px",
-                alignItems: "center"
-              }}
-            >
-              {selectedItem.photo ? (
-                <img
-                  src={getGoogleDriveImageUrl(selectedItem.photo)}
-                  alt={selectedItem.name}
-                  referrerPolicy="no-referrer"
-                  style={{
-                    width: "50px",
-                    height: "50px",
-                    borderRadius: "8px",
-                    objectFit: "cover",
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: "50px",
-                    height: "50px",
-                    borderRadius: "8px",
-                    background: isLightMode ? "#e2e8f0" : "#1e293b",
-                    color: isLightMode ? "#64748b" : "#94a3b8",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center"
-                  }}
-                >
-                  <Package size={20} />
+            
+            <details style={{ background: "rgba(30, 41, 59, 0.7)", border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, padding: 12 }} open>
+              <summary style={{ cursor: "pointer", fontSize: 12.5, color: ACCENT, fontWeight: 700, outline: "none" }}>
+                🔍 연동 실패 시 5가지 체크리스트 (자가 진단 및 해결 가이드)
+              </summary>
+              <div style={{ marginTop: 10, fontSize: 12, color: TEXT_DIM, lineHeight: "1.7", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <b style={{ color: "#f1f5f9" }}>① 웹앱 URL 형식 확인 (가장 흔한 실수!)</b>
+                  <br />
+                  복사하신 주소 끝이 반드시 <code style={{ color: OK, background: "#0f172a", padding: "1px 4px", borderRadius: 3 }}>/exec</code>로 끝나야 합니다. 만약 주소 끝이 <code style={{ color: DANGER, background: "#0f172a", padding: "1px 4px", borderRadius: 3 }}>/dev</code>로 끝난다면 그것은 임시 테스트용 주소이므로 본인 외에는 접속이 차단되어 CORS 오류가 발생합니다. <b style={{ color: OK }}>[배포] → [새 배포]</b>를 눌러 새 웹앱 주소를 발급받으세요.
                 </div>
-              )}
-              <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
-                <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedItem.name}</div>
-                <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                  위치: {selectedItem.location} | 현재고: {selectedItem.stock ?? 0}개
+                
+                <div>
+                  <b style={{ color: "#f1f5f9" }}>② 회사 / 학교 (Google Workspace) 계정의 특수 보안 정책 우회법</b>
+                  <br />
+                  단체/기업용 구글 계정은 보안 정책 상 외부 서비스 연동이 사전에 전면 차단되어 있을 수 있습니다.
+                  <br />
+                  <span style={{ color: OK, fontWeight: "bold" }}>💡 초간단 해결책:</span> 개인 구글 계정(<code style={{ color: OK }}>@gmail.com</code>)으로 새 구글 시트를 만들어 거기서 Apps Script를 배포하세요. 배포 완료 후 해당 스프레드시트를 본인의 <b>회사/학교 계정으로 공유(편집자 권한)</b>하시면, 사내 업무 계정에서 완벽하게 모니터링 및 실시간 동시 관리가 가능합니다!
+                </div>
+                
+                <div>
+                  <b style={{ color: "#f1f5f9" }}>③ 액세스할 수 있는 사람 '모든 사람(Anyone)' 지정 누락</b>
+                  <br />
+                  Apps Script 웹앱 배포 설정창에서 <b style={{ color: "#f1f5f9" }}>'액세스할 수 있는 사람(Who has access)'</b> 항목을 <b style={{ color: OK }}>'모든 사람(Anyone)'</b>으로 변경하셨는지 확인하세요. '나(Only myself)'나 '조직원(Anyone within organization)'으로 되어 있으면 외부 브라우저 통신이 모두 차단됩니다.
+                </div>
+                
+                <div>
+                  <b style={{ color: "#f1f5f9" }}>④ 구글 드라이브(사진 업로드용) 권한 승인 누락</b>
+                  <br />
+                  Apps Script 에디터 화면 상단의 실행 버튼 왼쪽 드롭다운에서 <b style={{ color: OK }}>testDrivePermission</b>을 선택하고 <b style={{ color: OK }}>실행(Run)</b>을 꼭 1회 이상 수동으로 눌러 팝업에서 <b>[고급] → [이동] → [허용]</b> 단계까지 모두 통과해주셔야 데이터 업로드가 작동합니다.
+                </div>
+                
+                <div>
+                  <b style={{ color: "#f1f5f9" }}>⑤ 스크립트 수정 후 '새 버전' 배포 업데이트 누락</b>
+                  <br />
+                  Apps Script 에디터에서 코드를 붙여넣고 저장한 뒤에 <b>[배포 관리] → [수정] → 버전을 반드시 '새 버전(New Version)'으로 선택 및 배포</b>하거나 <b>[새 배포]</b>를 다시 생성해주셔야 구글 서버에 변경된 코드가 최종 반영됩니다. 그냥 저장(디스크 아이콘)만 누르면 반영되지 않습니다.
                 </div>
               </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#2563eb", textAlign: "center" }}>
-              품목을 선택하면 해당 자재 정보의 요약이 여기에 표출됩니다.
-            </div>
+            </details>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          <button
+            onClick={onConnect}
+            disabled={connecting}
+            style={{
+              flex: 1,
+              background: OK,
+              border: `1px solid ${OK}`,
+              color: "#020617",
+              borderRadius: 7,
+              padding: "11px 0",
+              fontSize: 13.5,
+              fontWeight: 600,
+              opacity: connecting ? 0.7 : 1,
+              cursor: "pointer",
+            }}
+          >
+            {connecting ? "연동 확인 중..." : connected ? "다시 연동하기" : "연동하기"}
+          </button>
+          {connected && (
+            <button
+              onClick={onDisconnect}
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: `1px solid ${PANEL_BORDER}`,
+                color: TEXT_DIM,
+                borderRadius: 7,
+                padding: "11px 0",
+                fontSize: 13.5,
+                cursor: "pointer",
+              }}
+            >
+              연동 해제 (로컬 모드)
+            </button>
           )}
         </div>
+
+        {connected && scriptUrl && (
+          <div style={{ marginTop: 20, background: "rgba(37, 99, 235, 0.08)", padding: 14, borderRadius: 10, border: "1px dashed rgba(37, 99, 235, 0.45)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}>
+                  👥 타인/동료 기기 동기화 링크
+                </div>
+                <div style={{ fontSize: 11.5, color: TEXT_DIM, marginTop: 4, lineHeight: 1.5 }}>
+                  다른 사용자가 설정 변경 없이 내 구글 스프레드시트와 실시간 연동된 화면을 보게 하려면 아래 링크를 전달하세요!
+                </div>
+              </div>
+              <button
+                onClick={handleCopyShareLink}
+                style={{
+                  background: shareCopied ? OK : ACCENT,
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "8px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  transition: "background 0.2s ease",
+                  boxShadow: "0 2px 4px rgba(0, 0, 0, 0.15)",
+                }}
+              >
+                {shareCopied ? "✓ 링크 복사 완료" : "공유 링크 복사"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!connected && (
+          <div style={{ fontSize: 11.5, color: TEXT_DIM, marginTop: 14, lineHeight: 1.6, textAlign: "center" }}>
+            연동을 하지 않고도 우측 상단의 ✕ 를 눌러 데모 데이터로 가상 테스트를 진행할 수 있습니다.
+          </div>
+        )}
       </div>
     </div>
   );
