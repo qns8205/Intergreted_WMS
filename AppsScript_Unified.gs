@@ -100,6 +100,18 @@ function doGet(e) {
     }
     
     if (action === "getAll") {
+      // 성능 최적화: 짧은 시간(4초) 내 반복 요청은 캐시된 응답을 그대로 반환한다.
+      // (여러 화면이 동시에 마운트되며 getAll을 중복 호출하는 경우, 매번 시트 전체를
+      //  다시 읽지 않고 캐시를 재사용해 체감 속도를 크게 높인다. 새로고침/재접속 시에는
+      //  캐시 만료 후 최신 데이터를 다시 읽으므로 데이터 정확성에 지장이 없다.)
+      try {
+        var cache = CacheService.getScriptCache();
+        var cached = cache.get("getAll_cache_v2");
+        if (cached) {
+          return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+        }
+      } catch (cacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
+
       const inventory = getInventoryData(sheet);
       const sectors = getSectorLayout();
       const users = getUsersData(ss);
@@ -111,7 +123,7 @@ function doGet(e) {
       } catch (err) {
         // '로봇 오브젝트' 시트가 없거나 오류 시 빈 배열
       }
-      return responseJSON({
+      var getAllPayload = JSON.stringify({
         success: true,
         inventory: inventory,
         sectors: sectors,
@@ -120,6 +132,10 @@ function doGet(e) {
         rentLogs: rentLogs,
         robotObjects: robotObjects
       });
+      try {
+        CacheService.getScriptCache().put("getAll_cache_v2", getAllPayload, 4);
+      } catch (cachePutErr) { /* 캐시 저장 실패해도 응답은 정상 반환 */ }
+      return ContentService.createTextOutput(getAllPayload).setMimeType(ContentService.MimeType.JSON);
     }
     
     // ─────────────── 대여 시스템(구 BorrowForm) GET 액션 ───────────────
@@ -170,10 +186,14 @@ function doPost(e) {
 
     // ─────────────── 대여 시스템(구 BorrowForm) POST 액션 ───────────────
     if (action === "recordBorrow") {
-      return responseJSON(recordBorrow(payload.borrowList, payload.clientVersion));
+      const recordBorrowResult = recordBorrow(payload.borrowList, payload.clientVersion);
+      invalidateGetAllCache_();
+      return responseJSON(recordBorrowResult);
     }
     if (action === "processReturn") {
-      return responseJSON(processReturn(payload.returnRequests, payload.clientVersion));
+      const processReturnResult = processReturn(payload.returnRequests, payload.clientVersion);
+      invalidateGetAllCache_();
+      return responseJSON(processReturnResult);
     }
     if (action === "upsertScenario") {
       return handleScenarioUpsertPost_(payload);
@@ -196,11 +216,13 @@ function doPost(e) {
     
     if (action === "addInventoryItem") {
       const newRowIndex = addInventoryItem(sheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: newRowIndex });
     }
     
     if (action === "updateInventoryItem") {
       updateInventoryItem(sheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
 
@@ -211,11 +233,13 @@ function doPost(e) {
           updateInventoryItem(sheet, items[i]);
         }
       }
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
     
     if (action === "deleteInventoryItem") {
       deleteInventoryItem(sheet, payload.rowIndex);
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
     
@@ -236,6 +260,7 @@ function doPost(e) {
         defectSheet.getRange(1, 1, 1, 7).setValues([["제품명", "개수", "기록 시간", "불량 유형", "세부 사항", "대처 방안", "사진"]]);
       }
       const result = addDefectLog(defectSheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: result.rowIndex, photo: result.photo });
     }
 
@@ -264,8 +289,11 @@ function doPost(e) {
               let currentStock = Number(rawStock || 0);
               const qtyChange = Number(payload.qty || 0);
               
-              if (payload.type === "대여") {
+              if (payload.type === "대여" || payload.type === "소모") {
                 nextStock = Math.max(0, currentStock - qtyChange);
+              } else if (payload.type === "반납" && String(payload.note || "").indexOf("[소모완료]") !== -1) {
+                // 반납 화면에서 "소모로 처리"한 경우: 대여 시 이미 재고가 차감됐으므로 재고를 다시 늘리지 않는다.
+                nextStock = currentStock;
               } else if (payload.type === "반납") {
                 nextStock = currentStock + qtyChange;
               }
@@ -280,6 +308,7 @@ function doPost(e) {
           }
         }
       }
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: newRowIndex });
     }
     
@@ -337,21 +366,24 @@ function getInventoryData(sheet) {
   }
   const range = sheet.getRange(2, 1, lastRow - 1, 11);
   const values = range.getValues();
-  const displayValues = range.getDisplayValues();
-  const richTextValues = range.getRichTextValues();
+  // 성능 최적화: getRichTextValues()/getDisplayValues()는 셀당 비용이 커서
+  // 11개 열 전체가 아니라 실제로 필요한 열(D열=링크, F열=업데이트일자, I열=사진)만 좁혀서 읽는다.
+  const linkRichText = sheet.getRange(2, 4, lastRow - 1, 1).getRichTextValues();   // D열 (index 3)
+  const updatedAtDisplay = sheet.getRange(2, 6, lastRow - 1, 1).getDisplayValues(); // F열 (index 5)
+  const photoRichText = sheet.getRange(2, 9, lastRow - 1, 1).getRichTextValues();   // I열 (index 8)
   const inventory = [];
   
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    const richRow = richTextValues[i];
     const rowIndex = i + 2;
     
     // I열 (index 8, 사진 링크용)에서 이미지 주소 추출 (B열은 참고하지 않음)
     let photoUrl = "";
-    if (richRow && richRow[8] && typeof richRow[8].getLinkUrl === "function") {
-      photoUrl = richRow[8].getLinkUrl() || "";
-      if (!photoUrl && typeof richRow[8].getRuns === "function") {
-        const runs = richRow[8].getRuns();
+    const photoRich = photoRichText[i] && photoRichText[i][0];
+    if (photoRich && typeof photoRich.getLinkUrl === "function") {
+      photoUrl = photoRich.getLinkUrl() || "";
+      if (!photoUrl && typeof photoRich.getRuns === "function") {
+        const runs = photoRich.getRuns();
         for (let r = 0; r < runs.length; r++) {
           if (runs[r] && typeof runs[r].getLinkUrl === "function") {
             const runUrl = runs[r].getLinkUrl();
@@ -372,10 +404,11 @@ function getInventoryData(sheet) {
     
     // 스마트 칩 링크 주소 추출 (D열 / index 3)
     let itemLink = "";
-    if (richRow && richRow[3] && typeof richRow[3].getLinkUrl === "function") {
-      itemLink = richRow[3].getLinkUrl() || "";
-      if (!itemLink && typeof richRow[3].getRuns === "function") {
-        const runs = richRow[3].getRuns();
+    const linkRich = linkRichText[i] && linkRichText[i][0];
+    if (linkRich && typeof linkRich.getLinkUrl === "function") {
+      itemLink = linkRich.getLinkUrl() || "";
+      if (!itemLink && typeof linkRich.getRuns === "function") {
+        const runs = linkRich.getRuns();
         for (let r = 0; r < runs.length; r++) {
           if (runs[r] && typeof runs[r].getLinkUrl === "function") {
             const runUrl = runs[r].getLinkUrl();
@@ -405,7 +438,7 @@ function getInventoryData(sheet) {
       name: String(row[2] || "").trim(),
       link: itemLink,
       stock: itemStock,
-      updatedAt: displayValues[i][5] || "",
+      updatedAt: updatedAtDisplay[i][0] || "",
       manager: String(row[6] || "").trim(),
       note: String(row[7] || "").trim(),
       spec: String(row[1] || "").trim(), // Column B (서브 분류)
@@ -895,6 +928,12 @@ function formatDate(date) {
 function responseJSON(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// getAll 캐시를 강제로 비운다. 물품/로그 등 데이터가 바뀌는 모든 쓰기 작업 뒤에 호출해,
+// 사용자가 방금 한 변경이 캐시 만료(최대 4초)를 기다리지 않고 바로 반영되게 한다.
+function invalidateGetAllCache_() {
+  try { CacheService.getScriptCache().remove("getAll_cache_v2"); } catch (e) { /* 무시 */ }
 }
 
 function testDrivePermission() {

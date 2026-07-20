@@ -25,6 +25,7 @@ import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCo
 import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
 import { compareRackSlot } from "../utils/borrowApi";
+import ScenarioAdminPage from "./ScenarioAdminPage";
 
 interface MobileViewPageProps {
   inventory: InventoryItem[];
@@ -42,10 +43,11 @@ interface MobileViewPageProps {
   isLightMode: boolean;
   toggleLightMode: () => void;
   connected: boolean;
+  scriptUrl?: string;
   currentView?: "landing" | "login" | "rental" | "monitor" | "defect" | "rent";
 }
 
-type Mode = "대여" | "반납" | "등록" | "불량";
+type Mode = "대여" | "반납" | "등록" | "불량" | "시나리오";
 type SheetMode = "detail" | "form" | "edit-inventory" | null;
 
 interface OutstandingRental {
@@ -80,13 +82,14 @@ export default function MobileViewPage({
   isLightMode,
   toggleLightMode,
   connected,
+  scriptUrl = "",
   currentView = "monitor",
 }: MobileViewPageProps) {
   const [mode, setMode] = useState<Mode>("대여");
   const [searchQuery, setSearchQuery] = useState("");
 
   // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
-  const TAB_ORDER: Record<string, number> = { "대여": 0, "반납": 1, "등록": 2, "불량": 3 };
+  const TAB_ORDER: Record<string, number> = { "등록": 0, "시나리오": 1, "대여": 2, "반납": 2, "불량": 3 };
   const prevTabOrderRef = useRef(TAB_ORDER[mode] ?? 0);
   const tabSlideDirRef = useRef<"forward" | "back">("forward");
   const curTabOrder = TAB_ORDER[mode] ?? 0;
@@ -350,6 +353,8 @@ export default function MobileViewPage({
         setMode("불량");
       } else if (mainPath === "register") {
         setMode("등록");
+      } else if (mainPath === "scenariotab") {
+        setMode("시나리오");
       }
 
       // Sync sheet mode
@@ -380,6 +385,8 @@ export default function MobileViewPage({
       window.location.hash = "#/defect";
     } else if (m === "등록") {
       window.location.hash = "#/register";
+    } else if (m === "시나리오") {
+      window.location.hash = "#/scenariotab";
     }
   };
 
@@ -787,10 +794,10 @@ export default function MobileViewPage({
         </div>
 
         <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-          {isAdmin && onOpenScenario ? (
+          {isAdmin ? (
             <button
               className="mvp-btn"
-              onClick={onOpenScenario}
+              onClick={() => switchMode("시나리오")}
               title="시나리오 물품 관리"
               style={{
                 height: "36px",
@@ -874,18 +881,19 @@ export default function MobileViewPage({
               </button>
               <button
                 className="mvp-btn"
-                onClick={() => onOpenScenario && onOpenScenario()}
+                onClick={() => switchMode("시나리오")}
                 style={{
                   padding: "10px 4px",
                   borderRadius: "11px",
                   fontSize: "12px",
                   fontWeight: 800,
-                  background: "transparent",
-                  color: TEXT_DIM,
+                  background: mode === "시나리오" ? TEXT_MAIN : "transparent",
+                  color: mode === "시나리오" ? BG : TEXT_DIM,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: "4px",
+                  boxShadow: mode === "시나리오" ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
                 }}
               >
                 🧩 시나리오 물품
@@ -1711,6 +1719,18 @@ export default function MobileViewPage({
           </form>
             )}
           </>
+        ) : mode === "시나리오" ? (
+          /* =========================================================
+             3-B. 시나리오 물품 관리 (같은 영역에서 탭으로 전환, 페이지 이동 없음)
+             ========================================================= */
+          <div style={{ margin: "-14px -14px 0" }}>
+            <ScenarioAdminPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              showToast={(msg, type) => notify(msg, type === "info" ? "ok" : type)}
+            />
+          </div>
         ) : (
           /* =========================================================
              4. 불량 제품 관리 및 등록 (Admin 모바일 전용)
