@@ -55,7 +55,7 @@ export default function BrowsePage({
     label: isLightMode ? "#2563eb" : "#94a3b8",
     accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
-    accentText: isLightMode ? "#3f4756" : "#c2c7d0",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -317,15 +317,16 @@ export default function BrowsePage({
   const stepRef = useRef(step);
   stepRef.current = step;
 
-  // 슬라이딩 방향 추적
+  // 슬라이딩 방향 추적 (렌더 중 동기 계산)
   const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenario: 2, warehouse: 2, mylookup: 2 };
   const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
-  const [slideDir, setSlideDir] = useState<"forward" | "back">("forward");
-  useEffect(() => {
-    const cur = STEP_ORDER[step] ?? 0;
-    setSlideDir(cur >= prevStepOrderRef.current ? "forward" : "back");
-    prevStepOrderRef.current = cur;
-  }, [step]);
+  const slideDirRef = useRef<"forward" | "back">("forward");
+  const curStepOrder = STEP_ORDER[step] ?? 0;
+  if (curStepOrder !== prevStepOrderRef.current) {
+    slideDirRef.current = curStepOrder >= prevStepOrderRef.current ? "forward" : "back";
+    prevStepOrderRef.current = curStepOrder;
+  }
+  const slideDir = slideDirRef.current;
   const suppressBrowseHash = useRef(false);
   const browseBase = purpose === "mylookup" ? "mylookup" : "browse";
 
@@ -657,7 +658,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "56px 0", color: C.label }}>
           <Spinner size={30} /> 물품을 불러오는 중입니다...
           {showManual && onRetry ? (
-            <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: `1px solid ${C.accent}`, background: "transparent", color: C.accent, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>불러오기가 지연됩니다. 수동으로 다시 불러오기</button>
+            <button onClick={onRetry} style={{ padding: "10px 20px", borderRadius: "10px", border: `1px solid ${C.border}`, background: "transparent", color: C.text, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>불러오기가 지연됩니다. 수동으로 다시 불러오기</button>
           ) : null}
         </div>
       ) : count === 0 ? (

@@ -22,7 +22,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     label: isLightMode ? "#626c7d" : "#8b98ac",
     accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
-    accentText: isLightMode ? "#3f4756" : "#c2c7d0",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     warn: isLightMode ? "#b45309" : "#fbbf24",
     warnSoft: "rgba(245,158,11,0.12)",
   };

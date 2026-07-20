@@ -85,12 +85,13 @@ export default function MobileViewPage({
   // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
   const TAB_ORDER: Record<string, number> = { "대여": 0, "반납": 1, "등록": 2, "불량": 3 };
   const prevTabOrderRef = useRef(TAB_ORDER[mode] ?? 0);
-  const [tabSlideDir, setTabSlideDir] = useState<"forward" | "back">("forward");
-  useEffect(() => {
-    const cur = TAB_ORDER[mode] ?? 0;
-    setTabSlideDir(cur >= prevTabOrderRef.current ? "forward" : "back");
-    prevTabOrderRef.current = cur;
-  }, [mode]);
+  const tabSlideDirRef = useRef<"forward" | "back">("forward");
+  const curTabOrder = TAB_ORDER[mode] ?? 0;
+  if (curTabOrder !== prevTabOrderRef.current) {
+    tabSlideDirRef.current = curTabOrder >= prevTabOrderRef.current ? "forward" : "back";
+    prevTabOrderRef.current = curTabOrder;
+  }
+  const tabSlideDir = tabSlideDirRef.current;
 
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [outstandingContext, setOutstandingContext] = useState<OutstandingRental | null>(null);
@@ -101,6 +102,8 @@ export default function MobileViewPage({
   const [formQty, setFormQty] = useState(1);
   const [formNote, setFormNote] = useState("");
   const [formDueDate, setFormDueDate] = useState("");
+  const [customBorrowName, setCustomBorrowName] = useState("");
+  const [customBorrowLoc, setCustomBorrowLoc] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Current logged in user name or default
@@ -379,6 +382,10 @@ export default function MobileViewPage({
   const openItemDetail = (item: InventoryItem) => {
     setSelectedItem(item);
     setOutstandingContext(null);
+    if (item.rowIndex === -1) {
+      setCustomBorrowName(item.name || "");
+      setCustomBorrowLoc(item.location || "");
+    }
     const base = window.location.hash.split("/")[1] || "monitor";
     window.location.hash = `#/${base}/detail`;
   };
@@ -461,11 +468,15 @@ export default function MobileViewPage({
 
     setSubmitting(true);
     try {
+      const isCustom = selectedItem.rowIndex === -1;
+      const itemName = isCustom ? customBorrowName.trim() : selectedItem.name;
+      const itemLoc = isCustom ? customBorrowLoc.trim() : selectedItem.location;
+      if (isCustom && !itemName) { notify("물품명을 입력해 주세요.", "warn"); setSubmitting(false); return; }
       const dueTag = actionType === "대여" && formDueDate ? ` [반납예정:${formDueDate}]` : "";
       const log: RentLog = {
         timestamp: formatTimestampLocal(),
-        location: selectedItem.location,
-        name: selectedItem.name,
+        location: itemLoc,
+        name: itemName,
         type: actionType,
         qty: formQty,
         user: formUser.trim(),
@@ -474,10 +485,10 @@ export default function MobileViewPage({
       await onAddRentLog(log);
       notify(
         actionType === "대여"
-          ? `${selectedItem.name} ${formQty}개 대여 신청이 접수되었습니다.`
+          ? `${itemName} ${formQty}개 대여 신청이 접수되었습니다.`
           : actionType === "소모"
-          ? `${selectedItem.name} ${formQty}개 소모 처리되었습니다. (반납 대상 아님)`
-          : `${selectedItem.name} ${formQty}개 반납이 접수되었습니다.`,
+          ? `${itemName} ${formQty}개 소모 처리되었습니다. (반납 대상 아님)`
+          : `${itemName} ${formQty}개 반납이 접수되었습니다.`,
         "ok"
       );
       closeSheet();
@@ -1007,7 +1018,33 @@ export default function MobileViewPage({
       <main style={{ flex: 1, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto" }}>
         <div key={mode} className={tabSlideDir === "forward" ? "step-forward" : "step-back"} style={{ display: "flex", flexDirection: "column", gap: "10px", flex: 1 }}>
         {mode === "대여" ? (
-          filteredInventory.length === 0 ? (
+          <>
+          <button
+            onClick={() => {
+              const customName = searchQuery.trim();
+              const custom: InventoryItem = {
+                rowIndex: -1,
+                location: "",
+                photo: "",
+                name: customName,
+                link: "",
+                stock: "N/A",
+                updatedAt: "",
+                manager: "",
+                note: "",
+                spec: "",
+              };
+              openItemDetail(custom);
+            }}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "6px",
+              padding: "11px", borderRadius: "12px", border: `1px dashed ${BORDER}`,
+              background: "transparent", color: MODE_COLOR, fontSize: "13px", fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            <Plus size={15} /> 목록에 없는 물품 직접 대여
+          </button>
+          {filteredInventory.length === 0 ? (
             <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
               <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
               검색 결과가 없습니다.
@@ -1124,7 +1161,8 @@ export default function MobileViewPage({
                 </div>
               );
             })
-          )
+          )}
+          </>
         ) : mode === "반납" ? (
           filteredOutstanding.length === 0 ? (
             <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
@@ -2436,7 +2474,7 @@ export default function MobileViewPage({
                     >
                       <ArrowLeft size={16} />
                     </button>
-                    <h2 style={{ fontSize: "17px", fontWeight: 800, color: MODE_COLOR_LIGHT, margin: 0 }}>
+                    <h2 style={{ fontSize: "17px", fontWeight: 800, color: TEXT_MAIN, margin: 0 }}>
                       {mode === "대여" ? "📥 물품 대여 신청" : "🔄 물품 반납 접수"}
                     </h2>
                   </div>
@@ -2500,6 +2538,18 @@ export default function MobileViewPage({
                   </div>
 
                   <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    {selectedItem.rowIndex === -1 ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>물품명 <span style={{ color: DANGER }}>*</span></label>
+                          <input className="mvp-input" type="text" placeholder="물품명 입력" value={customBorrowName} onChange={(e) => setCustomBorrowName(e.target.value)} style={inputBaseStyle} />
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                          <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>위치 (선택)</label>
+                          <input className="mvp-input" type="text" placeholder="위치 입력" value={customBorrowLoc} onChange={(e) => setCustomBorrowLoc(e.target.value)} style={inputBaseStyle} />
+                        </div>
+                      </div>
+                    ) : null}
                     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                       <label style={{ fontSize: "11.5px", fontWeight: 700, color: TEXT_DIM }}>
                         {mode === "대여" ? "대여자 이름" : "반납자 이름"} <span style={{ color: DANGER }}>*</span>

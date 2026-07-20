@@ -65,7 +65,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     label: isLightMode ? "#2563eb" : "#94a3b8",
     accent: "#2563eb",
     accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
-    accentText: isLightMode ? "#3f4756" : "#c2c7d0",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
     warn: isLightMode ? "#b45309" : "#fbbf24",
@@ -127,6 +127,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whLoading, setWhLoading] = useState(false);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
   const [whSearch, setWhSearch] = useState("");
+  const [whCustomLoc, setWhCustomLoc] = useState("");
   const [whRack, setWhRack] = useState("");
   const [whSlot, setWhSlot] = useState("");
   const [whPurpose, setWhPurpose] = useState("");
@@ -901,6 +902,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
     });
   }
+  // 목록에 없는 물품을 직접 이름으로 담는다 (rowIndex: -1 = 커스텀 항목)
+  function addCustomWhCart(name: string, location: string) {
+    const nm = name.trim();
+    if (!nm) { showToast("물품명을 입력해주세요.", "warn"); return; }
+    setWhCart((prev) => {
+      // 같은 이름의 커스텀 항목이 이미 있으면 수량 +1
+      const idx = prev.findIndex((c) => c.rowIndex === -1 && c.name === nm && c.location === location.trim());
+      if (idx !== -1) return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
+      return [...prev, { rowIndex: -1, location: location.trim(), name: nm, quantity: 1 }];
+    });
+    showToast(`'${nm}' 담았습니다.`, "ok");
+  }
+
   function chgWhCart(idx: number, d: number) {
     setWhCart((prev) => {
       const item = prev[idx]; if (!item) return prev;
@@ -920,7 +934,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
-    setWhCart([]); setWhSearch(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhDueDate(""); setWhReturnSel({});
+    setWhCart([]); setWhSearch(""); setWhCustomLoc(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhDueDate(""); setWhReturnSel({});
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
@@ -972,18 +986,20 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const suppressHashSync = useRef(false);
 
   // 슬라이딩 방향 추적: 단계 순서를 매겨 앞으로/뒤로를 판단한다.
+  // (렌더 중 동기 계산 — key가 바뀌는 순간 올바른 방향이 즉시 적용되도록)
   const MODE_ORDER: Record<string, number> = {
     pickBorrowKind: 0, pickReturnKind: 0, mode: 0,
     b1: 1, b2: 2, b3g: 3, b3s: 3, b4g: 4, b4s: 4,
     wborrow: 1, wreturn: 1, return: 1, result: 5,
   };
   const prevOrderRef = useRef(MODE_ORDER[mode] ?? 0);
-  const [slideDir, setSlideDir] = useState<"forward" | "back">("forward");
-  useEffect(() => {
-    const cur = MODE_ORDER[mode] ?? 0;
-    setSlideDir(cur >= prevOrderRef.current ? "forward" : "back");
-    prevOrderRef.current = cur;
-  }, [mode]);
+  const slideDirRef = useRef<"forward" | "back">("forward");
+  const curOrder = MODE_ORDER[mode] ?? 0;
+  if (curOrder !== prevOrderRef.current) {
+    slideDirRef.current = curOrder >= prevOrderRef.current ? "forward" : "back";
+    prevOrderRef.current = curOrder;
+  }
+  const slideDir = slideDirRef.current;
 
   // mode 변경 → 해시 반영 (뒤로가기용 히스토리 항목 생성)
   useEffect(() => {
@@ -1394,7 +1410,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
                   {whCart.map((item, idx) => (
-                    <div key={item.rowIndex} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                    <div key={`${item.rowIndex}-${item.name}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
                         <div style={{ fontSize: "11px", color: C.label }}>{item.location}</div>
@@ -1449,6 +1465,37 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   );
                 })
               )}
+            </div>
+
+            {/* 목록에 없는 물품 직접 입력하여 담기 */}
+            <div style={{ marginTop: "10px", border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
+                <Plus size={13} /> 목록에 없는 물품 직접 대여
+              </div>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <input
+                  value={whSearch}
+                  onChange={(e) => setWhSearch(e.target.value)}
+                  placeholder="물품명"
+                  style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }}
+                />
+                <input
+                  value={whCustomLoc}
+                  onChange={(e) => setWhCustomLoc(e.target.value)}
+                  placeholder="위치 (선택)"
+                  style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }}
+                />
+                <button
+                  onClick={() => { addCustomWhCart(whSearch, whCustomLoc); setWhSearch(""); setWhCustomLoc(""); }}
+                  disabled={!whSearch.trim()}
+                  style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whSearch.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whSearch.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
+                >
+                  담기
+                </button>
+              </div>
+              <div style={{ fontSize: "11px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
+                재고에 등록되지 않은 물품도 이름을 입력해 대여 기록을 남길 수 있습니다.
+              </div>
             </div>
 
             <div style={{ marginTop: "16px" }}>
