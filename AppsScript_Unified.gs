@@ -2183,7 +2183,7 @@ function recordBorrow(borrowList, clientVersion) {
 
       if (additional.length) {
         additional.forEach(function (item) {
-          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", additionalBatchId, now, "추가 물품 대여"]);
+          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", additionalBatchId, now, "SID 추가 물품"]);
           generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
           borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
           hasGeneralBorrow = true;
