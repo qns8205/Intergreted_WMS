@@ -2,28 +2,30 @@ import React from "react";
 import { Loader2 } from "lucide-react";
 
 export const C = {
-  bg: "#f8fafc",
-  text: "#0f172a",
+  bg: "#f4f6f9",
+  text: "#1e293b",
   sub: "#64748b",
-  card: "#ffffff",
-  border: "#e2e8f0",
-  inputBg: "#f8fafc",
-  primary: "#4f46e5",
-  primaryLight: "rgba(79,70,229,0.08)",
-  success: "#10b981",
-  successLight: "rgba(16,185,129,0.1)",
-  warn: "#f59e0b",
-  warnLight: "rgba(245,158,11,0.12)",
-  danger: "#ef4444",
-  dangerLight: "rgba(239,68,68,0.1)",
+  card: "rgba(255, 255, 255, 0.75)",
+  border: "rgba(226, 232, 240, 0.5)",
+  inputBg: "rgba(244, 246, 249, 0.6)",
+  primary: "#0f172a",
+  primaryLight: "rgba(15, 23, 42, 0.08)",
+  success: "#0d9488",
+  successLight: "rgba(13, 148, 136, 0.08)",
+  warn: "#d97706",
+  warnLight: "rgba(217, 119, 6, 0.08)",
+  danger: "#e11d48",
+  dangerLight: "rgba(225, 29, 72, 0.08)",
 };
 
 export const cardStyle: React.CSSProperties = {
   background: C.card,
+  backdropFilter: "blur(14px)",
+  WebkitBackdropFilter: "blur(14px)",
   border: `1px solid ${C.border}`,
   borderRadius: 18,
   padding: 20,
-  boxShadow: "0 6px 18px -6px rgba(0,0,0,0.06)",
+  boxShadow: "0 8px 32px 0 rgba(15, 23, 42, 0.04)",
 };
 
 export const inputStyle: React.CSSProperties = {

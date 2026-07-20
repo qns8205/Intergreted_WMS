@@ -657,19 +657,19 @@ export default function App() {
     }
   }
 
-  // 10초 주기로 스프레드시트 최신 데이터 실시간 자동 동기화 (기기 간 실시간 싱크 완성)
+  // 20초 주기로 스프레드시트 최신 데이터 실시간 자동 동기화 (기기 간 실시간 싱크 완성 및 속도 최적화)
   useEffect(() => {
     if (!connected || !scriptUrl) return;
 
-    // 마운트 혹은 화면 전환 시 즉시 한 번 갱신 보장
+    // 초기 마운트 시 즉시 한 번 갱신 보장 (화면 전환 시마다 리프레시되는 현상 방지)
     silentRefresh();
 
     const interval = setInterval(() => {
       silentRefresh();
-    }, 10000); // 10초 간격 폴링
+    }, 20000); // 20초 간격 폴링으로 부하 감소 및 응답 속도 체감 향상
 
     return () => clearInterval(interval);
-  }, [connected, scriptUrl, currentView]); // eslint-disable-line
+  }, [connected, scriptUrl]); // eslint-disable-line
 
   // 구글 스프레드시트 데이터와 랙 선반 정보 병합
   function racksFromServerSectors(sectors: any[], inv: InventoryItem[]): Rack[] {
@@ -1170,10 +1170,12 @@ export default function App() {
       setSaving(true);
       const action = isNew ? "addInventoryItem" : "updateInventoryItem";
       callScript(action, item)
-        .then(async () => {
-          // 최신 인벤토리 실시간 재동기화
-          const data = await fetchAll();
-          setInventory(mergePendingStocks(data.inventory || []));
+        .then(async (res: any) => {
+          if (isNew && res && res.rowIndex) {
+            setInventory((prev) =>
+              prev.map((i) => (i.rowIndex === optimisticItem.rowIndex ? { ...i, rowIndex: res.rowIndex } : i))
+            );
+          }
           setLastSync(new Date());
           safeSetLocalStorage("wms_last_sync", new Date().toISOString());
           showToast(isNew ? "✅ 신규 품목 동기화 완료" : "✅ 품목 스펙 동기화 완료", "ok");
@@ -1216,9 +1218,7 @@ export default function App() {
       if (connected) {
         setSaving(true);
         callScript("updateMultipleInventoryItems", { items: updatedItems })
-          .then(async () => {
-            const data = await fetchAll();
-            setInventory(mergePendingStocks(data.inventory || []));
+          .then(() => {
             setLastSync(new Date());
             showToast("✅ 구글 스프레드시트 일괄 업데이트 완료", "ok");
           })
@@ -1272,9 +1272,7 @@ export default function App() {
     if (connected) {
       setSaving(true);
       callScript("updateMultipleInventoryItems", { items: updatedItems })
-        .then(async () => {
-          const data = await fetchAll();
-          setInventory(mergePendingStocks(data.inventory || []));
+        .then(() => {
           setLastSync(new Date());
           showToast("✅ 구글 스프레드시트 이름 수정 완료", "ok");
         })
@@ -1302,9 +1300,7 @@ export default function App() {
     if (connected) {
       setSaving(true);
       callScript("deleteInventoryItem", { rowIndex })
-        .then(async () => {
-          const data = await fetchAll();
-          setInventory(mergePendingStocks(data.inventory || []));
+        .then(() => {
           setLastSync(new Date());
           safeSetLocalStorage("wms_last_sync", new Date().toISOString());
           showToast("✅ 구글 스프레드시트 삭제 반영 완료", "ok");
@@ -1661,10 +1657,10 @@ export default function App() {
                 onClick={() => { if (t.view !== "scenario") setCurrentView(t.view as any); }}
                 style={{
                   padding: "10px 2px", borderRadius: "11px", fontSize: "12px", fontWeight: 800, border: "none",
-                  background: t.view === "scenario" ? "#2563eb" : "transparent",
+                  background: t.view === "scenario" ? "var(--accent, #0f172a)" : "transparent",
                   color: t.view === "scenario" ? "#ffffff" : "var(--text-dim, #94a3b8)",
                   cursor: "pointer",
-                  boxShadow: t.view === "scenario" ? "0 6px 14px rgba(37, 99, 235,0.3)" : "none",
+                  boxShadow: t.view === "scenario" ? "0 6px 14px var(--accent-soft, rgba(15, 23, 42, 0.2))" : "none",
                 }}
               >
                 {t.label}
@@ -1704,36 +1700,44 @@ export default function App() {
         .wms-dark {
           --app-bg: #0f172a;
           --canvas-bg: #0b1120;
-          --header-bg: #161f30;
-          --panel-bg: #161f30;
-          --panel-border: #26324a;
+          --header-bg: rgba(22, 31, 48, 0.72);
+          --panel-bg: rgba(22, 31, 48, 0.75);
+          --panel-border: rgba(38, 50, 74, 0.5);
           --text-main: #f1f5f9;
           --text-dim: #8b98ac;
-          --input-bg: #0f172a;
-          --accent: #2563eb;
-          --accent-soft: rgba(37, 99, 235,0.16);
+          --input-bg: rgba(15, 23, 42, 0.5);
+          --accent: #ffffff;
+          --accent-soft: rgba(255, 255, 255, 0.14);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
           --shadow-sm: 0 1px 2px rgba(0,0,0,0.18);
-          --shadow: 0 4px 12px rgba(0,0,0,0.22);
+          --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.22);
+          --backdrop: blur(14px);
         }
         .wms-light {
-          --app-bg: #f7f8fa;
+          --app-bg: #f4f6f9;
           --canvas-bg: #eef1f5;
-          --header-bg: #ffffff;
-          --panel-bg: #ffffff;
-          --panel-border: #e6e9ef;
-          --text-main: #111827;
+          --header-bg: rgba(255, 255, 255, 0.72);
+          --panel-bg: rgba(255, 255, 255, 0.75);
+          --panel-border: rgba(230, 233, 239, 0.5);
+          --text-main: #1e293b;
           --text-dim: #626c7d;
-          --input-bg: #f4f6f9;
-          --accent: #2563eb;
-          --accent-soft: rgba(37, 99, 235,0.10);
+          --input-bg: rgba(244, 246, 249, 0.6);
+          --accent: #0f172a;
+          --accent-soft: rgba(15, 23, 42, 0.08);
           --radius: 10px;
           --radius-sm: 7px;
           --radius-lg: 14px;
           --shadow-sm: 0 1px 2px rgba(15,23,42,0.06);
-          --shadow: 0 4px 14px rgba(15,23,42,0.08);
+          --shadow: 0 8px 32px 0 rgba(15, 23, 42, 0.04);
+          --backdrop: blur(14px);
+        }
+        
+        /* 글라스모피즘 핵심 데코레이터 */
+        .glass-card, [style*="var(--panel-bg)"], [style*="var(--header-bg)"] {
+          backdrop-filter: var(--backdrop, none);
+          -webkit-backdrop-filter: var(--backdrop, none);
         }
         body { font-size: ${16 * fontScale}px; }
         .mono { font-family: 'JetBrains Mono', monospace; font-feature-settings: 'tnum'; }
@@ -2139,7 +2143,7 @@ export default function App() {
               display: "flex",
               alignItems: "center",
               background: "var(--input-bg, #0f172a)",
-              border: "1px solid var(--panel-border, #2563eb)",
+              border: "1px solid var(--panel-border, rgba(15, 118, 110, 0.4))",
               borderRadius: 9999,
               padding: "0 16px",
             }}
@@ -2402,8 +2406,8 @@ export default function App() {
                     padding: "10px 18px",
                     borderRadius: "10px 10px 0 0",
                     border: "none",
-                    borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
-                    background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
+                    borderBottom: rentLogTab === t.key ? "2px solid var(--accent, #0f172a)" : "2px solid transparent",
+                    background: rentLogTab === t.key ? "var(--accent-soft, rgba(15, 23, 42, 0.08))" : "transparent",
                     color: rentLogTab === t.key ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
                     fontSize: "14px",
                     fontWeight: 700,
@@ -2477,7 +2481,7 @@ export default function App() {
                       onClick={() => { setMonitorView(v); if (v === "grouped") setSelectedRackId(null); }}
                       style={{
                         padding: "7px 14px", borderRadius: "7px", border: "none", fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
-                        background: monitorView === v ? "var(--accent, #2563eb)" : "transparent",
+                        background: monitorView === v ? "var(--accent, #0f172a)" : "transparent",
                         color: monitorView === v ? "#ffffff" : "var(--text-dim, #94a3b8)",
                       }}
                     >
@@ -2717,7 +2721,7 @@ export default function App() {
           <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380, background: "var(--panel-bg, #1e293b)", border: "1px solid var(--panel-border, #334155)", borderRadius: 16, padding: 24, textAlign: "center", color: "var(--text-main, #f1f5f9)" }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>🔒 연동 설정은 관리자 전용입니다</div>
             <div style={{ fontSize: 13, color: "var(--text-dim, #94a3b8)", lineHeight: 1.6, marginBottom: 16 }}>서버 연동 주소는 관리자만 변경할 수 있습니다. 변경이 필요하면 관리자에게 요청하세요.</div>
-            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#2563eb", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
+            <button onClick={() => setShowSetup(false)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "var(--accent, #0f172a)", color: "#fff", fontWeight: 700, cursor: "pointer" }}>확인</button>
           </div>
         </div>
       )}

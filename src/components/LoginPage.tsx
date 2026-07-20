@@ -52,10 +52,10 @@ export default function LoginPage({
     }
   };
 
-  const ACCENT = "#2563eb";
-  const ACCENT_LIGHT = "rgba(37, 99, 235, 0.08)";
+  const ACCENT = isLightMode ? "#0f172a" : "#f1f5f9";
+  const ACCENT_LIGHT = isLightMode ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.12)";
   const TEXT_MAIN = isLightMode ? "#0f172a" : "#f1f5f9";
-  const TEXT_DIM = isLightMode ? "#2563eb" : "#94a3b8";
+  const TEXT_DIM = isLightMode ? "#475569" : "#94a3b8";
   const PANEL_BG = isLightMode ? "#ffffff" : "#1e293b";
   const INPUT_BG = isLightMode ? "#f8fafc" : "#0f172a";
   const BORDER_COLOR = isLightMode ? "#cbd5e1" : "#334155";

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check, Fingerprint, Loader2, MapPin, Minus, Package, Plus,
-  Search, Undo2, UserSearch, X,
+  Search, Undo2, UserSearch, X, ShoppingCart, ChevronRight,
 } from "lucide-react";
 import {
   Affiliation, CartItem, ScenarioObjectItem, SidCartEntry, UnreturnedItem,
@@ -383,13 +383,13 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                padding: "10px 12px",
+                padding: "12px 14px",
                 borderBottom: `1px solid ${C.border}`,
                 cursor: "pointer",
                 background: inCart ? C.primaryLight : "transparent",
               }}
             >
-              <input type="checkbox" checked={inCart} readOnly style={{ accentColor: C.primary }} />
+              <input type="checkbox" checked={inCart} readOnly style={{ width: 20, height: 20, accentColor: C.primary, cursor: "pointer", flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{it.name}</div>
                 <div style={{ fontSize: 11, color: C.sub }}>ID: {it.id}</div>
@@ -620,7 +620,7 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
             </div>
           )}
 
-          <div style={cardStyle}>
+          <div id="sc-checkout-form" style={cardStyle}>
             <label style={labelStyle}>대여 목적</label>
             <textarea style={{ ...inputStyle, minHeight: 70, resize: "none" }} value={borrowPurpose} onChange={(e) => setBorrowPurpose(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" />
           </div>
@@ -650,7 +650,7 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
           ) : filteredReturnGroups.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.sub }}>현재 미반납된 물품이 없습니다.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 100 }}>
               {filteredReturnGroups.map((g) => (
                 <div key={g.borrower} style={cardStyle}>
                   <div style={{ fontWeight: 800, fontSize: 14, color: C.text, marginBottom: 10 }}>{g.borrower}</div>
@@ -673,7 +673,7 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
                             cursor: "pointer",
                           }}
                         >
-                          <input type="checkbox" checked={checked} readOnly style={{ marginTop: 2, accentColor: C.primary }} />
+                          <input type="checkbox" checked={checked} readOnly style={{ width: 20, height: 20, marginTop: 2, accentColor: C.primary, cursor: "pointer", flexShrink: 0 }} />
                           <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: 700, fontSize: 13, color: C.text }}>
                               {it.scenarioId && (
@@ -715,14 +715,56 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
               ))}
             </div>
           )}
-          <button
-            style={primaryBtn(Object.keys(returnSelected).length === 0 || returnSubmitting)}
-            disabled={Object.keys(returnSelected).length === 0 || returnSubmitting}
-            onClick={submitReturn}
+
+          {/* 🔄 화면 하단 고정 반납 처리 바 */}
+          <div
+            style={{
+              position: "fixed",
+              bottom: "20px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 1000,
+              width: "calc(100% - 32px)",
+              maxWidth: "480px",
+              background: "rgba(255, 255, 255, 0.92)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              border: `1px solid ${C.border}`,
+              borderRadius: "16px",
+              padding: "12px 16px",
+              boxShadow: "0 10px 30px rgba(15, 23, 42, 0.12)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "12px",
+              animation: "tabCartSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1) both",
+            }}
           >
-            {returnSubmitting ? <Spinner size={16} /> : <Undo2 size={16} />}
-            {returnSubmitting ? "처리 중..." : `반납 처리하기 (${Object.keys(returnSelected).length}건)`}
-          </button>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: "13px", color: C.text }}>
+                반납 처리 대기 항목
+              </div>
+              <div style={{ fontSize: "11px", color: C.sub }}>
+                {Object.keys(returnSelected).length > 0
+                  ? `${Object.keys(returnSelected).length}건이 선택되었습니다.`
+                  : "반납 처리할 항목을 선택해주세요."}
+              </div>
+            </div>
+            <button
+              style={{
+                ...primaryBtn(Object.keys(returnSelected).length === 0 || returnSubmitting),
+                padding: "10px 16px",
+                borderRadius: "10px",
+                fontSize: "12.5px",
+                boxShadow: Object.keys(returnSelected).length > 0 ? "0 4px 12px rgba(15, 118, 110, 0.25)" : "none",
+              }}
+              disabled={Object.keys(returnSelected).length === 0 || returnSubmitting}
+              onClick={submitReturn}
+            >
+              {returnSubmitting ? <Spinner size={14} /> : <Undo2 size={14} />}
+              {returnSubmitting ? "처리 중..." : `반납 처리하기 (${Object.keys(returnSelected).length}건)`}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -852,6 +894,138 @@ export default function ScenarioTab({ scriptUrl, showToast, startMode, onExitToM
           </div>
         )}
       </div>
+
+      {/* 🛒 동적 플로팅 장바구니 (ScenarioTab) */}
+      {mode === "borrow" && (borrowType === "general" ? cart.length > 0 : (sidCart.length > 0 || reqCart.length > 0)) && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1000,
+            width: "calc(100% - 32px)",
+            maxWidth: "480px",
+            background: "rgba(255, 255, 255, 0.88)",
+            backdropFilter: "blur(16px)",
+            WebkitBackdropFilter: "blur(16px)",
+            border: `1px solid ${C.border}`,
+            borderRadius: "20px",
+            padding: "10px 16px",
+            boxShadow: "0 12px 36px -4px rgba(15, 23, 42, 0.15)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            animation: "tabCartSlideUp 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.2) both",
+          }}
+        >
+          <style>{`
+            @keyframes tabCartSlideUp {
+              from { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
+              to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+            }
+          `}</style>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div
+              style={{
+                width: "38px",
+                height: "38px",
+                borderRadius: "12px",
+                background: C.primaryLight,
+                color: C.primary,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+              }}
+            >
+              <ShoppingCart size={18} />
+              <span
+                style={{
+                  position: "absolute",
+                  top: "-5px",
+                  right: "-5px",
+                  background: C.primary,
+                  color: "#fff",
+                  fontSize: "10px",
+                  fontWeight: 800,
+                  borderRadius: "10px",
+                  padding: "1px 5px",
+                  minWidth: "16px",
+                  textAlign: "center",
+                }}
+              >
+                {borrowType === "general"
+                  ? cart.reduce((sum, item) => sum + (item.quantity || 1), 0)
+                  : (sidCart.length + reqCart.reduce((sum, item) => sum + (item.quantity || 1), 0))
+                }
+              </span>
+            </div>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: "13.5px", color: C.text }}>
+                {borrowType === "general" ? `대여 물품 ${cart.length}종` : `SID ${sidCart.length}건 + 추가 ${reqCart.length}종`}
+              </div>
+              <div style={{ fontSize: "11px", color: C.sub }}>
+                대여 신청을 완료해주세요.
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "2px", overflow: "hidden", flex: 1, justifyContent: "center" }}>
+            {(borrowType === "general" ? cart : [...sidCart.map(s => ({ name: s.sid, image: null })), ...reqCart]).slice(0, 3).map((item, idx) => (
+              <div
+                key={idx}
+                style={{
+                  width: "28px",
+                  height: "28px",
+                  borderRadius: "6px",
+                  border: "2px solid #ffffff",
+                  background: "rgba(0,0,0,0.05)",
+                  overflow: "hidden",
+                  marginLeft: idx > 0 ? "-8px" : "0",
+                  boxShadow: "0 1px 4px rgba(0,0,0,0.1)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {"image" in item && item.image ? (
+                  <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <span style={{ fontSize: "9px", fontWeight: 700, color: C.text }}>
+                    {item.name?.slice(0, 2)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={() => {
+              document.getElementById("sc-checkout-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }}
+            style={{
+              background: C.primary,
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "12px",
+              padding: "8px 14px",
+              fontSize: "12.5px",
+              fontWeight: 800,
+              cursor: "pointer",
+              boxShadow: "0 4px 12px rgba(15, 118, 110, 0.25)",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            신청서 작성 <ChevronRight size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

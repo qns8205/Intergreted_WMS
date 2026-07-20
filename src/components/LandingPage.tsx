@@ -58,10 +58,10 @@ export default function LandingPage({
             width: "64px",
             height: "64px",
             borderRadius: "16px",
-            background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+            background: "linear-gradient(135deg, #475569 0%, #0f172a 100%)",
             color: "#ffffff",
             marginBottom: "20px",
-            boxShadow: "0 10px 25px -5px rgba(37, 99, 235, 0.4)",
+            boxShadow: "0 10px 25px -5px rgba(15, 23, 42, 0.35)",
           }}
         >
           <PackageCheck size={32} />
@@ -72,7 +72,7 @@ export default function LandingPage({
             fontWeight: 800,
             letterSpacing: "-0.025em",
             marginBottom: "12px",
-            color: isLightMode ? "#2563eb" : "#60a5fa",
+            color: isLightMode ? "#0f172a" : "#f1f5f9",
           }}
         >
           자재 대여 · 반납 · 관리
@@ -131,8 +131,8 @@ export default function LandingPage({
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
-              e.currentTarget.style.borderColor = "#2563eb";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(15, 23, 42, 0.25)";
+              e.currentTarget.style.borderColor = isLightMode ? "#0f172a" : "#f1f5f9";
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = "translateY(0)";
@@ -145,8 +145,8 @@ export default function LandingPage({
                 width: "40px",
                 height: "40px",
                 borderRadius: "11px",
-                background: "rgba(37, 99, 235, 0.12)",
-                color: "#2563eb",
+                background: isLightMode ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.12)",
+                color: isLightMode ? "#0f172a" : "#f1f5f9",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -160,7 +160,7 @@ export default function LandingPage({
                 fontSize: "19px",
                 fontWeight: 700,
                 marginBottom: "8px",
-                color: isLightMode ? "#2563eb" : "#60a5fa",
+                color: isLightMode ? "#0f172a" : "#f1f5f9",
               }}
             >
               {c.title}
@@ -179,7 +179,7 @@ export default function LandingPage({
               style={{
                 marginTop: "auto",
                 padding: "9px 16px",
-                background: "#2563eb",
+                background: isLightMode ? "#0f172a" : "#334155",
                 color: "#ffffff",
                 borderRadius: "12px",
                 fontSize: "13px",
@@ -214,7 +214,7 @@ export default function LandingPage({
           boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.borderColor = "#2563eb";
+          e.currentTarget.style.borderColor = isLightMode ? "#0f172a" : "#f1f5f9";
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
@@ -228,8 +228,8 @@ export default function LandingPage({
             width: "44px",
             height: "44px",
             borderRadius: "12px",
-            background: "rgba(37, 99, 235, 0.12)",
-            color: "#2563eb",
+            background: isLightMode ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.12)",
+            color: isLightMode ? "#0f172a" : "#f1f5f9",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -242,7 +242,7 @@ export default function LandingPage({
             style={{
               fontSize: "16px",
               fontWeight: 700,
-              color: isLightMode ? "#2563eb" : "#60a5fa",
+              color: isLightMode ? "#0f172a" : "#f1f5f9",
               marginBottom: "3px",
             }}
           >
@@ -255,7 +255,7 @@ export default function LandingPage({
         <div
           style={{
             padding: "9px 18px",
-            background: "#2563eb",
+            background: isLightMode ? "#0f172a" : "#334155",
             color: "#ffffff",
             borderRadius: "12px",
             fontSize: "13px",

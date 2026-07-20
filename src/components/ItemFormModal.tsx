@@ -20,7 +20,7 @@ const PANEL = "var(--panel-bg, #1e293b)";
 const PANEL_BORDER = "var(--panel-border, #334155)";
 const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#2563eb";
+const ACCENT = "var(--accent, #0f172a)";
 const ACCENT_SOFT = "#94a3b8";
 
 export default function ItemFormModal({
@@ -183,9 +183,9 @@ export default function ItemFormModal({
             outline: none !important;
             transition: border-color 0.15s ease-in-out !important;
           }
-          .item-modal input:focus, .item-modal select:focus, .item-modal textarea:focus {
-            border-color: #2563eb !important;
-            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
+           .item-modal input:focus, .item-modal select:focus, .item-modal textarea:focus {
+            border-color: var(--accent, #0f172a) !important;
+            box-shadow: 0 0 0 2px var(--accent-soft, rgba(15, 23, 42, 0.12)) !important;
           }
         `}</style>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>

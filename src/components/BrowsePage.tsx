@@ -52,9 +52,9 @@ export default function BrowsePage({
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
     border: isLightMode ? "#e6e9ef" : "#26324a",
     text: isLightMode ? "#111827" : "#f1f5f9",
-    label: isLightMode ? "#2563eb" : "#94a3b8",
-    accent: "#2563eb",
-    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    label: isLightMode ? "#0f172a" : "#cbd5e1",
+    accent: isLightMode ? "#0f172a" : "#f1f5f9",
+    accentSoft: isLightMode ? "rgba(15, 23, 42, 0.08)" : "rgba(255, 255, 255, 0.14)",
     accentText: isLightMode ? "#111827" : "#f1f5f9",
     success: isLightMode ? "#047857" : "#34d399",
     successSoft: "rgba(16, 185, 129, 0.12)",
@@ -93,7 +93,7 @@ export default function BrowsePage({
 
   const [modalUrl, setModalUrl] = useState("");
   const [myLoading, setMyLoading] = useState(false);
-  const [myResult, setMyResult] = useState<{ scenario: any[]; general: any[]; warehouse: any[] } | null>(null);
+  const [myResult, setMyResult] = useState<{ scenario: any[]; warehouse: any[] } | null>(null);
 
   const identName = affiliation === "other" ? otherName.trim() : name.trim();
   const identEmp = affiliation === "cfgw" ? empId.trim() : "";
@@ -266,12 +266,9 @@ export default function BrowsePage({
           fetchMyBorrowedItems(scriptUrl, identName, identEmp),
           fetchWarehouseBorrowedItems(scriptUrl, identName),
         ]);
-        // 시트 기준으로 분리: SID대여 시트(scenario) vs 일반대여 시트(general)
-        const scenarioOnly = (sc || []).filter((it: any) => it.sheetType === "scenario");
-        const generalOnly = (sc || []).filter((it: any) => it.sheetType === "general");
-        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: wh });
+        setMyResult({ scenario: sc, warehouse: wh });
       } else {
-        setMyResult({ scenario: [], general: [], warehouse: [] });
+        setMyResult({ scenario: [], warehouse: [] });
       }
     } catch (e: any) { showToast(`조회 중 오류: ${e.message}`, "error"); }
     finally { setMyLoading(false); }
@@ -541,23 +538,15 @@ export default function BrowsePage({
                   <span style={{ fontSize: "14px", fontWeight: 700 }}>{identName}님이 대여 중인 물품</span>
                   <button onClick={runMyLookup} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: C.accentText, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}><RotateCcw size={12} /> 새로고침</button>
                 </div>
-                {myResult.scenario.length === 0 && myResult.general.length === 0 && myResult.warehouse.length === 0 ? (
+                {myResult.scenario.length === 0 && myResult.warehouse.length === 0 ? (
                   <div style={{ textAlign: "center", padding: "48px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
                 ) : (
                   <>
                     {myResult.scenario.length ? (
                       <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품 (SID 대여)</div>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품</div>
                         {myResult.scenario.map((item: any, i: number) => (
                           <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} loc={padSlot(item.location)} />
-                        ))}
-                      </>
-                    ) : null}
-                    {myResult.general.length ? (
-                      <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "16px 0 8px" }}>일반 대여</div>
-                        {myResult.general.map((item: any, i: number) => (
-                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} loc={padSlot(item.location)} />
                         ))}
                       </>
                     ) : null}
