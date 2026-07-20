@@ -1345,7 +1345,7 @@ var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-f7Ln781J9wJTJL3C3FMFltk
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
-var APP_VERSION = "2026-07-17-01";
+var APP_VERSION = "2026-07-20-sid-fix-01";
 var PROP_LATEST_VERSION_ = "LATEST_APP_VERSION";
 var PROP_LATEST_URL_ = "LATEST_APP_URL";
 
@@ -1930,6 +1930,66 @@ function evaluateSidUsable_(sid, index) {
       + ")보다 앞번호이므로 잘못된 SID이거나 삭제된 시나리오입니다. 대여할 수 없습니다.";
   }
   return res;
+}
+
+// ── 진단용: 특정 SID가 "Scenario" 시트에서 왜 안 찾아지는지 확인한다.
+// Apps Script 편집기에서 이 함수(시나리오SID진단)를 선택하고 ▶ 실행한 뒤,
+// "보기 → 실행 기록" 또는 "보기 → 로그"에서 결과를 확인하세요.
+// 괄호 안의 SID를 원하는 값으로 바꿔서 실행할 수도 있습니다 (기본값: S0120).
+function 시나리오SID진단(sidToCheck) {
+  var target = normalizeSid_(sidToCheck || "S0120");
+  Logger.log("=== 시나리오 SID 진단: " + target + " ===");
+  Logger.log("현재 서버 버전(APP_VERSION): " + APP_VERSION + "  ← 이 값이 화면에서 보이는 버전과 다르면 아직 재배포가 안 된 것입니다.");
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log("연결된 스프레드시트: " + ss.getName());
+
+  var sheet = ss.getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
+  if (!sheet) {
+    Logger.log("❌ '" + SCENARIO_DEFINITION_SHEET_NAME + "' 라는 이름의 시트 탭을 찾지 못했습니다.");
+    Logger.log("   실제 시트 탭 이름들: " + ss.getSheets().map(function (s) { return s.getName(); }).join(", "));
+    return;
+  }
+  Logger.log("✅ 시트 탭을 찾았습니다: " + sheet.getName());
+
+  var lastRow = sheet.getLastRow();
+  Logger.log("마지막 행 번호(getLastRow): " + lastRow);
+  if (lastRow < 2) {
+    Logger.log("❌ 데이터가 없습니다 (헤더 행뿐).");
+    return;
+  }
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  Logger.log("읽어온 데이터 행 수: " + data.length);
+
+  var targetParts = parseSidParts_(target);
+  var exactMatches = [];
+  var normMatches = [];
+  var sampleFirst5 = [];
+  for (var i = 0; i < data.length; i++) {
+    var rawCell = data[i][0];
+    var rowSid = normalizeSid_(rawCell);
+    if (i < 5) sampleFirst5.push("행" + (i + 2) + ": 원본='" + rawCell + "' → 정규화='" + rowSid + "'");
+    if (rowSid === target) exactMatches.push(i + 2);
+    var rp = parseSidParts_(rowSid);
+    if (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num) normMatches.push(i + 2);
+  }
+
+  Logger.log("--- A열 처음 5개 샘플 ---");
+  sampleFirst5.forEach(function (s) { Logger.log(s); });
+
+  Logger.log("--- 결과 ---");
+  Logger.log("문자열 완전일치 행: " + (exactMatches.length ? exactMatches.join(", ") : "없음"));
+  Logger.log("접두문자+숫자값 일치 행(0 패딩 무시): " + (normMatches.length ? normMatches.join(", ") : "없음"));
+
+  if (exactMatches.length === 0 && normMatches.length === 0) {
+    Logger.log("❌ 이 SID는 '" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트 A열 어디에도 없습니다.");
+    Logger.log("   (화면에는 보이는데 이 결과가 나온다면, 탭 이름이 미세하게 다르거나(공백 등),");
+    Logger.log("    이 스크립트가 연결된 스프레드시트가 실제 보고 계신 파일과 다른 파일일 수 있습니다.)");
+  } else {
+    Logger.log("✅ 이 SID는 시트에 존재합니다. 그런데도 화면에서 '동기화가 필요한 SID'가 뜬다면,");
+    Logger.log("   Apps Script를 수정만 하고 '배포 → 배포 관리 → 새 버전'으로 재배포하지 않았을 가능성이 매우 높습니다.");
+  }
 }
 
 function getScenarioDefinition(sid) {

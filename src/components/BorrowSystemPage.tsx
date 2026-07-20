@@ -1231,6 +1231,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 style={{ ...inputStyle, paddingLeft: "40px" }}
               />
             </div>
+            {appVersion ? (
+              <div style={{ fontSize: "10px", color: C.label, marginTop: "-6px", marginBottom: "12px" }}>서버 버전: {appVersion}</div>
+            ) : null}
             {sidCart.length > 0 ? (
               <div style={{ marginBottom: "12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
