@@ -821,7 +821,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       try {
         if (connected && scriptUrl) {
           await Promise.all(returnSnapshot.map(async (c) => {
-            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: whName.trim() || c.item.borrowerName || "", note: "반납 접수" });
+            // 반납 로그의 user는 반드시 '원래 대여자'와 일치해야 서버에서 해당 건의 재고를 정확히 상계한다.
+            // (대여자별로 분리 집계되므로, 반납자 이름을 넣으면 다른 사람의 항목으로 잘못 매칭될 수 있다)
+            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: c.item.borrowerName || whName.trim() || "", note: `반납 접수 (반납자: ${whName.trim()})` });
           }));
           
           setResultInfo((prev: any) => ({
