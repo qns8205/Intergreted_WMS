@@ -51,7 +51,7 @@ interface BorrowSystemPageProps {
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
 export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
-  // 열람에서 일반 자재을 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
+  // 열람에서 일반 자재를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
   const rootMode: Mode = initialKind === "warehouse" ? "wborrow"
     : initialKind === "scenario" ? "b1"
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
@@ -180,7 +180,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       setWhLoaded(true);
     } catch (e: any) {
       setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
-      showToast(`일반 자재을 불러오지 못했습니다: ${e.message}`, "error");
+      showToast(`일반 자재를 불러오지 못했습니다: ${e.message}`, "error");
     }
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
@@ -712,7 +712,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     const user = whName.trim();
     if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
     if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    if (whCart.length === 0) { showToast(`${actionType}할 일반 자재을 담아주세요.`, "warn"); return; }
+    if (whCart.length === 0) { showToast(`${actionType}할 일반 자재를 담아주세요.`, "warn"); return; }
     // 재고 검증
     for (const c of whCart) {
       const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
@@ -1698,10 +1698,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
               {whLoading ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 일반 자재을 불러오는 중...</div>
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 일반 자재를 불러오는 중...</div>
               ) : !whLoaded || whItems.length === 0 ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                  <div>일반 자재 목록을 불러오지 못했습니다.</div>
+                  <div>일반 자재 목록를 불러오지 못했습니다.</div>
                   <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
                 </div>
               ) : whFiltered.length === 0 ? (
