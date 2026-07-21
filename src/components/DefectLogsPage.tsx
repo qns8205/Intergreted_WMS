@@ -337,6 +337,7 @@ export default function DefectLogsPage({
 
   return (
     <div
+      className="dlp-root"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -348,6 +349,11 @@ export default function DefectLogsPage({
         overflowY: "auto",
       }}
     >
+      <style>{`
+        @media (min-width: 900px) {
+          .dlp-root { zoom: 1.15; }
+        }
+      `}</style>
       {/* 1. Header Area */}
       <div
         style={{
