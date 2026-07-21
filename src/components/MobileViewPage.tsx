@@ -877,7 +877,7 @@ export default function MobileViewPage({
                   boxShadow: mode === "등록" ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
                 }}
               >
-                📦 창고 물품
+                📦 일반 자재
               </button>
               <button
                 className="mvp-btn"
@@ -1334,7 +1334,7 @@ export default function MobileViewPage({
           )
         ) : mode === "등록" ? (
           /* =========================================================
-             3. 창고 물품 탭: 목록 보기 / 새 물품 등록 (Admin 모바일 전용)
+             3. 일반 자재 탭: 목록 보기 / 새 물품 등록 (Admin 모바일 전용)
              ========================================================= */
           <>
             <div
@@ -1382,7 +1382,7 @@ export default function MobileViewPage({
               filteredInventory.length === 0 ? (
                 <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
                   <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
-                  등록된 창고 물품이 없습니다.
+                  등록된 일반 자재이 없습니다.
                 </div>
               ) : (
                 filteredInventory.map((item, idx) => {
