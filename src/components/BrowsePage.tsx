@@ -136,7 +136,7 @@ export default function BrowsePage({
       setWhErr("");
     } catch (e: any) {
       setWhErr(e?.message || "불러오기에 실패했습니다.");
-      showToast(`일반 자재을 불러오지 못했습니다: ${e.message}`, "error");
+      showToast(`공구 및 부품류를 불러오지 못했습니다: ${e.message}`, "error");
     }
     finally { setWhLoaded(true); setWhLoading(false); }
   }, [connected, scriptUrl, showToast]);
@@ -324,7 +324,7 @@ export default function BrowsePage({
   }
 
   const headerTitle = step === "scenario" ? "시나리오 물품 열람"
-    : step === "warehouse" ? "일반 자재 열람"
+    : step === "warehouse" ? "공구 및 부품류 열람"
     : step === "mylookup" ? "내 대여 조회" : "열람 조회";
 
   /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
@@ -449,7 +449,7 @@ export default function BrowsePage({
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {[
               { key: "scenario" as const, icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 열람", sub: "모든 시나리오 물품을 그리드로 보고 장바구니에 담습니다" },
-              { key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "일반 자재 열람", sub: "창고 재고를 랙·슬롯별로 보고 장바구니에 담습니다" },
+              { key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 및 부품류 열람", sub: "창고 재고를 랙·슬롯별로 보고 장바구니에 담습니다" },
             ].map((m) => (
               <div
                 key={m.key}
@@ -579,7 +579,7 @@ export default function BrowsePage({
                     ) : null}
                     {myResult.warehouse.length ? (
                       <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>일반 자재</div>
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>공구 및 부품류</div>
                         {myResult.warehouse.map((item: any, i: number) => {
                           const { rack, slot } = parseRackSlot(item.location);
                           return <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} loc={item.location ? `${rack}랙 ${slot}` : ""} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />;
