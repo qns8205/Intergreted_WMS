@@ -76,6 +76,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   /* ---------- 공용 상태 ---------- */
   const [mode, setMode] = useState<Mode>(rootMode);
+  // 단계(mode)가 바뀔 때 이전 화면의 스크롤 위치가 그대로 남아있지 않도록 맨 위로 초기화한다.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [mode]);
   const [appVersion, setAppVersion] = useState<string>("");
   const [objectItems, setObjectItems] = useState<ObjectItem[]>([]);
   const [itemsLoaded, setItemsLoaded] = useState(false);
