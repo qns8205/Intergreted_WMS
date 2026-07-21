@@ -329,8 +329,13 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   }
 
   return (
-    <div>
-      <style>{`@keyframes sap-spin { to { transform: rotate(360deg); } }`}</style>
+    <div className="sap-root">
+      <style>{`
+        @keyframes sap-spin { to { transform: rotate(360deg); } }
+        @media (min-width: 900px) {
+          .sap-root { zoom: 1.15; }
+        }
+      `}</style>
 
       {/* 필터 바 */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center" }}>
@@ -386,7 +391,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
       {/* 편집 모달 (뷰포트 중앙 고정 — 사이드바 영향 없이 화면 정중앙) */}
       {editing ? createPortal(
-        <div onClick={() => !saving && setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div className="sap-root" onClick={() => !saving && setEditing(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)", maxHeight: "90vh", overflowY: "auto", background: C.card, borderRadius: "14px", border: `1px solid ${C.border}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
               <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>{isNew ? "새 시나리오 물품" : "시나리오 물품 편집"}</h2>
@@ -464,7 +469,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
       {/* 오브젝트 상세 모달 (오브젝트 클릭 시 — 대여 현황 / 재고 실사) */}
       {borrowersItem ? createPortal(
-        <div onClick={() => setBorrowersItem(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div className="sap-root" onClick={() => setBorrowersItem(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "14px", border: `1px solid ${C.border}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px 12px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -672,7 +677,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
       {/* 이미지 확대 */}
       {modalUrl ? createPortal(
-        <div onClick={() => setModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div className="sap-root" onClick={() => setModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <button onClick={() => setModalUrl("")} style={{ position: "absolute", top: "16px", right: "20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}><X size={32} /></button>
           <img src={modalUrl} alt="" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px", objectFit: "contain" }} />
         </div>,
