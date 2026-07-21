@@ -235,8 +235,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const returnedCount = logs.filter((l) => l.returned).length;
 
   return (
-    <div>
-      <style>{`@keyframes slp-spin { to { transform: rotate(360deg); } }`}</style>
+    <div className="slp-root">
+      <style>{`
+        @keyframes slp-spin { to { transform: rotate(360deg); } }
+        @media (min-width: 900px) {
+          .slp-root { zoom: 1.15; }
+        }
+      `}</style>
 
       {/* 요약 통계 */}
       <div style={{ display: "flex", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
