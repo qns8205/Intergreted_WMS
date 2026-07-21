@@ -368,8 +368,13 @@ export default function BrowsePage({
   }, []);
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
-      <style>{`@keyframes bsp-spin { to { transform: rotate(360deg); } }`}</style>
+    <div className="brp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+      <style>{`
+        @keyframes bsp-spin { to { transform: rotate(360deg); } }
+        @media (min-width: 900px) {
+          .brp-root { zoom: 1.15; }
+        }
+      `}</style>
 
       <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button onClick={topBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
