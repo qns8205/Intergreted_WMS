@@ -76,11 +76,11 @@ export default function RentalTab({ scriptUrl, inventory, rentLogs, onRefresh, s
         <div style={pillGroupStyle}>
           <button style={pillBtn(type === "대여")} onClick={() => setType("대여")}>
             <Package size={13} style={{ display: "inline", marginRight: 5, verticalAlign: -2 }} />
-            자재 대여
+            공구 및 부품류 대여
           </button>
           <button style={pillBtn(type === "반납", C.success)} onClick={() => setType("반납")}>
             <Undo2 size={13} style={{ display: "inline", marginRight: 5, verticalAlign: -2 }} />
-            자재 반납
+            공구 및 부품류 반납
           </button>
         </div>
       </div>
