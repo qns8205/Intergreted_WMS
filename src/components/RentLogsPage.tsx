@@ -636,7 +636,7 @@ export default function RentLogsPage({
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={selectedItem ? `${selectedItem.name} (${selectedItem.location})` : "자재명/보관소 검색..."}
+                      placeholder={selectedItem ? `${selectedItem.name} (${selectedItem.location})` : "공구 및 부품류명/보관소 검색..."}
                       value={searchQuery}
                       onChange={(e) => {
                         setSearchQuery(e.target.value);
@@ -722,7 +722,7 @@ export default function RentLogsPage({
                       {filteredInventoryItems.length === 0 ? (
                         searchQuery.trim() === "" ? (
                           <div style={{ padding: "10px", fontSize: "12px", color: TEXT_DIM, textAlign: "center" }}>
-                            검색된 자재가 없습니다.
+                            검색된 공구 및 부품류가 없습니다.
                           </div>
                         ) : null
                       ) : (
