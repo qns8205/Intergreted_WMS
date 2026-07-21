@@ -46,6 +46,7 @@ export interface UnreturnedItem {
   scenarioId?: string;
   itemLabel: string;
   itemKind?: string;
+  itemId?: string; // 물품 카탈로그(Sheet3) ID — 관리자 화면에서 오브젝트별 대여자 조회에 사용
   location: string;
   quantity: number;
   borrowDate: string;
