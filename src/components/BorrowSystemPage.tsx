@@ -1803,16 +1803,71 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 창고 물품이 없습니다.</div>
             ) : (
               <>
-                {whReturnItems
-                  .map((item, idx) => ({ item, idx }))
-                  .filter(({ item }) => {
-                    const q = whSearch.trim().toLowerCase();
-                    if (!q) return true;
-                    return String(item.name || "").toLowerCase().includes(q)
-                      || String(item.borrowerName || "").toLowerCase().includes(q)
-                      || String(item.location || "").toLowerCase().includes(q);
-                  })
-                  .map(({ item, idx }) => {
+                {(() => {
+                  const q = whSearch.trim().toLowerCase();
+                  const visible = whReturnItems
+                    .map((item, idx) => ({ item, idx }))
+                    .filter(({ item }) => {
+                      if (!q) return true;
+                      return String(item.name || "").toLowerCase().includes(q)
+                        || String(item.borrowerName || "").toLowerCase().includes(q)
+                        || String(item.location || "").toLowerCase().includes(q);
+                    });
+                  // 대여자별 그룹화 (시나리오 반납 화면과 동일한 UX)
+                  const groupMap: Record<string, { item: any; idx: number }[]> = {};
+                  const order: string[] = [];
+                  visible.forEach((e) => {
+                    const b = String(e.item.borrowerName || "(대여자 미상)");
+                    if (!groupMap[b]) { groupMap[b] = []; order.push(b); }
+                    groupMap[b].push(e);
+                  });
+                  return order.map((borrower) => {
+                    const entries = groupMap[borrower];
+                    const gKey = `wh|${borrower}`;
+                    // 기본 접힘, 검색 중에는 자동 펼침. 직접 토글한 상태가 우선.
+                    const isExp = expanded[gKey] ?? (q.length > 0);
+                    const checkedCount = entries.filter(({ idx }) => whReturnSel[String(idx)] !== undefined).length;
+                    const isAll = checkedCount === entries.length && entries.length > 0;
+                    const isSome = checkedCount > 0 && !isAll;
+                    const avatar = getAvatarColor(borrower);
+                    const totalQty = entries.reduce((s, { item }) => s + (parseInt(String(item.quantity), 10) || 1), 0);
+                    const toggleGroupSel = () => {
+                      setWhReturnSel((p) => {
+                        const n = { ...p };
+                        entries.forEach(({ item, idx }) => {
+                          const key = String(idx);
+                          const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
+                          if (isAll) delete n[key]; else n[key] = n[key] ?? maxQty;
+                        });
+                        return n;
+                      });
+                    };
+                    return (
+                      <div key={gKey} style={{ marginBottom: "12px" }}>
+                        <div
+                          onClick={() => setExpanded((prev) => ({ ...prev, [gKey]: !isExp }))}
+                          style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", background: C.card, borderRadius: "14px", border: `1.5px solid ${isAll ? C.accent : C.border}`, boxShadow: "0 2px 12px rgba(0,0,0,0.02)", cursor: "pointer", userSelect: "none" }}
+                        >
+                          <div
+                            onClick={(e) => { e.stopPropagation(); toggleGroupSel(); }}
+                            style={{ width: 22, height: 22, borderRadius: "6px", border: `2px solid ${isAll || isSome ? C.accent : C.label}`, background: isAll ? C.accent : isSome ? C.accentSoft : C.card, boxShadow: isAll || isSome ? "none" : "inset 0 1px 2px rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
+                          >
+                            {isAll ? <Check size={14} strokeWidth={3.5} style={{ color: "#ffffff" }} /> : null}
+                            {isSome ? <div style={{ width: 10, height: 10, background: C.accent, borderRadius: "3px" }} /> : null}
+                          </div>
+                          <div style={{ width: 32, height: 32, borderRadius: "50%", background: avatar.bg, color: avatar.text, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "12px", flexShrink: 0 }}>
+                            {borrower.slice(0, 1)}
+                          </div>
+                          <span style={{ fontWeight: 800, fontSize: "14px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{borrower}</span>
+                          <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>{totalQty}개</span>
+                          {checkedCount > 0 ? (
+                            <span style={{ fontSize: "10px", fontWeight: 700, color: C.success, background: C.successSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>{checkedCount}건 선택됨</span>
+                          ) : null}
+                          <ChevronRight size={16} style={{ color: C.label, flexShrink: 0, transform: isExp ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }} />
+                        </div>
+                        {isExp ? (
+                          <div style={{ paddingLeft: "12px", borderLeft: `1px dashed ${C.border}`, marginLeft: "16px", marginTop: "6px" }}>
+                            {entries.map(({ item, idx }) => {
                   const key = String(idx);
                   const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
                   const sel = whReturnSel[key];
@@ -1842,7 +1897,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                       </div>
                     </div>
                   );
-                })}
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  });
+                })()}
                 <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                   <button onClick={goPrev} style={secondaryBtn}>이전</button>
                   <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
