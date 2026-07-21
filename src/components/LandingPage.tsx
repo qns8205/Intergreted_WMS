@@ -136,7 +136,7 @@ export default function LandingPage({
             color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
-          자재 대여 · 반납 · 관리
+          공구 및 부품류 대여 · 반납 · 관리
         </h1>
         {connected && (bottomLoading || bottomItems.length > 0) ? (
           <div
@@ -214,13 +214,13 @@ export default function LandingPage({
             key: "browse" as const,
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
-            desc: "시나리오 물품과 일반 자재을 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+            desc: "시나리오 물품과 공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
           },
           {
             key: "mylookup" as const,
             icon: <PackageOpen size={24} />,
             title: "내 대여 조회",
-            desc: "내가 대여 중인 시나리오·일반 자재과 위치를 확인합니다.",
+            desc: "내가 대여 중인 시나리오·공구 및 부품류와 위치를 확인합니다.",
           },
         ].map((c) => (
           <div
