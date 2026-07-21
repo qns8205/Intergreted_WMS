@@ -327,7 +327,7 @@ export function clearBrowseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-/* ══════════ 창고 물품 (창고물품 시트) 타입 & 헬퍼 ══════════ */
+/* ══════════ 일반 자재 (자재 시트) 타입 & 헬퍼 ══════════ */
 
 export interface WarehouseItem {
   rowIndex: number;
@@ -383,13 +383,13 @@ export function clearWarehouseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(WH_CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-// 창고 재고 전체 조회 (WMS getAll의 inventory 사용)
+// 창고 재고 조회 (인벤토리 시트만 읽는 경량 액션 — getAll 대비 훨씬 빠름)
 export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
-  const data = await apiGet(scriptUrl, "getAll", {}, { timeoutMs: 60000, retries: 1 });
+  const data = await apiGet(scriptUrl, "getWarehouseInventoryOnly", {}, { timeoutMs: 30000, retries: 1 });
   return (data.inventory || []) as WarehouseItem[];
 }
 
-// 창고 물품 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
+// 일반 자재 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
 export async function postWarehouseRent(
   scriptUrl: string,
   payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
