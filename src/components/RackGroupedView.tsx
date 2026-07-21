@@ -86,7 +86,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
       {groups.length === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
           <Package size={36} style={{ color: C.border, marginBottom: "8px" }} />
-          <div>{search ? "검색 결과가 없습니다." : "표시할 일반 자재이 없습니다."}</div>
+          <div>{search ? "검색 결과가 없습니다." : "표시할 공구 및 부품류가 없습니다."}</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
