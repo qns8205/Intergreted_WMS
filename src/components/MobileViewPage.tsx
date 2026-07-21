@@ -31,6 +31,7 @@ interface MobileViewPageProps {
   inventory: InventoryItem[];
   rentLogs: RentLog[];
   defectLogs?: DefectLog[];
+  robotObjects?: any[];
   racks?: Rack[];
   isAdmin?: boolean;
   onOpenScenario?: () => void;
@@ -70,6 +71,7 @@ export default function MobileViewPage({
   inventory,
   rentLogs,
   defectLogs = [],
+  robotObjects = [],
   racks = [],
   isAdmin = false,
   onOpenScenario,
@@ -134,6 +136,7 @@ export default function MobileViewPage({
   const [defectTab, setDefectTab] = useState<"list" | "register">("list");
   const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
   const [defSelectedInvIndex, setDefSelectedInvIndex] = useState<number>(-1); // -1: 직접 입력
+  const [defItemCategory, setDefItemCategory] = useState<"rack" | "robot">("rack"); // 공구 및 부품류 vs 로봇 오브젝트
   const [defCustomName, setDefCustomName] = useState("");
   const [defSearch, setDefSearch] = useState("");
   const [defCustomLoc, setDefCustomLoc] = useState("");
@@ -596,13 +599,14 @@ export default function MobileViewPage({
       itemName = defCustomName.trim();
       itemLocation = defCustomLoc.trim();
     } else {
-      const selectedInv = inventory[defSelectedInvIndex];
+      const source = defItemCategory === "rack" ? inventory : robotObjects;
+      const selectedInv = source[defSelectedInvIndex];
       if (!selectedInv) {
         notify("선택된 품목이 올바르지 않습니다.", "warn");
         return;
       }
       itemName = selectedInv.name;
-      itemLocation = selectedInv.location;
+      itemLocation = selectedInv.location || "";
     }
 
     setDefectSubmitting(true);
@@ -617,6 +621,7 @@ export default function MobileViewPage({
         note: defNote.trim(),
         actionTaken: defActionTaken.trim() || "조치 예정",
         photo: defPhoto,
+        itemCategory: defItemCategory,
       };
 
       if (onAddDefectLog) {
@@ -628,6 +633,9 @@ export default function MobileViewPage({
         setDefQty(1);
         setDefNote("");
         setDefPhoto(""); // Reset photo state
+        setDefSelectedInvIndex(-1);
+        setDefItemCategory("rack");
+        setDefSearch("");
         setDefectTab("list"); // Go back to list!
       } else {
         notify("불량 등록 처리 핸들러가 연결되지 않았습니다.", "error");
@@ -1868,6 +1876,49 @@ export default function MobileViewPage({
             ) : (
               /* 4-B. 불량 제품 등록 폼 */
               <form onSubmit={handleRegisterDefectSubmit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                {/* 분류 선택: 공구 및 부품류 vs 로봇 오브젝트 */}
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: "4px",
+                    background: isLightMode ? "#f1f5f9" : "#111827",
+                    padding: "4px",
+                    borderRadius: "12px",
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="mvp-btn"
+                    onClick={() => { setDefItemCategory("rack"); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefSearch(""); }}
+                    style={{
+                      padding: "9px",
+                      borderRadius: "9px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      background: defItemCategory === "rack" ? TEXT_MAIN : "transparent",
+                      color: defItemCategory === "rack" ? BG : TEXT_DIM,
+                    }}
+                  >
+                    🧰 공구 및 부품류
+                  </button>
+                  <button
+                    type="button"
+                    className="mvp-btn"
+                    onClick={() => { setDefItemCategory("robot"); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefSearch(""); }}
+                    style={{
+                      padding: "9px",
+                      borderRadius: "9px",
+                      fontSize: "12.5px",
+                      fontWeight: 700,
+                      background: defItemCategory === "robot" ? TEXT_MAIN : "transparent",
+                      color: defItemCategory === "robot" ? BG : TEXT_DIM,
+                    }}
+                  >
+                    🤖 로봇 오브젝트
+                  </button>
+                </div>
+
                 {/* 품목 선택 */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                   <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>품목 고르기</label>
@@ -1876,7 +1927,7 @@ export default function MobileViewPage({
                     <input
                       className="mvp-input"
                       type="text"
-                      placeholder="물품명·위치로 검색"
+                      placeholder={defItemCategory === "rack" ? "물품명·위치로 검색" : "로봇 오브젝트 검색 (이름, 규격 등)"}
                       value={defSearch}
                       onChange={(e) => setDefSearch(e.target.value)}
                       style={{ ...inputBaseStyle, paddingLeft: "36px" }}
@@ -1888,9 +1939,10 @@ export default function MobileViewPage({
                     onChange={(e) => {
                       const idx = Number(e.target.value);
                       setDefSelectedInvIndex(idx);
-                      if (idx !== -1) {
-                        setDefCustomName(inventory[idx].name);
-                        setDefCustomLoc(inventory[idx].location);
+                      const source = defItemCategory === "rack" ? inventory : robotObjects;
+                      if (idx !== -1 && source[idx]) {
+                        setDefCustomName(source[idx].name);
+                        setDefCustomLoc(source[idx].location || "");
                       } else {
                         setDefCustomName("");
                         setDefCustomLoc("");
@@ -1905,16 +1957,16 @@ export default function MobileViewPage({
                     }}
                   >
                     <option value={-1}>직접 품목 입력하기</option>
-                    {inventory
+                    {(defItemCategory === "rack" ? inventory : robotObjects)
                       .map((item, idx) => ({ item, idx }))
                       .filter(({ item }) => !defSearch.trim() || smartMatch([item.name, item.location, item.spec, item.keywords], defSearch))
                       .map(({ item, idx }) => (
                         <option key={idx} value={idx}>
-                          {item.name} ({item.location})
+                          {item.name} {item.spec ? `[${item.spec}]` : ""} {item.location ? `(${item.location})` : ""}
                         </option>
                       ))}
                   </select>
-                  {defSearch.trim() && inventory.filter((item) => smartMatch([item.name, item.location, item.spec, item.keywords], defSearch)).length === 0 ? (
+                  {defSearch.trim() && (defItemCategory === "rack" ? inventory : robotObjects).filter((item) => smartMatch([item.name, item.location, item.spec, item.keywords], defSearch)).length === 0 ? (
                     <div style={{ fontSize: "11px", color: AMBER, fontWeight: 600 }}>검색 결과가 없습니다. "직접 품목 입력하기"로 등록하세요.</div>
                   ) : null}
                 </div>
