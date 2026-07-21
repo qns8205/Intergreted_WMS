@@ -435,6 +435,32 @@ export async function deleteScenarioObject(scriptUrl: string, rowIndex: number):
   return apiPost(scriptUrl, "deleteScenarioObject", { rowIndex });
 }
 
+/* ══════════ 재고 실사 기록 (관리자용) ══════════ */
+
+export interface StockAuditRecord {
+  auditedAt: string;
+  itemId: string;
+  itemName: string;
+  systemStock: number;
+  actualCount: number;
+  diff: number;
+  auditor: string;
+  note: string;
+}
+
+// itemId를 넘기면 해당 물품만, 생략하면 전체 실사 기록을 최신순으로 반환.
+export async function fetchStockAuditHistory(scriptUrl: string, itemId?: string): Promise<StockAuditRecord[]> {
+  const data = await apiGet(scriptUrl, "getStockAuditHistory", itemId ? { itemId } : {});
+  return (data.items || []) as StockAuditRecord[];
+}
+
+export async function recordStockAudit(
+  scriptUrl: string,
+  payload: { itemId: string; itemName: string; systemStock: number; actualCount: number; auditor?: string; note?: string }
+): Promise<{ success: boolean; message?: string; record?: StockAuditRecord }> {
+  return apiPost(scriptUrl, "recordStockAudit", payload);
+}
+
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
   const pa = String(la ?? "").toUpperCase().split("-");
