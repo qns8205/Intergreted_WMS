@@ -1,5 +1,44 @@
-import React, { useState } from "react";
-import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, TrendingDown } from "lucide-react";
+import { fetchScenarioAllLogs } from "../utils/borrowApi";
+
+// 가장 적게 대여된 물품: 랜딩 진입 때마다 무거운 전체 대장 조회를 반복하지 않도록
+// 모듈 레벨에서 5분간 캐시한다. 실패해도 조용히 숨긴다(랜딩 화면의 부가 정보일 뿐이므로).
+const bottomItemsCache: { key: string; at: number; items: [string, number][] } = { key: "", at: 0, items: [] };
+
+function useBottomItems(scriptUrl: string, connected: boolean): [string, number][] {
+  const [items, setItems] = useState<[string, number][]>(
+    bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000 ? bottomItemsCache.items : []
+  );
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    if (bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000) {
+      setItems(bottomItemsCache.items);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const logs = await fetchScenarioAllLogs(scriptUrl);
+        const byItem: Record<string, number> = {};
+        logs.forEach((l) => {
+          const nm = String(l.itemName || "").trim();
+          if (!nm || nm === "(물품 미등록)") return;
+          byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
+        });
+        const bottom = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 5) as [string, number][];
+        bottomItemsCache.key = scriptUrl;
+        bottomItemsCache.at = Date.now();
+        bottomItemsCache.items = bottom;
+        if (!cancelled) setItems(bottom);
+      } catch {
+        /* 조용히 무시 — 랜딩 화면의 부가 정보 */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [scriptUrl, connected]);
+  return items;
+}
 
 interface LandingPageProps {
   onNavigate: (view: "borrow" | "return" | "browse" | "mylookup" | "login") => void;
@@ -27,6 +66,7 @@ export default function LandingPage({
   onOpenSetup,
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
+  const bottomItems = useBottomItems(scriptUrl, connected);
 
   return (
     <div
@@ -77,6 +117,35 @@ export default function LandingPage({
         >
           자재 대여 · 반납 · 관리
         </h1>
+        {bottomItems.length > 0 ? (
+          <div
+            style={{
+              display: "inline-block",
+              textAlign: "left",
+              marginTop: "4px",
+              padding: "12px 16px",
+              borderRadius: "14px",
+              border: `1px solid ${isLightMode ? "#e2e8f0" : "#1e293b"}`,
+              background: isLightMode ? "#ffffff" : "#0f172a",
+              boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
+              maxWidth: "420px",
+              width: "100%",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#475569" : "#94a3b8", marginBottom: "8px" }}>
+              <TrendingDown size={14} style={{ color: isLightMode ? "#2563eb" : "#60a5fa" }} />
+              가장 적게 대여된 물품
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              {bottomItems.map(([name, qty]) => (
+                <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
+                  <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                  <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div
