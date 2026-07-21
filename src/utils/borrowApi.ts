@@ -461,6 +461,18 @@ export async function recordStockAudit(
   return apiPost(scriptUrl, "recordStockAudit", payload);
 }
 
+export interface StockFormulaStatus {
+  found: boolean;
+  stockIsFormula: boolean;
+  rentedIsFormula: boolean;
+}
+
+// 재고/대여중 열이 수식으로 되어 있으면 자동 갱신이 적용되지 않아, 실사 불일치의 흔한 원인이 된다.
+export async function fetchStockFormulaStatus(scriptUrl: string, itemId: string): Promise<StockFormulaStatus> {
+  const data = await apiGet(scriptUrl, "getStockFormulaStatus", { itemId });
+  return (data.status || { found: false, stockIsFormula: false, rentedIsFormula: false }) as StockFormulaStatus;
+}
+
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
   const pa = String(la ?? "").toUpperCase().split("-");
