@@ -118,7 +118,7 @@ export default function RentalPage({
       setCart((prev) => [...prev, newCartItem]);
       showToast(`${customItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
 
-      // 자재 입력 영역 리셋
+      // 공구 및 부품류 입력 영역 리셋
       setCustomName("");
       setCustomLocation("기타");
       setRentQty(1);
@@ -185,7 +185,7 @@ export default function RentalPage({
     setCart((prev) => [...prev, newCartItem]);
     showToast(`${activeItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
 
-    // 자재 입력 영역만 리셋 (담당자는 유지)
+    // 공구 및 부품류 입력 영역만 리셋 (담당자는 유지)
     setSelectedItem(null);
     setRentQty(1);
     setNoteInput("");
@@ -373,7 +373,7 @@ export default function RentalPage({
             📋 대여 및 반납 신청서
           </h2>
           <p style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "24px" }}>
-            필요한 자재의 대여 또는 반납을 신청하면 실시간으로 재고가 정산됩니다.
+            필요한 공구 및 부품류의 대여 또는 반납을 신청하면 실시간으로 재고가 정산됩니다.
           </p>
 
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -399,7 +399,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  📥 자재 대여
+                  📥 공구 및 부품류 대여
                 </button>
                 <button
                   type="button"
@@ -416,7 +416,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  🔄 자재 반납
+                  🔄 공구 및 부품류 반납
                 </button>
                 <button
                   type="button"
@@ -433,7 +433,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  🔥 자재 소모
+                  🔥 공구 및 부품류 소모
                 </button>
               </div>
             </div>
@@ -532,7 +532,7 @@ export default function RentalPage({
                     />
                   </div>
                   <p style={{ fontSize: "10.5px", color: isLightMode ? "#64748b" : "#94a3b8", lineHeight: "1.4", margin: 0 }}>
-                    ⚠️ 입력하신 물품명과 위치는 <strong>일회성 로그</strong>에만 기록되며, 메인 창고 자재 마스터 목록에는 저장되지 않습니다.
+                    ⚠️ 입력하신 물품명과 위치는 <strong>일회성 로그</strong>에만 기록되며, 메인 창고 공구 및 부품류 마스터 목록에는 저장되지 않습니다.
                   </p>
                 </div>
               ) : (
@@ -700,7 +700,7 @@ export default function RentalPage({
                     {filteredItems.length === 0 ? (
                       searchQuery.trim() === "" ? (
                         <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                          일치하는 자재 품목이 없습니다.
+                          일치하는 공구 및 부품류 품목이 없습니다.
                         </div>
                       ) : null
                     ) : (
@@ -1070,7 +1070,7 @@ export default function RentalPage({
                 </div>
               )}
               <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 자재 사양</div>
+                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 공구 및 부품류 사양</div>
                 <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedItem.name}</div>
                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
                   위치: {selectedItem.location} | 현재고: {selectedItem.stock ?? 0}개
@@ -1079,7 +1079,7 @@ export default function RentalPage({
             </div>
           ) : (
             <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#2563eb", textAlign: "center" }}>
-              품목을 선택하면 해당 자재 정보의 요약이 여기에 표출됩니다.
+              품목을 선택하면 해당 공구 및 부품류 정보의 요약이 여기에 표출됩니다.
             </div>
           )}
         </div>
