@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw,
 } from "lucide-react";
 import {
   ScenarioObjectAdmin, padSlot,
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
+  fetchUnreturnedItems, UnreturnedItem,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -48,6 +49,39 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [modalUrl, setModalUrl] = useState("");
+
+  // 오브젝트 클릭 시 "누가 얼마나 빌려갔는지" 보여주는 대여자 상세 모달
+  const [borrowersItem, setBorrowersItem] = useState<ScenarioObjectAdmin | null>(null);
+  const [unreturned, setUnreturned] = useState<UnreturnedItem[]>([]);
+  const [unreturnedLoading, setUnreturnedLoading] = useState(false);
+  const [unreturnedLoaded, setUnreturnedLoaded] = useState(false);
+
+  const loadUnreturned = useCallback(async () => {
+    setUnreturnedLoading(true);
+    try {
+      if (connected && scriptUrl) setUnreturned(await fetchUnreturnedItems(scriptUrl));
+      else setUnreturned([]);
+      setUnreturnedLoaded(true);
+    } catch (e: any) {
+      showToast(`대여 현황을 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      setUnreturnedLoading(false);
+    }
+  }, [connected, scriptUrl, showToast]);
+
+  function openBorrowers(it: ScenarioObjectAdmin) {
+    setBorrowersItem(it);
+    if (!unreturnedLoaded && !unreturnedLoading) loadUnreturned();
+  }
+
+  // 선택된 오브젝트를 현재 대여 중인 사람들 (동일 물품 ID 기준)
+  const borrowersForItem = useMemo(() => {
+    if (!borrowersItem) return [];
+    const targetId = padSlot(borrowersItem.id);
+    return unreturned
+      .filter((u) => (u.itemId ? padSlot(u.itemId) === targetId : false))
+      .sort((a, b) => (a.borrowDate < b.borrowDate ? 1 : -1));
+  }, [unreturned, borrowersItem]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -173,8 +207,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: "16px" }}>
           {filtered.map((it) => (
-            <div key={it.rowIndex} style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 2px 4px rgba(0,0,0,0.04)" }}>
-              <div onClick={() => it.image && setModalUrl(getGoogleDriveImageUrl(it.image))} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: it.image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
+            <div
+              key={it.rowIndex}
+              onClick={() => openBorrowers(it)}
+              style={{ border: `1px solid ${C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 2px 4px rgba(0,0,0,0.04)", cursor: "pointer" }}
+            >
+              <div onClick={(e) => { e.stopPropagation(); if (it.image) setModalUrl(getGoogleDriveImageUrl(it.image)); }} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: it.image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
                 {it.image ? <img src={getGoogleDriveImageUrl(it.image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
               </div>
               <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -188,7 +226,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                   <span style={{ color: C.success, background: C.successSoft, padding: "2px 8px", borderRadius: "6px" }}>재고 {it.stock}</span>
                   <span style={{ color: C.accentText, background: C.accentSoft, padding: "2px 8px", borderRadius: "6px" }}>대여 중 {it.rented}</span>
                 </div>
-                <div style={{ marginTop: "auto", paddingTop: "8px", display: "flex", gap: "6px" }}>
+                <div style={{ marginTop: "auto", paddingTop: "8px", display: "flex", gap: "6px" }} onClick={(e) => e.stopPropagation()}>
                   <button onClick={() => openEdit(it)} style={{ flex: 1, padding: "8px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}><Pencil size={13} /> 편집</button>
                   <button onClick={() => remove(it)} style={{ flex: "0 0 auto", padding: "8px 10px", borderRadius: "9px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
                 </div>
@@ -270,6 +308,54 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
               <button onClick={save} disabled={saving || uploading} style={{ flex: 2, padding: "13px", borderRadius: "11px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "7px", opacity: saving || uploading ? 0.7 : 1 }}>
                 {saving ? <><Spinner size={15} /> 저장 중...</> : <><Save size={15} /> {isNew ? "추가하기" : "저장하기"}</>}
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
+      {/* 대여 현황 모달 (오브젝트 클릭 시 — 누가 얼마나 빌려갔는지) */}
+      {borrowersItem ? createPortal(
+        <div onClick={() => setBorrowersItem(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "14px", border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: "6px" }}><Users size={16} style={{ color: C.accentText }} /> 대여 현황</h2>
+                <div style={{ fontSize: "12px", color: C.label, marginTop: "3px" }}>{borrowersItem.name} ({borrowersItem.id})</div>
+              </div>
+              <button onClick={() => !unreturnedLoading && loadUnreturned()} disabled={unreturnedLoading} title="새로고침" style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 9px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: unreturnedLoading ? "default" : "pointer", opacity: unreturnedLoading ? 0.6 : 1, fontSize: "11px", fontWeight: 700 }}>
+                <style>{`@keyframes sapSpinBtn { to { transform: rotate(360deg); } } .sap-spin-btn { animation: sapSpinBtn 0.9s linear infinite; }`}</style>
+                <RotateCcw size={13} className={unreturnedLoading ? "sap-spin-btn" : undefined} />
+              </button>
+              <button onClick={() => setBorrowersItem(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              {unreturnedLoading && !unreturnedLoaded ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={26} /> 대여 현황을 불러오는 중...</div>
+              ) : borrowersForItem.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>현재 이 물품을 대여 중인 사람이 없습니다.</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
+                    총 <b style={{ color: C.accentText }}>{borrowersForItem.reduce((s, u) => s + (u.quantity || 1), 0)}개</b>가 <b style={{ color: C.accentText }}>{new Set(borrowersForItem.map((u) => u.borrowerName)).size}명</b>에게 대여 중
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    {borrowersForItem.map((u, idx) => (
+                      <div key={`${u.sheetType}-${u.rowIndex}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</div>
+                          <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
+                            <span>{u.sheetType === "scenario" ? `SID 대여${u.scenarioId ? ` (${u.scenarioId})` : ""}` : "일반 대여"}</span>
+                            <span>·</span>
+                            <span>{u.borrowDate || "-"}</span>
+                          </div>
+                        </div>
+                        <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>,
