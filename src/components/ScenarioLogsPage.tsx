@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Search, RotateCcw, Package, MapPin, User, Check, Undo2, RefreshCw,
   TrendingUp, Clock, CheckCircle2, Repeat,
@@ -54,6 +54,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   // 필터가 바뀌면 페이지를 처음으로 되돌린다.
   useEffect(() => { setVisibleCount(30); }, [search, kindFilter, statusFilter, borrowerFilter]);
 
+  // 화면에 데이터가 떠 있는지 여부는 ref로 추적한다.
+  // (state를 load의 의존성에 넣으면 로드 완료 → load 재생성 → useEffect 재실행의 무한 재조회 루프가 생긴다)
+  const hasDataRef = useRef(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     setSel({});
@@ -63,20 +67,46 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           fetchScenarioAllLogs(scriptUrl),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
         ]);
+        // 서버 정렬을 신뢰하되, 날짜 형식이 섞인 과거 데이터를 대비해 클라이언트에서도 재정렬.
+        // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순 → 반납 처리된 건도 위로 올라온다.
+        const parseTs = (v?: string) => {
+          const s = String(v || "").trim();
+          if (!s) return 0;
+          const t = Date.parse(s.replace(" ", "T"));
+          return isNaN(t) ? 0 : t;
+        };
+        const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDate), parseTs((l as any).returnDate));
+        list.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         setLogs(list);
         setAppVersion(ver);
+        hasDataRef.current = list.length > 0;
       } else {
         setLogs([
           { sheetType: "scenario", rowIndex: 2, borrowerName: "홍길동", scenarioId: "S00001", itemLabel: "[000060] 소화기 x 2", itemKind: "필수 물품", location: "000060", itemId: "000060", itemName: "소화기", quantity: 2, borrowDate: "2026-07-15 09:00", borrowPurpose: "훈련", email: "", batchId: "b1", returned: false, image: "", stock: 5, rented: 2 },
           { sheetType: "general", rowIndex: 3, borrowerName: "김철수", itemLabel: "[000012] 삼각대 x 1", location: "000012", itemId: "000012", itemName: "삼각대", quantity: 1, borrowDate: "2026-07-11 14:00", borrowPurpose: "촬영", email: "", batchId: "b2", generalOption: "일반 대여", returned: true, image: "", stock: 3, rented: 0 },
         ]);
+        hasDataRef.current = true;
       }
       setLoaded(true);
-    } catch (e: any) { showToast(`시나리오 대여 대장을 불러오지 못했습니다: ${e.message}`, "error"); }
+    } catch (e: any) {
+      // 이미 대장이 화면에 떠 있는 상태의 새로고침 실패라면(보기 전용 갱신) 조용한 경고로만 알린다.
+      if (hasDataRef.current) {
+        showToast("대장 새로고침이 지연되어 기존 데이터를 그대로 표시합니다.", "warn");
+      } else {
+        showToast(`시나리오 대여 대장을 불러오지 못했습니다: ${e.message}`, "error");
+      }
+    }
     finally { setLoading(false); }
   }, [connected, scriptUrl, showToast]);
 
-  useEffect(() => { load(); }, [load]);
+  // 최초 진입(및 연동 상태가 실제로 바뀐 경우)에만 1회 로드. 이후에는 새로고침 버튼으로만 갱신한다.
+  const loadedKeyRef = useRef("");
+  useEffect(() => {
+    const key = `${connected}|${scriptUrl}`;
+    if (loadedKeyRef.current === key) return;
+    loadedKeyRef.current = key;
+    load();
+  }, [connected, scriptUrl, load]);
 
   const borrowers = useMemo(() => {
     const set = new Set<string>();
@@ -119,14 +149,17 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       if (!byBorrower[b]) byBorrower[b] = { total: 0, unreturned: 0, returned: 0 };
       byBorrower[b].total += 1;
       if (l.returned) byBorrower[b].returned += 1; else byBorrower[b].unreturned += 1;
-      byItem[l.itemName] = (byItem[l.itemName] || 0) + l.quantity;
+      // '(물품 미등록)' 등 이름 없는 항목은 품목 통계에서 제외
+      const nm = String(l.itemName || "").trim();
+      if (nm && nm !== "(물품 미등록)") byItem[nm] = (byItem[nm] || 0) + l.quantity;
       const day = String(l.borrowDate || "").slice(0, 10);
       if (day) byDay[day] = (byDay[day] || 0) + 1;
     });
     const topBorrowers = Object.entries(byBorrower).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
     const topItems = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const bottomItems = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const recentDays = Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
-    return { topBorrowers, topItems, recentDays };
+    return { topBorrowers, topItems, bottomItems, recentDays };
   }, [logs]);
 
   const selKey = (it: ScenarioLogEntry) => `${it.sheetType}:${it.rowIndex}`;
@@ -227,6 +260,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px", marginBottom: "14px" }}>
           <StatCard C={C} title="대여자별 (상위 5)" rows={stats.topBorrowers.map(([name, v]) => ({ label: name, value: `${v.total}건 (미반납 ${v.unreturned})` }))} />
           <StatCard C={C} title="많이 대여된 물품 (상위 5)" rows={stats.topItems.map(([name, v]) => ({ label: name, value: `${v}개` }))} />
+          <StatCard C={C} title="가장 적게 대여된 물품 (하위 5)" rows={stats.bottomItems.map(([name, v]) => ({ label: name, value: `${v}개` }))} />
           <StatCard C={C} title="최근 대여일별 (7일)" rows={stats.recentDays.map(([day, v]) => ({ label: day, value: `${v}건` }))} />
         </div>
       ) : null}
