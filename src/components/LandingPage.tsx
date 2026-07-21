@@ -352,7 +352,7 @@ export default function LandingPage({
             🛠️ 관리 모드
           </div>
           <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-            창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
+            창고 구역 배치·재고 수정·로그 관리. Admin ID와 비밀번호로 로그인해야 합니다.
           </div>
         </div>
         <div
