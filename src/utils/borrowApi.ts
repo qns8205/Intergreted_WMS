@@ -140,25 +140,43 @@ function buildUrl(scriptUrl: string, qs: string): string {
   return base + (base.indexOf("?") !== -1 ? "&" : "?") + qs;
 }
 
-async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}) {
+// GET 요청은 전부 읽기 전용이므로 타임아웃 시 자동 재시도가 안전하다.
+// GAS 콜드스타트나 대용량 시트 조회(getScenarioAllLogs 등)는 30초를 넘길 수 있어
+// 액션별로 타임아웃/재시도 횟수를 조절할 수 있게 한다.
+interface ApiGetOptions {
+  timeoutMs?: number; // 1회 시도당 제한 시간 (기본 30초)
+  retries?: number;   // 타임아웃 시 추가 재시도 횟수 (기본 1회)
+}
+
+async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}, opts: ApiGetOptions = {}) {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
+  const timeoutMs = opts.timeoutMs ?? 30000;
+  const retries = opts.retries ?? 1;
   const qs = new URLSearchParams({ action, ...params }).toString();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃 (무한로딩 방지)
   const url = buildUrl(scriptUrl, qs);
-  let res: Response;
-  try {
-    res = await fetch(url, { signal: controller.signal });
-  } catch (e: any) {
-    if (e?.name === "AbortError") throw new Error(`서버 응답이 지연되어 요청을 취소했습니다. (액션: ${action}, 네트워크 상태를 확인하고 다시 시도해주세요.)`);
-    let errMsg = e?.message || "서버와 연결할 수 없습니다.";
-    if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
-      errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
+
+  let res: Response | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs); // 무한로딩 방지
+    try {
+      res = await fetch(url, { signal: controller.signal });
+      break; // 성공 시 루프 종료
+    } catch (e: any) {
+      if (e?.name === "AbortError") {
+        if (attempt < retries) continue; // 타임아웃 → 조용히 재시도
+        throw new Error(`서버 응답이 지연되어 요청을 취소했습니다. (액션: ${action}, ${attempt + 1}회 시도, 네트워크 상태를 확인하고 다시 시도해주세요.)`);
+      }
+      let errMsg = e?.message || "서버와 연결할 수 없습니다.";
+      if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
+        errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
+      }
+      throw new Error(`[네트워크 오류] ${errMsg} (요청 URL: ${url.substring(0, 80)}...)`);
+    } finally {
+      clearTimeout(timer);
     }
-    throw new Error(`[네트워크 오류] ${errMsg} (요청 URL: ${url.substring(0, 80)}...)`);
-  } finally {
-    clearTimeout(timer);
   }
+  if (!res) throw new Error(`요청에 실패했습니다. (액션: ${action})`);
   const text = await res.text();
   let data: any;
   try {
@@ -226,7 +244,7 @@ export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> 
 }
 
 export async function fetchObjectItems(scriptUrl: string): Promise<ObjectItem[]> {
-  const data = await apiGet(scriptUrl, "getObjectItems");
+  const data = await apiGet(scriptUrl, "getObjectItems", {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ObjectItem[];
 }
 
@@ -236,7 +254,7 @@ export async function fetchScenarioDefinition(scriptUrl: string, sid: string): P
 }
 
 export async function fetchUnreturnedItems(scriptUrl: string): Promise<UnreturnedItem[]> {
-  const data = await apiGet(scriptUrl, "getUnreturnedItems");
+  const data = await apiGet(scriptUrl, "getUnreturnedItems", {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as UnreturnedItem[];
 }
 
@@ -367,7 +385,7 @@ export function clearWarehouseCart(name: string, employeeId: string): void {
 
 // 창고 재고 전체 조회 (WMS getAll의 inventory 사용)
 export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
-  const data = await apiGet(scriptUrl, "getAll");
+  const data = await apiGet(scriptUrl, "getAll", {}, { timeoutMs: 60000, retries: 1 });
   return (data.inventory || []) as WarehouseItem[];
 }
 
@@ -400,7 +418,7 @@ export interface ScenarioObjectAdmin {
 }
 
 export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
-  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin");
+  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ScenarioObjectAdmin[];
 }
 
@@ -450,13 +468,14 @@ export interface ScenarioLogEntry {
   batchId: string;
   generalOption?: string;
   returned: boolean;
+  returnDate?: string; // 반납 처리 시각 (대장 최신 활동순 정렬에 사용)
   image: string;
   stock: number;
   rented: number;
 }
 
 export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioLogEntry[]> {
-  const data = await apiGet(scriptUrl, "getScenarioAllLogs");
+  const data = await apiGet(scriptUrl, "getScenarioAllLogs", {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ScenarioLogEntry[];
 }
 
