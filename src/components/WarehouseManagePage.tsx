@@ -47,7 +47,7 @@ export default function WarehouseManagePage({ scriptUrl, inventory, onBack, onRe
       </div>
 
       <div style={{ fontSize: 12, color: C.sub, marginBottom: 10 }}>
-        랙을 눌러 해당 위치의 물품을 확인·등록·수정·삭제할 수 있습니다. (숫자 랙 = 시나리오 물품, 알파벳 랙 = 창고 자재)
+        랙을 눌러 해당 위치의 물품을 확인·등록·수정·삭제할 수 있습니다. (숫자 랙 = 시나리오 물품, 알파벳 랙 = 창고 공구 및 부품류)
       </div>
 
       <LocationMap onZoneClick={setSelectedZone} activeZoneId={selectedZone?.id} hasItemsMap={hasItemsMap} />
