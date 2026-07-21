@@ -1,210 +1,345 @@
-/**
- * 다국어/유연 검색 유틸리티
- * - 한글 검색어로 영어 품목명 매칭 (물병 → bottled water/bottle)
- * - 영어 검색어로 한글 품목명 매칭 (cable → 케이블)
- * - 대소문자·공백·하이픈 무시 (부분일치)
- * - 초성 검색 (ㅋㅇㅂ → 키보드)
- */
+import React, { useState, useMemo, useEffect, useCallback } from "react";
+import {
+  Search, RotateCcw, Package, MapPin, User, Check, Undo2, RefreshCw,
+  TrendingUp, Clock, CheckCircle2, Repeat,
+} from "lucide-react";
+import {
+  ScenarioLogEntry, ReturnRequest, padSlot,
+  fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
+} from "../utils/borrowApi";
+import { smartMatch } from "../utils/search";
 
-// 한글 ↔ 영어 동의어 사전 (실제 창고/시나리오 품목 기반)
-// 각 그룹의 단어들은 서로 매칭됨. 확장하려면 배열에 단어만 추가하면 됨.
-const SYNONYM_GROUPS: string[][] = [
-  // ── 음료·컵·식기 ──
-  ["물병", "물통", "병", "bottle", "bottled water", "water bottle", "물", "pet bottle", "petbottle", "fat bottle", "wine bottle", "beer bottle"],
-  ["컵", "잔", "cup", "mug", "머그", "머그컵", "종이컵", "paper cup", "plastic cup", "ice cup", "tumbler", "텀블러", "샷글라스", "shot glass", "party cup"],
-  ["맥주잔", "맥주", "beer", "beer bottle", "beer cap"],
-  ["와인잔", "와인", "wine", "wine glass", "wine bottle"],
-  ["유리잔", "유리", "glass", "glasses", "stainless steel cup"],
-  ["빨대", "straw", "paper straw", "muddler", "머들러"],
-  ["컵홀더", "컵캐리어", "캐리어", "cup carrier", "cup sleeve", "슬리브", "coaster", "코스터", "받침"],
-  ["그릇", "볼", "bowl", "rice bowl", "soup bowl", "mixing bowl", "picnic bowl", "밥그릇", "국그릇"],
-  ["접시", "그릇", "plate", "dish", "sauce dish", "dipping dish", "petri dish", "샐러드", "matte plate"],
-  ["숟가락", "스푼", "spoon", "scoop", "스쿱", "measuring spoon", "ladle", "국자", "dipper"],
-  ["젓가락", "chopstick", "chopsticks"],
-  ["포크", "fork"],
-  ["나이프", "칼", "knife", "box cutter", "cutter", "커터"],
-  ["수저", "커트러리", "cutlery", "utensil", "cutlery organizer", "utensil holder"],
-  ["집게", "tongs", "그리퍼", "gripper", "grip"],
-  ["계량컵", "measuring cup", "계량", "measuring", "measuring spoon", "measuring tape"],
-  ["주전자", "포트", "pot", "drip pot", "kettle", "syrup pump", "시럽"],
-  ["믹서", "블렌더", "blender", "믹싱볼", "mixing bowl", "whisk", "휘퍼", "거품기"],
-  ["뚜껑", "lid", "lid holder", "cap", "캡", "opener", "오프너", "따개", "capper"],
-  ["쟁반", "트레이", "tray", "aluminum tray", "flat tray", "donut tray", "food tray"],
-  ["냄비", "팬", "프라이팬", "pan", "frying pan", "frying-pan", "dish pan"],
-  ["채반", "콜랜더", "colander", "drying rack", "건조대", "dish drying rack"],
-  ["주걱", "스패튤라", "spatula", "silicone spatula", "metal spatula"],
-  // ── 음식 ──
-  ["빵", "bread", "sliced bread", "butter roll", "toast", "토스트", "waffle", "와플", "bakery"],
-  ["도넛", "donut", "도너츠"],
-  ["피자", "pizza"],
-  ["햄버거", "hamburger", "버거", "burger"],
-  ["과자", "스낵", "snack", "candy", "사탕", "쿠키", "cookie", "popcorn", "팝콘", "macaroon", "마카롱", "confetti"],
-  ["커피", "coffee", "espresso", "에스프레소", "instant coffee", "capsule", "캡슐", "브루잉", "brewing"],
-  ["콜라", "coke", "coke", "pepsi", "펩시", "사이다", "sprite", "스프라이트", "음료", "drink", "beverage", "ionic drink"],
-  ["과일", "fruit", "strawberry", "딸기", "kiwi", "키위", "banana"],
-  ["계란", "달걀", "egg", "egg tray"],
-  ["고기", "pork", "belly", "roasted pork"],
-  ["얼음", "ice", "ice maker", "ice cup", "제빙기"],
-  ["차", "tea", "earl grey", "얼그레이"],
-  // ── 의류 ──
-  ["티셔츠", "티", "t-shirt", "tshirt", "shirt", "셔츠", "dress shirt", "crop", "sleeveless", "long sleeve", "short sleeve", "polo"],
-  ["바지", "팬츠", "pants", "shorts", "반바지", "denim", "청바지", "training pants", "skirt", "치마", "스커트"],
-  ["양말", "socks", "sock"],
-  ["신발", "shoes", "슈즈", "슬리퍼", "slipper", "슬리퍼", "house slippers"],
-  ["넥타이", "타이", "tie", "neck tie", "necktie"],
-  ["가방", "bag", "sling bag", "백", "basket", "바구니", "laundry basket", "market basket", "shopping basket"],
-  ["모자", "cap", "hat", "안전모", "헬멧", "helmet", "hard hat", "hardhat"],
-  ["수건", "타월", "towel", "napkin", "냅킨", "행주", "cloth"],
-  // ── 전자·케이블 ──
-  ["케이블", "선", "cable", "cord", "wire", "와이어", "코드", "extension cable", "usb", "hdmi", "sata", "atx", "flat cable", "power cable"],
-  ["카메라", "camera", "cam", "캠", "웹캠", "webcam"],
-  ["키보드", "keyboard", "키패드"],
-  ["마우스", "mouse"],
-  ["모니터", "monitor", "디스플레이", "display", "화면", "screen"],
-  ["허브", "hub", "usb hub"],
-  ["어댑터", "아답터", "adapter", "adaptor", "converter", "컨버터"],
-  ["스위치", "switch", "kvm"],
-  ["배터리", "건전지", "battery", "밧데리", "보조배터리", "coin", "코인", "충전"],
-  ["전구", "램프", "라이트", "조명", "light", "lamp", "bulb", "led", "무드등", "mirror ball", "미러볼"],
-  ["컴퓨터", "pc", "본체", "desktop", "데스크탑", "메인보드", "mainboard", "motherboard"],
-  ["보드", "board", "pcb", "breadboard", "브레드보드", "아두이노", "arduino", "기판"],
-  ["스마트폰", "폰", "핸드폰", "smartphone", "smart phone", "phone", "태블릿", "tablet"],
-  ["이어폰", "earphone", "헤드폰", "headphone", "무선이어폰", "wireless earphone", "이어셋"],
-  ["스캐너", "scanner", "바코드", "barcode", "reader", "리더", "캡쳐카드", "capture"],
-  ["계산기", "calculator", "저울", "scale", "electronic scale", "전자저울"],
-  ["타이머", "timer", "시계", "clock", "digital clock"],
-  ["피아노", "piano", "electric piano", "건반"],
-  ["vr", "meta quest", "메타퀘스트", "퀘스트", "quest"],
-  // ── 나사·부품 ──
-  ["나사", "볼트", "스크류", "screw", "bolt", "나사못", "screwdriver", "드라이버"],
-  ["너트", "nut", "육각너트", "스프링너트"],
-  ["와셔", "washer", "워셔", "평와셔", "스프링와셔"],
-  ["드라이버", "driver", "screwdriver", "스크류드라이버", "mini driver", "전동드라이버"],
-  ["드릴", "drill", "전동드릴", "그라인더", "grinder"],
-  ["렌치", "wrench", "육각렌치", "hex", "육각"],
-  ["펜치", "니퍼", "플라이어", "plier", "pliers", "nipper", "가위", "scissors"],
-  ["클램프", "고정", "clamp", "클립", "clip", "binder clip", "clothespin", "집게"],
-  ["베어링", "bearing", "볼베어링", "ball bearing"],
-  ["밸브", "valve", "ball valve", "t-valve"],
-  ["호스", "hose", "water hose", "튜브", "tube"],
-  ["인서트", "insert", "리벳", "rivet", "황동", "brass"],
-  // ── 로봇 (사업 특화) ──
-  ["그리퍼", "gripper", "grip", "robotiq", "로보틱", "franka", "프랑카", "vega", "베가", "핸드", "hand", "휴먼그리퍼"],
-  ["핑거", "손가락", "finger", "finger holder", "핑거홀더"],
-  ["기어", "톱니", "gear", "elbow", "엘보"],
-  ["마운트", "거치대", "홀더", "mount", "holder", "받침대", "스탠드", "stand", "neck holder", "넥홀더", "platform"],
-  ["하우징", "housing", "케이스", "case", "몸통", "body"],
-  ["비상정지", "emergency", "emergency stop", "estop", "정지"],
-  ["플레이트", "plate", "판", "보강판", "받침"],
-  // ── 문구·사무 ──
-  ["펜", "pen", "볼펜", "마커", "marker", "형광펜", "highlighter", "네임펜", "name pen", "매직", "sharpie"],
-  ["연필", "pencil", "샤프", "mechanical pencil", "샤프펜"],
-  ["지우개", "eraser", "화이트보드지우개", "whiteboard eraser"],
-  ["테이프", "tape", "scotch", "스카치", "masking", "마스킹", "절연테이프", "correction tape", "수정테이프"],
-  ["종이", "paper", "a4", "a4 paper", "baking paper", "크래프트", "kraft", "parchment"],
-  ["노트", "공책", "note", "spring note", "포스트잇", "sticky note", "메모지"],
-  ["화이트보드", "whiteboard", "칠판", "board marker", "보드마카"],
-  ["클립보드", "clipboard", "바인더", "binder"],
-  ["스테이플러", "stapler", "호치키스", "스템플러"],
-  ["라벨", "label", "스티커", "sticker", "barcode sticker"],
-  ["봉투", "가방", "bag", "paper bag", "지퍼백", "zipper bag", "poly bag", "폴리백", "mailer", "봉지"],
-  ["박스", "상자", "box", "케이스", "case", "package box", "gift box", "wooden box", "living box", "리빙박스"],
-  // ── 청소·생활 ──
-  ["빗자루", "broom", "쓰레받기", "dustpan", "청소", "cleaning"],
-  ["걸레", "mop", "dust mop", "밀대", "먼지"],
-  ["스펀지", "sponge", "스폰지", "esd sponge", "dish sponge", "수세미"],
-  ["쓰레기통", "trash", "trash can", "휴지통", "recycling", "재활용", "bin"],
-  ["휴지", "티슈", "tissue", "냅킨", "napkin", "물티슈", "wipes", "alcohol wipes"],
-  ["옷걸이", "hanger", "행거", "hook", "후크", "걸이"],
-  ["서랍", "drawer", "정리함", "organizer", "선반", "shelf", "정리", "storage"],
-  ["칫솔", "toothbrush", "brush", "솔", "shoe brush"],
-  ["장갑", "골무", "glove", "손가락골무", "finger"],
-  // ── 화학·기타 ──
-  ["접착제", "본드", "글루", "풀", "glue", "adhesive", "에폭시", "epoxy", "글루건", "glue gun"],
-  ["스프레이", "spray", "방향제", "에프킬라", "colorant", "착색"],
-  ["윤활유", "구리스", "그리스", "grease", "오일", "oil", "lubricant", "wd", "wd-40", "wd40"],
-  ["실리콘", "silicone", "silicon"],
-  ["멀티탭", "power strip", "파워스트립", "콘센트", "멀티"],
-  ["자석", "마그넷", "magnet", "magnetic", "자석홀더"],
-  ["찍찍이", "벨크로", "velcro", "매직테이프", "케이블타이", "cable tie", "타이"],
-  ["레고", "블록", "lego", "block", "wooden cube", "큐브", "jenga", "젠가", "장난감", "toy", "plush", "인형", "doll"],
-  ["실험", "lab", "laboratory", "튜브", "tube", "피펫", "pipette", "시린지", "syringe", "주사기", "funnel", "깔때기"],
-  // ── 기존 그룹 유지 ──
-  ["프레임", "frame", "틀"],
-  ["로봇", "robot"],
-  ["렌즈", "lens", "클리너", "cleaner"],
-  ["플러그", "plug", "랜", "lan"],
-  ["팬", "선풍기", "fan", "열풍기", "히터", "grill", "그릴", "toaster", "토스터", "sealing machine", "실링"],
-  ["안마기", "마사지", "massager"],
-  ["무선", "wireless"],
-];
+interface Props {
+  scriptUrl: string;
+  connected: boolean;
+  isLightMode: boolean;
+  isAdmin: boolean;
+  showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
+}
 
-// 초성 추출 (한글 검색 보조)
-const CHO = ["ㄱ","ㄲ","ㄴ","ㄷ","ㄸ","ㄹ","ㅁ","ㅂ","ㅃ","ㅅ","ㅆ","ㅇ","ㅈ","ㅉ","ㅊ","ㅋ","ㅌ","ㅍ","ㅎ"];
-function toChoseong(str: string): string {
-  let out = "";
-  for (const ch of str) {
-    const code = ch.charCodeAt(0);
-    if (code >= 0xac00 && code <= 0xd7a3) {
-      out += CHO[Math.floor((code - 0xac00) / 588)];
-    } else {
-      out += ch;
+type StatusFilter = "all" | "unreturned" | "returned";
+
+export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, isAdmin, showToast }: Props) {
+  const C = {
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
+    success: isLightMode ? "#047857" : "#34d399",
+    successSoft: "rgba(16, 185, 129, 0.12)",
+    warn: isLightMode ? "#b45309" : "#fbbf24",
+    warnSoft: "rgba(245, 158, 11, 0.12)",
+    error: isLightMode ? "#dc2626" : "#f87171",
+    errorSoft: "rgba(239, 68, 68, 0.12)",
+  };
+
+  const [logs, setLogs] = useState<ScenarioLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+  const [search, setSearch] = useState("");
+  const [kindFilter, setKindFilter] = useState<"all" | "scenario" | "general">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [borrowerFilter, setBorrowerFilter] = useState("");
+  const [sel, setSel] = useState<Record<string, number>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [reborrowing, setReborrowing] = useState(false);
+  const [showStats, setShowStats] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(30);
+
+  // 필터가 바뀌면 페이지를 처음으로 되돌린다.
+  useEffect(() => { setVisibleCount(30); }, [search, kindFilter, statusFilter, borrowerFilter]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setSel({});
+    try {
+      if (connected && scriptUrl) {
+        const [list, ver] = await Promise.all([
+          fetchScenarioAllLogs(scriptUrl),
+          fetchBorrowAppVersion(scriptUrl).catch(() => ""),
+        ]);
+        setLogs(list);
+        setAppVersion(ver);
+      } else {
+        setLogs([
+          { sheetType: "scenario", rowIndex: 2, borrowerName: "홍길동", scenarioId: "S00001", itemLabel: "[000060] 소화기 x 2", itemKind: "필수 물품", location: "000060", itemId: "000060", itemName: "소화기", quantity: 2, borrowDate: "2026-07-15 09:00", borrowPurpose: "훈련", email: "", batchId: "b1", returned: false, image: "", stock: 5, rented: 2 },
+          { sheetType: "general", rowIndex: 3, borrowerName: "김철수", itemLabel: "[000012] 삼각대 x 1", location: "000012", itemId: "000012", itemName: "삼각대", quantity: 1, borrowDate: "2026-07-11 14:00", borrowPurpose: "촬영", email: "", batchId: "b2", generalOption: "일반 대여", returned: true, image: "", stock: 3, rented: 0 },
+        ]);
+      }
+      setLoaded(true);
+    } catch (e: any) {
+      // 이미 대장이 화면에 떠 있는 상태의 새로고침 실패라면(보기 전용 갱신) 조용한 경고로만 알린다.
+      if (loaded && logs.length > 0) {
+        showToast("대장 새로고침이 지연되어 기존 데이터를 그대로 표시합니다.", "warn");
+      } else {
+        showToast(`시나리오 대여 대장을 불러오지 못했습니다: ${e.message}`, "error");
+      }
     }
-  }
-  return out;
-}
+    finally { setLoading(false); }
+  }, [connected, scriptUrl, showToast, loaded, logs.length]);
 
-// 정규화: 소문자, 공백/하이픈/괄호 제거
-function norm(s: string): string {
-  return String(s || "").toLowerCase().replace(/[\s\-_()[\].,/]+/g, "");
-}
+  useEffect(() => { load(); }, [load]);
 
-// 검색어를 확장: 동의어 그룹에 걸리면 관련 단어들을 함께 반환
-function expandQuery(q: string): string[] {
-  const nq = norm(q);
-  const expansions = new Set<string>([nq]);
-  for (const group of SYNONYM_GROUPS) {
-    const normed = group.map(norm).filter(Boolean);
-    // 매칭 규칙: 짧은 단어(<=2자)는 완전일치, 긴 단어는 부분일치.
-    // (짧은 단어가 부분일치로 과도하게 퍼지는 것을 방지: 예 "티"가 "멀티"에 걸리는 문제)
-    const hit = normed.some((w) => {
-      if (w.length <= 2 || nq.length <= 2) return w === nq;
-      return w.includes(nq) || nq.includes(w);
+  const borrowers = useMemo(() => {
+    const set = new Set<string>();
+    logs.forEach((it) => { if (it.borrowerName) set.add(it.borrowerName); });
+    return Array.from(set).sort();
+  }, [logs]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim();
+    return logs.filter((it) => {
+      if (kindFilter !== "all" && it.sheetType !== kindFilter) return false;
+      if (statusFilter === "unreturned" && it.returned) return false;
+      if (statusFilter === "returned" && !it.returned) return false;
+      if (borrowerFilter && it.borrowerName !== borrowerFilter) return false;
+      if (!q) return true;
+      return smartMatch([it.itemLabel, it.borrowerName, it.scenarioId, it.borrowPurpose, it.location, padSlot(it.location)], q);
     });
-    if (hit) normed.forEach((w) => expansions.add(w));
+  }, [logs, search, kindFilter, statusFilter, borrowerFilter]);
+
+  // 신청 단위(batchId+borrower)로 그룹화, 이미 최신순으로 서버 정렬됨
+  const groups = useMemo(() => {
+    const map = new Map<string, { key: string; borrower: string; scenarioId?: string; date: string; purpose: string; kind: string; items: ScenarioLogEntry[]; allReturned: boolean }>();
+    filtered.forEach((it) => {
+      const gkey = `${it.borrowerName}|${it.batchId || it.scenarioId || it.borrowDate}`;
+      if (!map.has(gkey)) map.set(gkey, { key: gkey, borrower: it.borrowerName, scenarioId: it.scenarioId, date: it.borrowDate, purpose: it.borrowPurpose, kind: it.sheetType === "scenario" ? "SID 대여" : "일반 대여", items: [], allReturned: true });
+      const g = map.get(gkey)!;
+      g.items.push(it);
+      if (!it.returned) g.allReturned = false;
+    });
+    return Array.from(map.values());
+  }, [filtered]);
+
+  // ── 분석: 대여자별·기간별 집계 ──
+  const stats = useMemo(() => {
+    const byBorrower: Record<string, { total: number; unreturned: number; returned: number }> = {};
+    const byItem: Record<string, number> = {};
+    const byDay: Record<string, number> = {};
+    logs.forEach((l) => {
+      const b = l.borrowerName || "(미상)";
+      if (!byBorrower[b]) byBorrower[b] = { total: 0, unreturned: 0, returned: 0 };
+      byBorrower[b].total += 1;
+      if (l.returned) byBorrower[b].returned += 1; else byBorrower[b].unreturned += 1;
+      byItem[l.itemName] = (byItem[l.itemName] || 0) + l.quantity;
+      const day = String(l.borrowDate || "").slice(0, 10);
+      if (day) byDay[day] = (byDay[day] || 0) + 1;
+    });
+    const topBorrowers = Object.entries(byBorrower).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+    const topItems = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    const recentDays = Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
+    return { topBorrowers, topItems, recentDays };
+  }, [logs]);
+
+  const selKey = (it: ScenarioLogEntry) => `${it.sheetType}:${it.rowIndex}`;
+  const selCount = Object.keys(sel).length;
+  const selEntries = useMemo(() => Object.keys(sel).map((k) => logs.find((l) => selKey(l) === k)).filter(Boolean) as ScenarioLogEntry[], [sel, logs]);
+  const selHasReturned = selEntries.some((e) => e.returned);
+  const selHasUnreturned = selEntries.some((e) => !e.returned);
+
+  function toggle(it: ScenarioLogEntry) {
+    const k = selKey(it);
+    setSel((p) => { const n = { ...p }; if (k in n) delete n[k]; else n[k] = it.quantity; return n; });
   }
-  return Array.from(expansions).filter(Boolean);
+  function toggleGroup(g: { items: ScenarioLogEntry[] }) {
+    setSel((p) => {
+      const n = { ...p };
+      const allSel = g.items.every((it) => selKey(it) in n);
+      g.items.forEach((it) => { const k = selKey(it); if (allSel) delete n[k]; else n[k] = it.quantity; });
+      return n;
+    });
+  }
+
+  async function doReturn() {
+    if (!isAdmin) { showToast("반납 처리는 관리자만 가능합니다.", "warn"); return; }
+    const targets = selEntries.filter((e) => !e.returned);
+    if (!targets.length) { showToast("반납할(미반납) 물품을 선택해주세요.", "warn"); return; }
+    setSubmitting(true);
+    try {
+      const reqs: ReturnRequest[] = targets.map((e) => ({ sheetType: e.sheetType, rowIndex: e.rowIndex, quantity: sel[selKey(e)] }));
+      if (connected && scriptUrl) {
+        const res = await postProcessReturn(scriptUrl, reqs, appVersion);
+        if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
+        showToast(res.message || `${targets.length}건을 반납 처리했습니다.`, "ok");
+      } else { showToast("데모 모드: 실제 반납은 연동 시 동작합니다.", "info"); }
+      await load();
+    } catch (e: any) { showToast(`반납 처리 실패: ${e.message}`, "error"); }
+    finally { setSubmitting(false); }
+  }
+
+  async function doReBorrow() {
+    if (!isAdmin) { showToast("재대여는 관리자만 가능합니다.", "warn"); return; }
+    const targets = selEntries.filter((e) => e.returned);
+    if (!targets.length) { showToast("재대여할(반납완료) 물품을 선택해주세요.", "warn"); return; }
+    // 대여자별로 묶어서 각각 재대여
+    const byBorrower: Record<string, ScenarioLogEntry[]> = {};
+    targets.forEach((e) => { (byBorrower[e.borrowerName] ||= []).push(e); });
+    setReborrowing(true);
+    try {
+      if (connected && scriptUrl) {
+        let ok = 0;
+        for (const b of Object.keys(byBorrower)) {
+          const res = await reBorrowScenarioLogs(scriptUrl, byBorrower[b], appVersion);
+          if (res.success) ok += byBorrower[b].length;
+          else showToast(`${b} 재대여 실패: ${res.message}`, "error");
+        }
+        if (ok) showToast(`${ok}건을 동일 조건으로 다시 대여 신청했습니다.`, "ok");
+      } else { showToast("데모 모드: 실제 재대여는 연동 시 동작합니다.", "info"); }
+      await load();
+    } catch (e: any) { showToast(`재대여 실패: ${e.message}`, "error"); }
+    finally { setReborrowing(false); }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    padding: "10px 12px", fontSize: "13px", borderRadius: "10px",
+    border: `1px solid ${C.border}`, background: isLightMode ? "#ffffff" : "#0f172a",
+    color: C.text, outline: "none", boxSizing: "border-box",
+  };
+  function Spinner({ size = 20 }: { size?: number }) {
+    return <span style={{ width: size, height: size, borderRadius: "50%", display: "inline-block", border: `3px solid ${C.border}`, borderTopColor: C.accent, animation: "slp-spin 0.9s linear infinite" }} />;
+  }
+
+  const total = logs.length;
+  const unreturnedCount = logs.filter((l) => !l.returned).length;
+  const returnedCount = logs.filter((l) => l.returned).length;
+
+  return (
+    <div>
+      <style>{`@keyframes slp-spin { to { transform: rotate(360deg); } }`}</style>
+
+      {/* 요약 통계 */}
+      <div style={{ display: "flex", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
+        {[
+          { label: "전체 기록", value: total, color: C.accentText, bg: C.accentSoft, icon: <Package size={16} /> },
+          { label: "미반납", value: unreturnedCount, color: C.warn, bg: C.warnSoft, icon: <Clock size={16} /> },
+          { label: "반납 완료", value: returnedCount, color: C.success, bg: C.successSoft, icon: <CheckCircle2 size={16} /> },
+        ].map((s) => (
+          <div key={s.label} style={{ flex: "1 1 120px", padding: "12px 14px", borderRadius: "12px", background: s.bg, border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: C.label, fontWeight: 600 }}>{s.icon} {s.label}</div>
+            <div style={{ fontSize: "22px", fontWeight: 800, color: s.color }}>{s.value}</div>
+          </div>
+        ))}
+        <button onClick={() => setShowStats((v) => !v)} style={{ flex: "0 0 auto", padding: "0 16px", borderRadius: "12px", border: `1px solid ${showStats ? C.accent : C.border}`, background: showStats ? C.accentSoft : C.card, color: showStats ? C.accentText : C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}>
+          <TrendingUp size={15} /> 분석 {showStats ? "닫기" : "보기"}
+        </button>
+      </div>
+
+      {/* 분석 패널 */}
+      {showStats ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px", marginBottom: "14px" }}>
+          <StatCard C={C} title="대여자별 (상위 5)" rows={stats.topBorrowers.map(([name, v]) => ({ label: name, value: `${v.total}건 (미반납 ${v.unreturned})` }))} />
+          <StatCard C={C} title="많이 대여된 물품 (상위 5)" rows={stats.topItems.map(([name, v]) => ({ label: name, value: `${v}개` }))} />
+          <StatCard C={C} title="최근 대여일별 (7일)" rows={stats.recentDays.map(([day, v]) => ({ label: day, value: `${v}건` }))} />
+        </div>
+      ) : null}
+
+      {/* 필터 */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: "2 1 240px", minWidth: 0 }}>
+          <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품 · 대여자 · SID · 목적 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", width: "100%" }} />
+        </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
+          <option value="all">전체 상태</option>
+          <option value="unreturned">미반납만</option>
+          <option value="returned">반납완료만</option>
+        </select>
+        <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as any)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
+          <option value="all">전체 유형</option>
+          <option value="scenario">SID 대여</option>
+          <option value="general">일반 대여</option>
+        </select>
+        <select value={borrowerFilter} onChange={(e) => setBorrowerFilter(e.target.value)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
+          <option value="">전체 대여자</option>
+          {borrowers.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+        <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
+      </div>
+      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${filtered.length} / ${logs.length}건 (최신순)` : ""}</div>
+
+      {loading && !loaded ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {groups.slice(0, visibleCount).map((g) => (
+            <div key={g.key} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", opacity: g.allReturned ? 0.85 : 1 }}>
+              <div onClick={() => isAdmin && toggleGroup(g)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.cardSub, cursor: isAdmin ? "pointer" : "default" }}>
+                <div style={{ width: 34, height: 34, borderRadius: "9px", background: g.allReturned ? C.successSoft : C.accentSoft, color: g.allReturned ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><User size={17} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: "14px" }}>{g.borrower} {g.scenarioId ? <span style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>· {g.scenarioId}</span> : null}</div>
+                  <div style={{ fontSize: "11px", color: C.label }}>{g.kind} · {g.date}{g.purpose ? ` · ${g.purpose}` : ""}</div>
+                </div>
+                {g.allReturned ? <span style={{ fontSize: "11px", fontWeight: 700, color: C.success, background: C.successSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>반납완료</span>
+                  : <span style={{ fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>미반납 포함</span>}
+              </div>
+              <div style={{ padding: "8px 12px" }}>
+                {g.items.map((it) => {
+                  const k = selKey(it);
+                  const checked = k in sel;
+                  return (
+                    <div key={k} onClick={() => isAdmin && toggle(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "9px 8px", borderRadius: "10px", cursor: isAdmin ? "pointer" : "default", background: checked ? C.accentSoft : "transparent" }}>
+                      {isAdmin ? <input type="checkbox" readOnly checked={checked} style={{ width: 16, height: 16, accentColor: C.accent, flexShrink: 0 }} /> : <Package size={15} style={{ color: C.label, flexShrink: 0 }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 600, wordBreak: "break-word", textDecoration: it.returned ? "line-through" : "none", opacity: it.returned ? 0.7 : 1 }}>{it.itemLabel}</div>
+                        <div style={{ display: "flex", gap: "6px", marginTop: "3px", flexWrap: "wrap" }}>
+                          {it.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}><MapPin size={10} />{padSlot(it.location)}</span> : null}
+                          {it.returned ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.success, background: C.successSoft, borderRadius: "6px", padding: "2px 7px" }}>반납완료</span> : <span style={{ fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px" }}>미반납</span>}
+                          {it.itemKind ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "6px", padding: "2px 7px" }}>{it.itemKind}</span> : null}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: "12px", color: C.label, fontWeight: 600, flexShrink: 0 }}>x{it.quantity}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {groups.length > visibleCount ? (
+            <button onClick={() => setVisibleCount((n) => n + 30)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+              더 보기 ({visibleCount} / {groups.length}건 표시 중)
+            </button>
+          ) : null}
+        </div>
+      )}
+
+      {/* 액션 바 (관리자) */}
+      {isAdmin && selCount > 0 ? (
+        <div style={{ position: "sticky", bottom: 0, marginTop: "16px", padding: "14px 16px", background: C.card, border: `1px solid ${C.accent}`, borderRadius: "14px", display: "flex", alignItems: "center", gap: "10px", boxShadow: "0 -4px 16px rgba(0,0,0,0.15)", flexWrap: "wrap" }}>
+          <span style={{ flex: 1, fontSize: "13px", fontWeight: 700, minWidth: "80px" }}>{selCount}건 선택됨</span>
+          <button onClick={() => setSel({})} style={{ padding: "10px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>해제</button>
+          {selHasReturned ? (
+            <button onClick={doReBorrow} disabled={reborrowing} title="반납완료된 항목을 동일 조건으로 다시 대여" style={{ padding: "10px 16px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: reborrowing ? 0.7 : 1 }}>
+              {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여</>}
+            </button>
+          ) : null}
+          {selHasUnreturned ? (
+            <button onClick={doReturn} disabled={submitting} style={{ padding: "10px 18px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: submitting ? 0.7 : 1 }}>
+              {submitting ? <><Spinner size={14} /> 처리 중...</> : <><Undo2 size={15} /> 반납 처리</>}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
-/**
- * 품목이 검색어와 매칭되는지 판단.
- * @param haystackParts 품목의 검색 대상 문자열들 (이름, 위치, 규격 등)
- * @param query 사용자 검색어
- */
-export function smartMatch(haystackParts: (string | null | undefined)[], query: string): boolean {
-  const q = String(query || "").trim();
-  if (!q) return true;
-
-  const targetsNorm = haystackParts.map((p) => norm(String(p || ""))).filter(Boolean);
-  const targetsCho = haystackParts.map((p) => toChoseong(String(p || ""))).filter(Boolean);
-  const combined = targetsNorm.join(" ");
-
-  // 1) 동의어 확장 검색 (한글↔영어 포함)
-  const terms = expandQuery(q);
-  for (const t of terms) {
-    if (t && combined.includes(t)) return true;
-  }
-
-  // 2) 초성 검색 (검색어가 초성으로만 이뤄진 경우: ㅋㅇㅂ → 키보드)
-  const nq = norm(q);
-  if (/^[ㄱ-ㅎ]+$/.test(q.replace(/\s/g, ""))) {
-    const choQ = q.replace(/\s/g, "");
-    if (targetsCho.some((t) => t.replace(/\s/g, "").includes(choQ))) return true;
-  }
-
-  // 3) 각 단어별 부분일치 (검색어를 공백으로 쪼개 모두 포함되는지)
-  const words = nq.split(/\s+/).filter(Boolean);
-  if (words.length > 1 && words.every((w) => combined.includes(w))) return true;
-
-  return false;
+function StatCard({ C, title, rows }: { C: any; title: string; rows: { label: string; value: string }[] }) {
+  return (
+    <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "14px 16px" }}>
+      <div style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, marginBottom: "10px" }}>{title}</div>
+      {rows.length === 0 ? <div style={{ fontSize: "12px", color: C.label }}>데이터 없음</div> : rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: i < rows.length - 1 ? `1px solid ${C.border}` : "none", gap: "8px" }}>
+          <span style={{ fontSize: "12px", color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.label}</span>
+          <span style={{ fontSize: "12px", color: C.label, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>{r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
