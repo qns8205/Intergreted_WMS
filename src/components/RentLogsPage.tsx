@@ -446,29 +446,35 @@ export default function RentLogsPage({
           gap: "12px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: TEXT_DIM,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 13,
-            }}
-          >
-            <ArrowLeft size={16} />
-            {isGuestMode ? "로그인 화면으로" : "돌아가기"}
-          </button>
-          <div style={{ width: 1, height: 16, background: PANEL_BORDER }} />
-          <h1 style={{ fontSize: 16, fontWeight: 800, color: TEXT_MAIN, display: "flex", alignItems: "center", gap: 6 }}>
-            <ArrowRightLeft size={18} style={{ color: ACCENT }} />
-            {isGuestMode ? "📦 외부인 대여 및 반납 간편 신청대장" : "📦 물품 대여 및 반납 대장 관리"}
-          </h1>
-        </div>
+        {/* 임베드(탭) 모드에서는 상단 탭이 이미 있으므로 돌아가기/타이틀을 숨긴다.
+            외부인(게스트) 모드는 독립 화면이라 로그인 화면으로 돌아갈 수단이 필요해 유지한다. */}
+        {isGuestMode ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={onClose}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: TEXT_DIM,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 13,
+              }}
+            >
+              <ArrowLeft size={16} />
+              로그인 화면으로
+            </button>
+            <div style={{ width: 1, height: 16, background: PANEL_BORDER }} />
+            <h1 style={{ fontSize: 16, fontWeight: 800, color: TEXT_MAIN, display: "flex", alignItems: "center", gap: 6 }}>
+              <ArrowRightLeft size={18} style={{ color: ACCENT }} />
+              📦 외부인 대여 및 반납 간편 신청대장
+            </h1>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <button
           onClick={() => setShowAddForm((prev) => !prev)}
