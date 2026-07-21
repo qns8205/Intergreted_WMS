@@ -424,6 +424,7 @@ export default function RentLogsPage({
 
   return (
     <div
+      className="rlp-root"
       style={{
         flex: 1,
         display: "flex",
@@ -433,6 +434,11 @@ export default function RentLogsPage({
         overflow: "hidden",
       }}
     >
+      <style>{`
+        @media (min-width: 900px) {
+          .rlp-root { zoom: 1.15; }
+        }
+      `}</style>
       {/* Header */}
       <div
         style={{
