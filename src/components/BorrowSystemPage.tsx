@@ -51,7 +51,7 @@ interface BorrowSystemPageProps {
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
 export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
-  // 열람에서 일반 자재를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
+  // 열람에서 일반 자재을 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
   const rootMode: Mode = initialKind === "warehouse" ? "wborrow"
     : initialKind === "scenario" ? "b1"
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
@@ -80,6 +80,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [objectItems, setObjectItems] = useState<ObjectItem[]>([]);
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(false);
+  // 재고 검증에 필요한 물품 목록이 로딩 중일 때 "신청하기"를 누른 경우,
+  // 로딩 완료 후 자동으로 이어서 제출하기 위한 대기 플래그.
+  const [pendingSubmit, setPendingSubmit] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
   const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
 
@@ -180,7 +183,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       setWhLoaded(true);
     } catch (e: any) {
       setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
-      showToast(`일반 자재를 불러오지 못했습니다: ${e.message}`, "error");
+      showToast(`일반 자재을 불러오지 못했습니다: ${e.message}`, "error");
     }
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
@@ -215,10 +218,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, [connected, scriptUrl, itemsLoading, showToast]);
 
   useEffect(() => {
-    if ((mode === "b3g" || mode === "b4s") && !itemsLoaded && !itemsLoading) {
+    // b3s(SID 입력)에서 미리 로딩을 시작해야, 다음 화면(b4s)에 도착해 바로 "신청하기"를
+    // 눌러도 재고 목록이 비어 있어 재고초과로 오판되는 경쟁 상태(race condition)를 피할 수 있다.
+    if ((mode === "b3g" || mode === "b3s" || mode === "b4s") && !itemsLoaded && !itemsLoading) {
       loadItems();
     }
   }, [mode, itemsLoaded, itemsLoading, loadItems]);
+
+  // 로딩 중에 "신청하기"를 눌러 대기 상태가 된 경우, 로딩이 끝나면 자동으로 이어서 제출한다.
+  useEffect(() => {
+    if (pendingSubmit && itemsLoaded && !itemsLoading) {
+      setPendingSubmit(false);
+      handleBorrowSubmit();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSubmit, itemsLoaded, itemsLoading]);
 
   /* ---------- 카테고리 맵 ---------- */
   const categoryMap = useMemo(() => {
@@ -387,6 +401,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   async function handleBorrowSubmit() {
+    // 재고 검증에 물품 목록(objectItems)이 필요한데 아직 로딩 중이면, 재고를 0으로 오판해
+    // "재고 초과"로 잘못 막아버릴 수 있다. 이 경우 조용히 대기했다가 로딩이 끝나면 자동으로
+    // 이어서 제출한다 (사용자가 다시 버튼을 누를 필요 없음).
+    if (itemsLoading || !itemsLoaded) {
+      setPendingSubmit(true);
+      showToast("물품 재고 정보를 불러오는 중입니다. 완료되면 자동으로 신청을 진행합니다...", "warn");
+      if (!itemsLoading && !itemsLoaded) loadItems();
+      return;
+    }
+
     const name = affiliation === "other" ? otherName.trim() : borrowerName.trim();
     const contact = { affiliation, employeeId: employeeId.trim() };
     const nowStr = nowString();
@@ -397,7 +421,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       if (!generalOption) { showToast("대여 구분(추가 물품 대여 / Light Scenario / Wild Scenario)을 선택해주세요.", "warn"); return; }
       for (const c of cart) {
         const obj = objectItems.find((o) => o.id === c.id);
-        const stock = obj ? obj.stock || 0 : 0;
+        // 물품 목록은 이미 로딩이 끝난 상태(위에서 보장됨)이므로, obj가 없다는 것은
+        // 카탈로그에 해당 ID가 없다는 뜻 — 재고 0으로 간주해 막기보다는 검증을 건너뛴다.
+        if (!obj) continue;
+        const stock = obj.stock || 0;
         if (c.quantity > stock) {
           showToast(`['${c.name}'] 신청 수량(${c.quantity}개)이 현재 재고(${stock}개)를 초과합니다. 수량을 조절해주세요.`, "warn");
           return;
@@ -422,7 +449,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       for (const id in totals) {
         const req = totals[id];
         const obj = objectItems.find((o) => o.id === id);
-        const stock = obj ? obj.stock || 0 : 0;
+        // 카탈로그(objectItems)에 없는 ID(예: 시나리오 시트에만 존재하는 필요 물품)는
+        // 재고 0으로 간주해 막지 않고 검증을 건너뛴다 — 실제 서버 처리 시 별도로 확인된다.
+        if (!obj) continue;
+        const stock = obj.stock || 0;
         if (req.quantity > stock) {
           showToast(`['${req.name}'] 대여 예정 총 수량(${req.quantity}개)이 현재 재고(${stock}개)를 초과합니다. 다른 물품을 선택하거나 신청을 분할해주세요.`, "warn");
           return;
@@ -712,7 +742,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     const user = whName.trim();
     if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
     if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    if (whCart.length === 0) { showToast(`${actionType}할 일반 자재를 담아주세요.`, "warn"); return; }
+    if (whCart.length === 0) { showToast(`${actionType}할 일반 자재을 담아주세요.`, "warn"); return; }
     // 재고 검증
     for (const c of whCart) {
       const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
@@ -1302,8 +1332,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <textarea value={purposeGeneral} onChange={(e) => setPurposeGeneral(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "90px", resize: "none", marginBottom: "20px" }} />
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3g")} style={secondaryBtn}>이전</button>
-              <button onClick={handleBorrowSubmit} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : "신청하기"}
+              <button onClick={handleBorrowSubmit} disabled={submitting || pendingSubmit} style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}>
+                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : pendingSubmit ? <><Spinner size={16} light={true} C={C} /> 물품 정보 확인 중...</> : "신청하기"}
               </button>
             </div>
           </div>
@@ -1421,8 +1451,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3s")} style={secondaryBtn}>이전</button>
-              <button onClick={handleBorrowSubmit} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : "신청하기"}
+              <button onClick={handleBorrowSubmit} disabled={submitting || pendingSubmit} style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}>
+                {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : pendingSubmit ? <><Spinner size={16} light={true} C={C} /> 물품 정보 확인 중...</> : "신청하기"}
               </button>
             </div>
           </div>
@@ -1698,10 +1728,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
               {whLoading ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 일반 자재를 불러오는 중...</div>
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 일반 자재을 불러오는 중...</div>
               ) : !whLoaded || whItems.length === 0 ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                  <div>일반 자재 목록를 불러오지 못했습니다.</div>
+                  <div>일반 자재 목록을 불러오지 못했습니다.</div>
                   <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
                 </div>
               ) : whFiltered.length === 0 ? (
