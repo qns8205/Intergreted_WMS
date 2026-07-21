@@ -84,6 +84,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   // 로딩 완료 후 자동으로 이어서 제출하기 위한 대기 플래그.
   const [pendingSubmit, setPendingSubmit] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
+  // 재고 부족 경고를 크게 띄우는 모달 (null이면 안 뜸)
+  const [stockShortfallModal, setStockShortfallModal] = useState<{ id: string; name: string; requested: number; stock: number }[] | null>(null);
   const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
@@ -249,6 +251,41 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return map;
   }, [objectItems]);
   const categories = useMemo(() => Object.keys(categoryMap).sort(), [categoryMap]);
+
+  // SID(시나리오) 필요 물품 + 추가 물품을 합산해 재고 부족 여부를 미리 계산.
+  // handleBorrowSubmit의 검증과 동일한 로직 — 신청 버튼을 눌렀을 때 잠깐 뜨고 사라지는
+  // 토스트에만 의존하면 "눌러도 반응 없음"처럼 느껴지므로, 화면에 계속 보이는 경고로 먼저 알려준다.
+  const scenarioStockShortfall = useMemo(() => {
+    const totals: Record<string, { name: string; quantity: number }> = {};
+    const addQty = (id: string, nm: string, q: number) => {
+      if (!id) return;
+      if (!totals[id]) totals[id] = { name: nm, quantity: 0 };
+      totals[id].quantity += q;
+    };
+    sidCart.forEach((e) => (e.scenario?.items || []).forEach((it) => addQty(it.id, it.name, it.quantity || 1)));
+    reqCart.forEach((c) => addQty(c.id, c.name, c.quantity));
+    const shortfalls: { id: string; name: string; requested: number; stock: number }[] = [];
+    for (const id in totals) {
+      const req = totals[id];
+      const obj = objectItems.find((o) => o.id === id);
+      if (!obj) continue; // 카탈로그에 없는 항목은 검증 대상에서 제외 (제출 시 검증과 동일 정책)
+      const stock = obj.stock || 0;
+      if (req.quantity > stock) shortfalls.push({ id, name: req.name, requested: req.quantity, stock });
+    }
+    return shortfalls;
+  }, [sidCart, reqCart, objectItems]);
+
+  // 일반 대여 장바구니(cart)도 동일하게 재고 부족을 미리 계산.
+  const generalStockShortfall = useMemo(() => {
+    const shortfalls: { id: string; name: string; requested: number; stock: number }[] = [];
+    cart.forEach((c) => {
+      const obj = objectItems.find((o) => o.id === c.id);
+      if (!obj) return;
+      const stock = obj.stock || 0;
+      if (c.quantity > stock) shortfalls.push({ id: c.id, name: c.name, requested: c.quantity, stock });
+    });
+    return shortfalls;
+  }, [cart, objectItems]);
 
   function subsOf(cat: string): string[] {
     return cat && categoryMap[cat] ? Array.from<string>(categoryMap[cat]).sort() : [];
@@ -1346,7 +1383,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <textarea value={purposeGeneral} onChange={(e) => setPurposeGeneral(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "90px", resize: "none", marginBottom: "20px" }} />
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3g")} style={secondaryBtn}>이전</button>
-              <button onClick={handleBorrowSubmit} disabled={submitting || pendingSubmit} style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}>
+              <button
+                onClick={() => (generalStockShortfall.length > 0 ? setStockShortfallModal(generalStockShortfall) : handleBorrowSubmit())}
+                disabled={submitting || pendingSubmit}
+                style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}
+              >
                 {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : pendingSubmit ? <><Spinner size={16} light={true} C={C} /> 물품 정보 확인 중...</> : "신청하기"}
               </button>
             </div>
@@ -1458,9 +1499,14 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <label style={labelStyle}>대여 목적</label>
               <textarea value={purposeScenario} onChange={(e) => setPurposeScenario(e.target.value)} placeholder="간략한 대여 목적을 적어주세요" style={{ ...inputStyle, minHeight: "90px", resize: "none", marginBottom: "20px" }} />
             </div>
+
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3s")} style={secondaryBtn}>이전</button>
-              <button onClick={handleBorrowSubmit} disabled={submitting || pendingSubmit} style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}>
+              <button
+                onClick={() => (scenarioStockShortfall.length > 0 ? setStockShortfallModal(scenarioStockShortfall) : handleBorrowSubmit())}
+                disabled={submitting || pendingSubmit}
+                style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}
+              >
                 {submitting ? <><Spinner size={16} light={true} C={C} /> 처리 중...</> : pendingSubmit ? <><Spinner size={16} light={true} C={C} /> 물품 정보 확인 중...</> : "신청하기"}
               </button>
             </div>
@@ -2051,6 +2097,39 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <img src={imageModalUrl} alt="" style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px", objectFit: "contain", boxShadow: "0 4px 24px rgba(0,0,0,0.6)" }} onClick={(e) => e.stopPropagation()} />
         </div>
       ) : null}
+
+      {/* 재고 부족 경고 모달 */}
+      {stockShortfallModal ? (
+        <div
+          onClick={() => setStockShortfallModal(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
+          >
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.errorSoft, color: C.error, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertCircle size={30} />
+            </div>
+            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>재고가 부족합니다</div>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px" }}>아래 물품의 재고가 부족해 신청할 수 없습니다.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "20px", textAlign: "left" }}>
+              {stockShortfallModal.map((s) => (
+                <div key={s.id} style={{ padding: "10px 12px", background: C.errorSoft, borderRadius: "10px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>{s.name} <span style={{ fontWeight: 400, color: C.label, fontFamily: "monospace" }}>({s.id})</span></div>
+                  <div style={{ fontSize: "12px", color: C.error, marginTop: "2px", fontWeight: 700 }}>필요 {s.requested}개 / 현재 재고 {s.stock}개</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+              수량을 줄이거나, 관리자에게 재고를 확인해달라고 요청해주세요.
+            </div>
+            <button onClick={() => setStockShortfallModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
+              닫기
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2612,10 +2691,10 @@ function ReturnItemCard({
       <Thumb url={item.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {item.name}
+          {item.itemLabel || item.name || "(이름 없음)"}
         </div>
         <div style={{ display: "flex", gap: "6px", fontSize: "11px", color: C.label, marginTop: "2px", alignItems: "center" }}>
-          <span>{item.id}</span>
+          <span>{item.itemId || item.id}</span>
           <span>•</span>
           <span>{item.quantity || 1}개 대여</span>
           {item.generalOption === "SID 추가 물품" ? (
