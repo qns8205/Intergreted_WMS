@@ -1620,6 +1620,7 @@ export default function App() {
         inventory={inventory}
         rentLogs={rentLogs}
         defectLogs={defectLogs}
+        robotObjects={robotObjects}
         racks={racks}
         isAdmin={isAdmin}
         currentUser={currentUser}
