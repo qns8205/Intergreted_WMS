@@ -328,7 +328,7 @@ export function clearBrowseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-/* ══════════ 일반 자재 (자재 시트) 타입 & 헬퍼 ══════════ */
+/* ══════════ 공구 및 부품류 (공구 및 부품류 시트) 타입 & 헬퍼 ══════════ */
 
 export interface WarehouseItem {
   rowIndex: number;
@@ -390,7 +390,7 @@ export async function fetchWarehouseInventory(scriptUrl: string): Promise<Wareho
   return (data.inventory || []) as WarehouseItem[];
 }
 
-// 일반 자재 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
+// 공구 및 부품류 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
 export async function postWarehouseRent(
   scriptUrl: string,
   payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
