@@ -237,8 +237,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   function matchesFilters(it: ObjectItem, q: string, cat: string, sub: string): boolean {
-    if (cat && it.category !== cat) return false;
-    if (sub && it.subcategory !== sub) return false;
+    // "전체"는 필터 미적용으로 취급 (select 옵션 값과 상태 초기값 "" 모두 허용)
+    if (cat && cat !== "전체" && it.category !== cat) return false;
+    if (sub && sub !== "전체" && it.subcategory !== sub) return false;
     if (!q) return true;
     const slotPad = padSlot(String(it.rootSlot ?? ""));
     return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot], q);
@@ -452,7 +453,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (itemType === "general") {
       cart.forEach((c) => {
         const obj = objectItems.find((o) => o.id === c.id);
-        receiptItems.push({ name: c.name, qty: c.quantity, location: obj?.location });
+        receiptItems.push({ name: c.name, qty: c.quantity, location: obj?.rootSlot });
       });
     } else {
       sidCart.forEach((entry) => {
@@ -462,7 +463,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           receiptItems.push({
             name: `[시나리오 ${entry.sid}] ${it.name}`,
             qty: it.quantity || 1,
-            location: obj?.location || it.location,
+            location: obj?.rootSlot || it.rootSlot,
           });
         });
       });
@@ -471,7 +472,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         receiptItems.push({
           name: `[추가] ${c.name}`,
           qty: c.quantity,
-          location: obj?.location,
+          location: obj?.rootSlot,
         });
       });
     }
@@ -1710,7 +1711,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const { rack, slot } = parseRackSlot(it.location);
                   return (
                     <div key={it.rowIndex} onClick={() => addWhCart(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}>
-                      <input type="checkbox" readOnly checked={inCart} style={{ width: 17, height: 17, accentColor: C.accent, flexShrink: 0 }} />
+                      <input type="checkbox" readOnly checked={inCart} style={{ width: 20, height: 20, accentColor: C.accent, flexShrink: 0 }} />
                       <Thumb url={it.photo} size={44} C={C} setImageModalUrl={setImageModalUrl} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
@@ -1820,7 +1821,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   return (
                     <div key={key} onClick={() => setWhReturnSel((p) => { const n = { ...p }; if (checked) delete n[key]; else n[key] = maxQty; return n; })}
                       style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "13px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "12px", marginBottom: "8px", cursor: "pointer" }}>
-                      <input type="checkbox" readOnly checked={checked} style={{ width: 17, height: 17, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
+                      <input type="checkbox" readOnly checked={checked} style={{ width: 20, height: 20, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
                         <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
@@ -2089,7 +2090,7 @@ function CartBox({
               <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
               <div style={{ fontSize: "11px", color: C.label, display: "flex", gap: "6px" }}>
                 <span>ID: {it.id}</span>
-                {orig?.location ? <span>• {padSlot(orig.location)}</span> : null}
+                {orig?.rootSlot ? <span>• {padSlot(orig.rootSlot)}</span> : null}
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -2202,12 +2203,12 @@ function ItemPicker({
       </div>
 
       <div style={{ display: "flex", gap: "8px" }}>
-        <select value={cat} onChange={(e) => { setCat(e.target.value); setSub("전체"); }} style={selectStyle}>
-          <option value="전체">대분류 (전체)</option>
+        <select value={cat} onChange={(e) => { setCat(e.target.value); setSub(""); }} style={selectStyle}>
+          <option value="">대분류 (전체)</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={sub} onChange={(e) => setSub(e.target.value)} style={selectStyle} disabled={cat === "전체"}>
-          <option value="전체">소분류 (전체)</option>
+        <select value={sub} onChange={(e) => setSub(e.target.value)} style={selectStyle} disabled={!cat || cat === "전체"}>
+          <option value="">소분류 (전체)</option>
           {subsOf(cat).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
@@ -2233,7 +2234,7 @@ function ItemPicker({
                     <span style={{ fontSize: "10px", color: C.label, fontFamily: "monospace" }}>({it.id})</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
-                    <LocBadge slot={it.location} C={C} />
+                    <LocBadge slot={it.rootSlot} C={C} />
                     <StockBadges stock={stock} rented={rented} C={C} />
                   </div>
                 </div>
@@ -2277,11 +2278,12 @@ function GroupCheckbox({
     <div
       onClick={(e) => { e.stopPropagation(); handleToggle(); }}
       style={{
-        width: 17,
-        height: 17,
-        borderRadius: "5px",
-        border: `1.5px solid ${isAll || isSome ? C.accent : C.border}`,
-        background: isAll ? C.accent : isSome ? C.accentSoft : "transparent",
+        width: 22,
+        height: 22,
+        borderRadius: "6px",
+        border: `2px solid ${isAll || isSome ? C.accent : C.label}`,
+        background: isAll ? C.accent : isSome ? C.accentSoft : C.card,
+        boxShadow: isAll || isSome ? "none" : "inset 0 1px 2px rgba(0,0,0,0.06)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -2290,8 +2292,8 @@ function GroupCheckbox({
         position: "relative"
       }}
     >
-      {isAll ? <Check size={11} strokeWidth={3} style={{ color: "#ffffff" }} /> : null}
-      {isSome ? <div style={{ width: 7, height: 7, background: C.accent, borderRadius: "2px" }} /> : null}
+      {isAll ? <Check size={14} strokeWidth={3.5} style={{ color: "#ffffff" }} /> : null}
+      {isSome ? <div style={{ width: 10, height: 10, background: C.accent, borderRadius: "3px" }} /> : null}
     </div>
   );
 }
@@ -2332,7 +2334,10 @@ function GroupSection({
   selectedReturn: Record<string, boolean>;
   keyOf: (it: any) => string;
 }) {
-  const isExp = expanded[gKey] !== false; // default expanded
+  // 기본값: 접힌 상태. 검색 중일 때는 결과가 보이도록 자동 펼침.
+  // 사용자가 직접 토글한 경우(expanded[gKey]에 값 존재)에는 그 값을 우선한다.
+  const hasSearch = returnSearch.trim().length > 0;
+  const isExp = expanded[gKey] ?? hasSearch;
 
   const toggleExp = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -2397,6 +2402,7 @@ function GroupSection({
     <div style={{ marginBottom: level === 1 ? "14px" : "0" }}>
       <div onClick={toggleExp} style={headerStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flex: 1, minWidth: 0 }}>
+          <GroupCheckbox gKey={gKey} items={items} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
           {level === 1 ? (
             <div style={{ width: 32, height: 32, borderRadius: "50%", background: avatarBg, color: avatarText, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "12px", flexShrink: 0 }}>
               {title.slice(0, 1)}
@@ -2415,8 +2421,7 @@ function GroupSection({
             </span>
           ) : null}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }} onClick={(e) => e.stopPropagation()}>
-          <GroupCheckbox gKey={gKey} items={items} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <button onClick={toggleExp} style={{ border: "none", background: "none", color: C.label, cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ChevronRight size={16} style={{ transform: isExp ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }} />
           </button>
@@ -2481,6 +2486,9 @@ function ReturnItemCard({
         transition: "all 0.15s ease",
       }}
     >
+      <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+        <GroupCheckbox gKey={k} items={[item]} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
+      </div>
       <Thumb url={item.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -2500,9 +2508,6 @@ function ReturnItemCard({
         <div style={{ display: "flex", gap: "4px", marginTop: "2px" }}>
           <LocBadge slot={item.location} C={C} />
         </div>
-      </div>
-      <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-        <GroupCheckbox gKey={k} items={[item]} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
       </div>
     </div>
   );
