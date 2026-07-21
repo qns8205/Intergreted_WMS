@@ -1,12 +1,13 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck,
 } from "lucide-react";
 import {
   ScenarioObjectAdmin, padSlot,
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
   fetchUnreturnedItems, UnreturnedItem,
+  fetchStockAuditHistory, recordStockAudit, StockAuditRecord,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -55,6 +56,15 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [unreturned, setUnreturned] = useState<UnreturnedItem[]>([]);
   const [unreturnedLoading, setUnreturnedLoading] = useState(false);
   const [unreturnedLoaded, setUnreturnedLoaded] = useState(false);
+  const [detailTab, setDetailTab] = useState<"borrowers" | "audit">("borrowers");
+
+  // 재고 실사 기록 (수동으로 세어본 수량 vs 시스템 재고)
+  const [auditHistory, setAuditHistory] = useState<StockAuditRecord[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditLoadedForId, setAuditLoadedForId] = useState<string | null>(null);
+  const [auditCountInput, setAuditCountInput] = useState("");
+  const [auditNote, setAuditNote] = useState("");
+  const [auditSubmitting, setAuditSubmitting] = useState(false);
 
   const loadUnreturned = useCallback(async () => {
     setUnreturnedLoading(true);
@@ -69,9 +79,57 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     }
   }, [connected, scriptUrl, showToast]);
 
+  const loadAuditHistory = useCallback(async (itemId: string) => {
+    setAuditLoading(true);
+    try {
+      if (connected && scriptUrl) {
+        setAuditHistory(await fetchStockAuditHistory(scriptUrl, itemId));
+      } else {
+        setAuditHistory([]);
+      }
+      setAuditLoadedForId(itemId);
+    } catch (e: any) {
+      showToast(`재고 실사 기록을 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [connected, scriptUrl, showToast]);
+
   function openBorrowers(it: ScenarioObjectAdmin) {
     setBorrowersItem(it);
+    setDetailTab("borrowers");
+    setAuditCountInput("");
+    setAuditNote("");
     if (!unreturnedLoaded && !unreturnedLoading) loadUnreturned();
+  }
+
+  async function submitAudit() {
+    if (!borrowersItem) return;
+    const actual = parseInt(auditCountInput, 10);
+    if (isNaN(actual) || actual < 0) { showToast("실사 수량을 올바르게 입력해주세요.", "warn"); return; }
+    setAuditSubmitting(true);
+    try {
+      if (connected && scriptUrl) {
+        const res = await recordStockAudit(scriptUrl, {
+          itemId: borrowersItem.id,
+          itemName: borrowersItem.name,
+          systemStock: borrowersItem.stock || 0,
+          actualCount: actual,
+          note: auditNote.trim(),
+        });
+        if (!res.success) { showToast(res.message || "재고 실사 기록에 실패했습니다.", "error"); return; }
+        showToast("재고 실사를 기록했습니다.", "ok");
+      } else {
+        showToast("데모 모드: 실제 저장은 연동 시 동작합니다.", "info");
+      }
+      setAuditCountInput("");
+      setAuditNote("");
+      loadAuditHistory(borrowersItem.id);
+    } catch (e: any) {
+      showToast(`재고 실사 기록 실패: ${e.message}`, "error");
+    } finally {
+      setAuditSubmitting(false);
+    }
   }
 
   // 선택된 오브젝트를 현재 대여 중인 사람들 (동일 물품 ID 기준)
@@ -82,6 +140,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       .filter((u) => (u.itemId ? padSlot(u.itemId) === targetId : false))
       .sort((a, b) => (a.borrowDate < b.borrowDate ? 1 : -1));
   }, [unreturned, borrowersItem]);
+
+  useEffect(() => {
+    if (detailTab === "audit" && borrowersItem && auditLoadedForId !== borrowersItem.id && !auditLoading) {
+      loadAuditHistory(borrowersItem.id);
+    }
+  }, [detailTab, borrowersItem, auditLoadedForId, auditLoading, loadAuditHistory]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -314,46 +378,143 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         document.body
       ) : null}
 
-      {/* 대여 현황 모달 (오브젝트 클릭 시 — 누가 얼마나 빌려갔는지) */}
+      {/* 오브젝트 상세 모달 (오브젝트 클릭 시 — 대여 현황 / 재고 실사) */}
       {borrowersItem ? createPortal(
         <div onClick={() => setBorrowersItem(null)} style={{ position: "fixed", inset: 0, zIndex: 2000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "14px", border: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px 12px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: "6px" }}><Users size={16} style={{ color: C.accentText }} /> 대여 현황</h2>
-                <div style={{ fontSize: "12px", color: C.label, marginTop: "3px" }}>{borrowersItem.name} ({borrowersItem.id})</div>
+                <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0 }}>{borrowersItem.name}</h2>
+                <div style={{ fontSize: "12px", color: C.label, marginTop: "3px" }}>ID: {borrowersItem.id} · 재고 {borrowersItem.stock} · 대여 중 {borrowersItem.rented}</div>
               </div>
-              <button onClick={() => !unreturnedLoading && loadUnreturned()} disabled={unreturnedLoading} title="새로고침" style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 9px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: unreturnedLoading ? "default" : "pointer", opacity: unreturnedLoading ? 0.6 : 1, fontSize: "11px", fontWeight: 700 }}>
+              <button
+                onClick={() => (detailTab === "borrowers" ? (!unreturnedLoading && loadUnreturned()) : (!auditLoading && loadAuditHistory(borrowersItem.id)))}
+                disabled={detailTab === "borrowers" ? unreturnedLoading : auditLoading}
+                title="새로고침"
+                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 9px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: (detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? "default" : "pointer", opacity: (detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? 0.6 : 1, fontSize: "11px", fontWeight: 700 }}
+              >
                 <style>{`@keyframes sapSpinBtn { to { transform: rotate(360deg); } } .sap-spin-btn { animation: sapSpinBtn 0.9s linear infinite; }`}</style>
-                <RotateCcw size={13} className={unreturnedLoading ? "sap-spin-btn" : undefined} />
+                <RotateCcw size={13} className={(detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? "sap-spin-btn" : undefined} />
               </button>
               <button onClick={() => setBorrowersItem(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
+
+            {/* 탭 */}
+            <div style={{ display: "flex", gap: "4px", padding: "10px 20px 0", borderBottom: `1px solid ${C.border}`, position: "sticky", top: "69px", background: C.card, zIndex: 1 }}>
+              {[
+                { key: "borrowers" as const, label: "대여 현황", icon: <Users size={13} /> },
+                { key: "audit" as const, label: "재고 실사", icon: <ClipboardCheck size={13} /> },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setDetailTab(t.key)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "5px", padding: "9px 14px",
+                    border: "none", borderBottom: detailTab === t.key ? `2px solid ${C.accent}` : "2px solid transparent",
+                    background: "none", color: detailTab === t.key ? C.accentText : C.label,
+                    fontSize: "12.5px", fontWeight: 700, cursor: "pointer",
+                  }}
+                >
+                  {t.icon} {t.label}
+                </button>
+              ))}
+            </div>
+
             <div style={{ padding: "16px 20px" }}>
-              {unreturnedLoading && !unreturnedLoaded ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={26} /> 대여 현황을 불러오는 중...</div>
-              ) : borrowersForItem.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>현재 이 물품을 대여 중인 사람이 없습니다.</div>
+              {detailTab === "borrowers" ? (
+                unreturnedLoading && !unreturnedLoaded ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={26} /> 대여 현황을 불러오는 중...</div>
+                ) : borrowersForItem.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>현재 이 물품을 대여 중인 사람이 없습니다.</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
+                      총 <b style={{ color: C.accentText }}>{borrowersForItem.reduce((s, u) => s + (u.quantity || 1), 0)}개</b>가 <b style={{ color: C.accentText }}>{new Set(borrowersForItem.map((u) => u.borrowerName)).size}명</b>에게 대여 중
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {borrowersForItem.map((u, idx) => (
+                        <div key={`${u.sheetType}-${u.rowIndex}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</div>
+                            <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
+                              <span>{u.sheetType === "scenario" ? `SID 대여${u.scenarioId ? ` (${u.scenarioId})` : ""}` : "일반 대여"}</span>
+                              <span>·</span>
+                              <span>{u.borrowDate || "-"}</span>
+                            </div>
+                          </div>
+                          <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )
               ) : (
                 <>
-                  <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
-                    총 <b style={{ color: C.accentText }}>{borrowersForItem.reduce((s, u) => s + (u.quantity || 1), 0)}개</b>가 <b style={{ color: C.accentText }}>{new Set(borrowersForItem.map((u) => u.borrowerName)).size}명</b>에게 대여 중
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {borrowersForItem.map((u, idx) => (
-                      <div key={`${u.sheetType}-${u.rowIndex}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</div>
-                          <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
-                            <span>{u.sheetType === "scenario" ? `SID 대여${u.scenarioId ? ` (${u.scenarioId})` : ""}` : "일반 대여"}</span>
-                            <span>·</span>
-                            <span>{u.borrowDate || "-"}</span>
+                  {/* 실사 입력 */}
+                  <div style={{ padding: "14px", background: C.cardSub, borderRadius: "12px", border: `1px solid ${C.border}`, marginBottom: "16px" }}>
+                    <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
+                      현재 시스템 재고는 <b style={{ color: C.accentText }}>{borrowersItem.stock}개</b>입니다. 실제로 세어본 수량을 입력해 기록하세요.
+                    </div>
+                    <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                      <input
+                        type="number"
+                        min={0}
+                        value={auditCountInput}
+                        onChange={(e) => setAuditCountInput(e.target.value)}
+                        placeholder="실사 수량"
+                        style={{ ...inputStyle, flex: 1 }}
+                      />
+                      <button
+                        onClick={submitAudit}
+                        disabled={auditSubmitting || auditCountInput.trim() === ""}
+                        style={{ padding: "0 18px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, opacity: auditSubmitting || auditCountInput.trim() === "" ? 0.6 : 1, whiteSpace: "nowrap" }}
+                      >
+                        {auditSubmitting ? "기록 중..." : "기록하기"}
+                      </button>
+                    </div>
+                    {auditCountInput.trim() !== "" && !isNaN(parseInt(auditCountInput, 10)) ? (
+                      (() => {
+                        const diff = parseInt(auditCountInput, 10) - (borrowersItem.stock || 0);
+                        return diff !== 0 ? (
+                          <div style={{ fontSize: "11px", fontWeight: 700, color: diff > 0 ? C.success : C.error }}>
+                            시스템 대비 {diff > 0 ? `+${diff}` : diff}개 차이
                           </div>
-                        </div>
-                        <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
-                      </div>
-                    ))}
+                        ) : (
+                          <div style={{ fontSize: "11px", fontWeight: 700, color: C.label }}>시스템 재고와 일치합니다.</div>
+                        );
+                      })()
+                    ) : null}
+                    <input
+                      value={auditNote}
+                      onChange={(e) => setAuditNote(e.target.value)}
+                      placeholder="메모 (선택 — 예: 창고 B구역 실사, 파손 3개 확인 등)"
+                      style={{ ...inputStyle, marginTop: "8px", fontSize: "12px" }}
+                    />
                   </div>
+
+                  {/* 실사 이력 */}
+                  {auditLoading && auditLoadedForId !== borrowersItem.id ? (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "24px 0", color: C.label }}><Spinner size={24} /> 실사 이력을 불러오는 중...</div>
+                  ) : auditHistory.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>이 물품의 실사 기록이 아직 없습니다.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {auditHistory.map((a, idx) => (
+                        <div key={idx} style={{ padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "11px", color: C.label }}>{a.auditedAt}{a.auditor ? ` · ${a.auditor}` : ""}</span>
+                            <span style={{ fontSize: "12px", fontWeight: 800, color: a.diff === 0 ? C.label : a.diff > 0 ? C.success : C.error }}>
+                              {a.diff === 0 ? "일치" : a.diff > 0 ? `+${a.diff}` : a.diff}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, marginTop: "4px" }}>
+                            실사 {a.actualCount}개 <span style={{ color: C.label, fontWeight: 400 }}>(당시 시스템 재고 {a.systemStock}개)</span>
+                          </div>
+                          {a.note ? <div style={{ fontSize: "11px", color: C.label, marginTop: "3px" }}>{a.note}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
             </div>
