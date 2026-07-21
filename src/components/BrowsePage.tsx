@@ -103,6 +103,11 @@ export default function BrowsePage({
     if (saved) { setName(saved.name || ""); setEmpId(saved.employeeId || ""); }
   }, []);
 
+  // 화면(단계)이 바뀌면 스크롤이 이전 위치에 그대로 남아있지 않도록 맨 위로 초기화한다.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [step]);
+
   useEffect(() => {
     if (step === "identity" || !identName) return;
     saveBrowseCart(identName, identEmp, sciCart);
@@ -560,7 +565,7 @@ export default function BrowsePage({
                       <>
                         <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품 (SID 대여)</div>
                         {myResult.scenario.map((item: any, i: number) => (
-                          <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} loc={padSlot(item.location)} />
+                          <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} loc={padSlot(item.location)} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />
                         ))}
                       </>
                     ) : null}
@@ -568,7 +573,7 @@ export default function BrowsePage({
                       <>
                         <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "16px 0 8px" }}>일반 대여</div>
                         {myResult.general.map((item: any, i: number) => (
-                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} loc={padSlot(item.location)} />
+                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} loc={padSlot(item.location)} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />
                         ))}
                       </>
                     ) : null}
@@ -577,7 +582,7 @@ export default function BrowsePage({
                         <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>일반 자재</div>
                         {myResult.warehouse.map((item: any, i: number) => {
                           const { rack, slot } = parseRackSlot(item.location);
-                          return <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} loc={item.location ? `${rack}랙 ${slot}` : ""} />;
+                          return <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} loc={item.location ? `${rack}랙 ${slot}` : ""} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />;
                         })}
                       </>
                     ) : null}
@@ -745,12 +750,17 @@ function EmptyCart({ C }: { C: any }) {
   return <div style={{ textAlign: "center", color: C.label, fontSize: "13px", padding: "48px 0" }}><ShoppingCart size={32} style={{ color: C.border, marginBottom: "8px" }} /><div>장바구니가 비어 있습니다.</div></div>;
 }
 
-function MyRow({ C, icon, tone, label, sub, loc }: any) {
+function MyRow({ C, icon, tone, label, sub, loc, image, onImage }: any) {
   const color = tone === "success" ? C.success : C.accentText;
   const bg = tone === "success" ? C.successSoft : C.accentSoft;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "13px", border: `1px solid ${C.border}`, borderRadius: "12px", marginBottom: "8px", background: C.card }}>
-      <div style={{ flex: "0 0 40px", width: 40, height: 40, borderRadius: "10px", background: bg, color, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</div>
+      <div
+        onClick={image ? onImage : undefined}
+        style={{ flex: "0 0 40px", width: 40, height: 40, borderRadius: "10px", overflow: "hidden", background: bg, color, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default" }}
+      >
+        {image ? <img src={getGoogleDriveImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : icon}
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: "13px", wordBreak: "break-word" }}>{label}</div>
         <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>{sub}</div>
