@@ -85,6 +85,7 @@ export default function LandingPage({
 
   return (
     <div
+      className="lp-root"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -97,6 +98,11 @@ export default function LandingPage({
         fontFamily: "var(--font-sans, system-ui, sans-serif)",
       }}
     >
+      <style>{`
+        @media (min-width: 900px) {
+          .lp-root { zoom: 1.15; }
+        }
+      `}</style>
       <div
         style={{
           maxWidth: "720px",
