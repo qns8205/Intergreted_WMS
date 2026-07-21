@@ -2363,12 +2363,12 @@ function GroupCheckbox({
   gKey: string;
   items: any[];
   toggleReturnKeys: (items: any[], force: boolean) => void;
-  selectedReturn: Record<string, boolean>;
+  selectedReturn: Record<string, number>;
   keyOf: (it: any) => string;
   C: any;
 }) {
   const itemKeys = items.map(keyOf);
-  const checkedCount = itemKeys.filter((k) => !!selectedReturn[k]).length;
+  const checkedCount = itemKeys.filter((k) => selectedReturn[k] !== undefined).length;
   const isAll = checkedCount === items.length && items.length > 0;
   const isSome = checkedCount > 0 && checkedCount < items.length;
 
@@ -2433,7 +2433,7 @@ function GroupSection({
   getAvatarColor: (name: string) => { bg: string; text: string; };
   sumQty: (items: any[]) => number;
   toggleReturnKeys: (items: any[], force: boolean) => void;
-  selectedReturn: Record<string, boolean>;
+  selectedReturn: Record<string, number>;
   keyOf: (it: any) => string;
 }) {
   // 기본값: 접힌 상태. 검색 중일 때는 결과가 보이도록 자동 펼침.
@@ -2447,7 +2447,7 @@ function GroupSection({
   };
 
   const itemKeys = items.map(keyOf);
-  const checkedCount = itemKeys.filter((k) => !!selectedReturn[k]).length;
+  const checkedCount = itemKeys.filter((k) => selectedReturn[k] !== undefined).length;
   const isAll = checkedCount === items.length && items.length > 0;
   const totalQty = sumQty(items);
 
@@ -2549,26 +2549,22 @@ function ReturnItemCard({
 }: {
   key?: string | number;
   item: any;
-  selectedReturn: Record<string, boolean>;
-  setSelectedReturn: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  selectedReturn: Record<string, number>;
+  setSelectedReturn: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   toggleReturnKeys: (items: any[], force: boolean) => void;
   C: any;
   keyOf: (it: any) => string;
   setImageModalUrl: (url: string) => void;
 }) {
   const k = keyOf(item);
-  const isSel = !!selectedReturn[k];
+  const isSel = selectedReturn[k] !== undefined;
+  const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
+  const selQty = selectedReturn[k];
 
   const handleToggle = () => {
-    setSelectedReturn((prev) => {
-      const next = { ...prev };
-      if (next[k]) {
-        delete next[k];
-      } else {
-        next[k] = true;
-      }
-      return next;
-    });
+    // 카드 클릭 시: 체크박스와 동일하게 항상 "전체 수량"으로 선택/해제한다.
+    // (수량 조절은 아래 스테퍼로 별도 처리)
+    toggleReturnKeys([item], !isSel);
   };
 
   return (
@@ -2576,7 +2572,7 @@ function ReturnItemCard({
       onClick={handleToggle}
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: "10px",
         padding: "10px 12px",
         background: isSel ? C.accentSoft : C.card,
@@ -2588,7 +2584,7 @@ function ReturnItemCard({
         transition: "all 0.15s ease",
       }}
     >
-      <div style={{ flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ flexShrink: 0, marginTop: "2px" }} onClick={(e) => e.stopPropagation()}>
         <GroupCheckbox gKey={k} items={[item]} toggleReturnKeys={toggleReturnKeys} selectedReturn={selectedReturn} keyOf={keyOf} C={C} />
       </div>
       <Thumb url={item.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
@@ -2610,6 +2606,21 @@ function ReturnItemCard({
         <div style={{ display: "flex", gap: "4px", marginTop: "2px" }}>
           <LocBadge slot={item.location} C={C} />
         </div>
+        {isSel && maxQty > 1 ? (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
+            <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
+            <button
+              onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.max(1, (p[k] ?? maxQty) - 1) }))}
+              style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            ><Minus size={12} /></button>
+            <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{selQty ?? maxQty}</span>
+            <button
+              onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.min(maxQty, (p[k] ?? maxQty) + 1) }))}
+              style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            ><Plus size={12} /></button>
+            <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );
