@@ -208,13 +208,13 @@ export default function LandingPage({
             key: "browse" as const,
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
-            desc: "시나리오 물품과 창고 물품을 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+            desc: "시나리오 물품과 일반 자재을 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
           },
           {
             key: "mylookup" as const,
             icon: <PackageOpen size={24} />,
             title: "내 대여 조회",
-            desc: "내가 대여 중인 시나리오·창고 물품과 위치를 확인합니다.",
+            desc: "내가 대여 중인 시나리오·일반 자재과 위치를 확인합니다.",
           },
         ].map((c) => (
           <div
@@ -352,7 +352,7 @@ export default function LandingPage({
             🛠️ 관리 모드
           </div>
           <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-            창고 구역 배치·재고 수정·로그 관리. Admin ID와 비밀번호로 로그인해야 합니다.
+            창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
           </div>
         </div>
         <div
