@@ -1109,9 +1109,14 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   /* ══════════════════════ 렌더 ══════════════════════ */
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "inherit" }}>
+    <div className="bsp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "inherit" }}>
       <style>{`
         @keyframes bsp-spin { to { transform: rotate(360deg); } }
+
+        /* PC(넓은 화면)에서는 전체적으로 살짝 크게 — 모바일 폭(480px 이하)에는 영향 없음 */
+        @media (min-width: 900px) {
+          .bsp-root { zoom: 1.15; }
+        }
         
         .responsive-group-header {
           display: flex;
