@@ -468,6 +468,7 @@ export interface ScenarioLogEntry {
   batchId: string;
   generalOption?: string;
   returned: boolean;
+  returnDate?: string; // 반납 처리 시각 (대장 최신 활동순 정렬에 사용)
   image: string;
   stock: number;
   rented: number;
