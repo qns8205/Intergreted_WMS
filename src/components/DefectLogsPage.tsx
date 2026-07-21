@@ -111,7 +111,7 @@ export default function DefectLogsPage({
   const [actionTakenInput, setActionTakenInput] = useState("");
   const [photoInput, setPhotoInput] = useState<string>("");
   
-  // Tab-selector for items category: 랙 자재 vs 로봇 오브젝트
+  // Tab-selector for items category: 랙 공구 및 부품류 vs 로봇 오브젝트
   const [itemCategory, setItemCategory] = useState<"rack" | "robot">("rack");
   
   // Custom manual input mode toggles
@@ -517,7 +517,7 @@ export default function DefectLogsPage({
                 />
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {/* 분류 선택 (랙 자재 vs 로봇 오브젝트) */}
+                  {/* 분류 선택 (랙 공구 및 부품류 vs 로봇 오브젝트) */}
                   <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
                     <button
                       type="button"
@@ -540,7 +540,7 @@ export default function DefectLogsPage({
                         transition: "all 0.2s"
                       }}
                     >
-                      🗄️ 랙 선반 자재
+                      🗄️ 랙 선반 공구 및 부품류
                     </button>
                     <button
                       type="button"
@@ -571,7 +571,7 @@ export default function DefectLogsPage({
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={itemCategory === "rack" ? "랙 자재 목록 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
+                      placeholder={itemCategory === "rack" ? "랙 공구 및 부품류 목록 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
                       value={itemSearchQuery}
                       onChange={(e) => setItemSearchQuery(e.target.value)}
                       style={{
@@ -602,14 +602,14 @@ export default function DefectLogsPage({
                         fontSize: "13px",
                       }}
                     >
-                      <option value="">랙 자재 선택... ({filteredUniqueItems.length}개 검색됨)</option>
+                      <option value="">랙 공구 및 부품류 선택... ({filteredUniqueItems.length}개 검색됨)</option>
                       {filteredUniqueItems.map((item, idx) => (
                         <option key={idx} value={item.name}>
                           {item.name} {item.location ? `(${item.location})` : ""} {item.stock != null ? ` - 재고: ${item.stock}개` : ""}
                         </option>
                       ))}
                       {filteredUniqueItems.length === 0 && (
-                        <option disabled>일치하는 자재 품목이 없습니다.</option>
+                        <option disabled>일치하는 공구 및 부품류 품목이 없습니다.</option>
                       )}
                     </select>
                   ) : (
