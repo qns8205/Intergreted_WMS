@@ -1898,7 +1898,7 @@ export default function App() {
         >
           <button
             onClick={() => setCurrentView("monitor")}
-            title={sidebarCollapsed ? "창고물품" : undefined}
+            title={sidebarCollapsed ? "자재" : undefined}
             style={{
               width: "100%",
               padding: sidebarCollapsed ? "10px 0" : "9px 12px",
@@ -1915,7 +1915,7 @@ export default function App() {
             }}
           >
             <Package size={18} />
-            {!sidebarCollapsed && <span>창고물품</span>}
+            {!sidebarCollapsed && <span>자재</span>}
           </button>
 
           {isAdmin && (
@@ -2084,7 +2084,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 창고물품" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 자재" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2397,7 +2397,7 @@ export default function App() {
             <div style={{ display: "flex", gap: "8px", padding: "16px 24px 0", background: "var(--canvas-bg, #020617)" }}>
               {[
                 { key: "scenario" as const, label: "시나리오 물품 대장" },
-                { key: "warehouse" as const, label: "창고 물품 대장" },
+                { key: "warehouse" as const, label: "일반 자재 대장" },
               ].map((t) => (
                 <button
                   key={t.key}
@@ -2473,7 +2473,7 @@ export default function App() {
                   gap: "12px",
                 }}
               >
-                <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-main, #f1f5f9)" }}>🗂 창고 물품</div>
+                <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-main, #f1f5f9)" }}>🗂 일반 자재</div>
               </div>
 
               <RackGroupedView
