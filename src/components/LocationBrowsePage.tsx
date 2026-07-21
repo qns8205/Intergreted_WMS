@@ -51,7 +51,7 @@ export default function LocationBrowsePage({ scope, scriptUrl, inventory, onBack
   function handleZoneClick(zone: RackZone) {
     const relevant = scope === "scenario" ? zone.kind === "numeric" : zone.kind === "letter";
     if (!relevant) {
-      showToast(scope === "scenario" ? "시나리오 물품은 숫자 랙(I·G·K)에서 확인할 수 있습니다." : "창고 자재는 알파벳 랙(A~E)에서 확인할 수 있습니다.", "info");
+      showToast(scope === "scenario" ? "시나리오 물품은 숫자 랙(I·G·K)에서 확인할 수 있습니다." : "창고 공구 및 부품류는 알파벳 랙(A~E)에서 확인할 수 있습니다.", "info");
       return;
     }
     setSelectedZone(zone);
@@ -64,12 +64,12 @@ export default function LocationBrowsePage({ scope, scriptUrl, inventory, onBack
           ← 메뉴로
         </button>
         <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: 0 }}>
-          위치 열람 · {scope === "scenario" ? "시나리오 물품" : "창고 자재"}
+          위치 열람 · {scope === "scenario" ? "시나리오 물품" : "창고 공구 및 부품류"}
         </h3>
       </div>
 
       <div style={{ fontSize: 12, color: C.sub, marginBottom: 10 }}>
-        {scope === "scenario" ? "숫자로 표시된 I · G · K 랙을 눌러 시나리오 물품 위치를 확인하세요." : "알파벳으로 표시된 A~E 랙을 눌러 창고 자재 위치를 확인하세요."}
+        {scope === "scenario" ? "숫자로 표시된 I · G · K 랙을 눌러 시나리오 물품 위치를 확인하세요." : "알파벳으로 표시된 A~E 랙을 눌러 창고 공구 및 부품류 위치를 확인하세요."}
       </div>
 
       <LocationMap onZoneClick={handleZoneClick} activeZoneId={selectedZone?.id} />
