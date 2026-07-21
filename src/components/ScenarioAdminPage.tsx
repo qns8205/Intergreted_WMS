@@ -8,6 +8,8 @@ import {
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
   fetchUnreturnedItems, UnreturnedItem,
   fetchStockAuditHistory, recordStockAudit, StockAuditRecord,
+  fetchStockFormulaStatus, StockFormulaStatus,
+  fetchScenarioAllLogs, ScenarioLogEntry,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -66,6 +68,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [auditNote, setAuditNote] = useState("");
   const [auditSubmitting, setAuditSubmitting] = useState(false);
 
+  // 진단: 왜 이런 차이가 발생했는지 지금까지의 기록으로 추측
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [diagnosedForId, setDiagnosedForId] = useState<string | null>(null);
+  const [formulaStatus, setFormulaStatus] = useState<StockFormulaStatus | null>(null);
+  const [itemLogs, setItemLogs] = useState<ScenarioLogEntry[]>([]);
+
   const loadUnreturned = useCallback(async () => {
     setUnreturnedLoading(true);
     try {
@@ -100,7 +108,42 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     setDetailTab("borrowers");
     setAuditCountInput("");
     setAuditNote("");
+    setDiagnosedForId(null);
+    setFormulaStatus(null);
+    setItemLogs([]);
     if (!unreturnedLoaded && !unreturnedLoading) loadUnreturned();
+  }
+
+  async function runDiagnosis() {
+    if (!borrowersItem) return;
+    setDiagnosing(true);
+    try {
+      if (connected && scriptUrl) {
+        const [status, logs] = await Promise.all([
+          fetchStockFormulaStatus(scriptUrl, borrowersItem.id),
+          fetchScenarioAllLogs(scriptUrl),
+        ]);
+        setFormulaStatus(status);
+        const targetId = padSlot(borrowersItem.id);
+        setItemLogs(logs.filter((l) => l.itemId && padSlot(l.itemId) === targetId));
+      } else {
+        setFormulaStatus({ found: true, stockIsFormula: false, rentedIsFormula: false });
+        setItemLogs([]);
+      }
+      setDiagnosedForId(borrowersItem.id);
+    } catch (e: any) {
+      showToast(`진단 정보를 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      setDiagnosing(false);
+    }
+  }
+
+  // 날짜 문자열("yyyy-MM-dd HH:mm:ss" 등)을 타임스탬프로. 실패 시 0.
+  function parseTs(v?: string): number {
+    const s = String(v || "").trim();
+    if (!s) return 0;
+    const t = Date.parse(s.replace(" ", "T"));
+    return isNaN(t) ? 0 : t;
   }
 
   async function submitAudit() {
@@ -140,6 +183,47 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       .filter((u) => (u.itemId ? padSlot(u.itemId) === targetId : false))
       .sort((a, b) => (a.borrowDate < b.borrowDate ? 1 : -1));
   }, [unreturned, borrowersItem]);
+
+  // 실사 기록 사이 구간마다: 로그 기반 예상 변화량 vs 실제 시스템 재고 변화량을 비교해
+  // 기록에 안 잡히는 변동(수동 수정, 누락된 반납 처리 등)이 있었는지 짚어준다.
+  const diagnosis = useMemo(() => {
+    if (!borrowersItem || diagnosedForId !== borrowersItem.id) return null;
+
+    const overdueDays = 14;
+    const now = Date.now();
+    const overdue = borrowersForItem
+      .map((u) => ({ ...u, days: Math.floor((now - parseTs(u.borrowDate)) / 86400000) }))
+      .filter((u) => u.days >= overdueDays)
+      .sort((a, b) => b.days - a.days);
+
+    // 실사 기록을 오래된 순으로 정렬하고, 구간별 대여/반납 순변화를 로그와 대조
+    const auditsAsc = [...auditHistory].sort((a, b) => parseTs(a.auditedAt) - parseTs(b.auditedAt));
+    const points = [
+      ...auditsAsc.map((a) => ({ label: a.auditedAt, ts: parseTs(a.auditedAt), systemStock: a.systemStock })),
+      { label: "현재", ts: now, systemStock: borrowersItem.stock || 0 },
+    ];
+
+    const windows: { from: string; to: string; expected: number; actual: number; mismatch: number; borrowCount: number; returnCount: number }[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const from = points[i], to = points[i + 1];
+      if (to.ts <= from.ts) continue;
+      let borrowQty = 0, returnQty = 0, borrowCount = 0, returnCount = 0;
+      itemLogs.forEach((l) => {
+        const bts = parseTs(l.borrowDate);
+        if (bts > from.ts && bts <= to.ts) { borrowQty += l.quantity || 1; borrowCount++; }
+        const rts = parseTs(l.returnDate);
+        if (l.returned && rts > from.ts && rts <= to.ts) { returnQty += l.quantity || 1; returnCount++; }
+      });
+      const expected = returnQty - borrowQty; // 반납은 재고 증가, 대여는 재고 감소
+      const actual = to.systemStock - from.systemStock;
+      const mismatch = actual - expected;
+      windows.push({ from: from.label, to: to.label, expected, actual, mismatch, borrowCount, returnCount });
+    }
+
+    const hasIssue = !!(formulaStatus?.stockIsFormula) || overdue.length > 0 || windows.some((w) => w.mismatch !== 0);
+
+    return { overdue, windows, hasIssue };
+  }, [borrowersItem, diagnosedForId, borrowersForItem, auditHistory, itemLogs, formulaStatus]);
 
   useEffect(() => {
     if (detailTab === "audit" && borrowersItem && auditLoadedForId !== borrowersItem.id && !auditLoading) {
@@ -515,6 +599,69 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                       ))}
                     </div>
                   )}
+
+                  {/* 진단: 왜 차이가 발생했는지 기록으로 추측 */}
+                  <div style={{ marginTop: "18px", paddingTop: "16px", borderTop: `1px dashed ${C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+                      <div style={{ fontSize: "13px", fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: "5px" }}>
+                        <Search size={13} style={{ color: C.accentText }} /> 원인 진단
+                      </div>
+                      <button
+                        onClick={runDiagnosis}
+                        disabled={diagnosing}
+                        style={{ padding: "6px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: diagnosing ? "default" : "pointer", fontSize: "11px", fontWeight: 700, opacity: diagnosing ? 0.6 : 1 }}
+                      >
+                        {diagnosing ? "분석 중..." : diagnosedForId === borrowersItem.id ? "다시 진단" : "진단하기"}
+                      </button>
+                    </div>
+
+                    {!diagnosis ? (
+                      <div style={{ fontSize: "12px", color: C.label, lineHeight: 1.6 }}>
+                        지금까지의 대여·반납 기록과 실사 이력을 대조해서, 불일치가 왜 발생했을지 단서를 찾아드립니다. (확정적인 원인이 아니라 참고용 추정입니다.)
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                        {formulaStatus?.stockIsFormula ? (
+                          <div style={{ padding: "10px 12px", background: C.errorSoft, borderRadius: "10px", fontSize: "12px", color: C.error, lineHeight: 1.6 }}>
+                            <b>이 물품의 '재고' 값은 수식으로 계산되고 있습니다.</b> 대여/반납이 발생해도 스크립트가 자동으로 값을 갱신하지 않으므로, 수식이 실제 흐름을 반영하지 못하면 실사와 어긋날 수 있습니다.
+                          </div>
+                        ) : null}
+
+                        {diagnosis.windows.filter((w) => w.mismatch !== 0).length > 0 ? (
+                          <div>
+                            <div style={{ fontSize: "12px", fontWeight: 700, color: C.text, marginBottom: "6px" }}>기록에 안 잡히는 변동이 있는 구간</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              {diagnosis.windows.filter((w) => w.mismatch !== 0).map((w, i) => (
+                                <div key={i} style={{ padding: "9px 11px", background: C.warnSoft, borderRadius: "9px", fontSize: "11.5px", color: C.text, lineHeight: 1.6 }}>
+                                  <b>{w.from} ~ {w.to}</b>: 이 구간에 대여 {w.borrowCount}건 · 반납 {w.returnCount}건이 로그에 기록되어 예상 변화는 {w.expected >= 0 ? `+${w.expected}` : w.expected}개였지만, 실제 시스템 재고는 {w.actual >= 0 ? `+${w.actual}` : w.actual}개 변동했습니다.
+                                  {" "}차이 <b style={{ color: C.error }}>{w.mismatch >= 0 ? `+${w.mismatch}` : w.mismatch}개</b> — 로그에 남지 않은 변동(수동 재고 수정, 대여 로그에 없는 실물 이동, 반납 처리 누락 등)이 있었을 가능성이 있습니다.
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {diagnosis.overdue.length > 0 ? (
+                          <div>
+                            <div style={{ fontSize: "12px", fontWeight: 700, color: C.text, marginBottom: "6px" }}>장기 미반납 (분실 의심)</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                              {diagnosis.overdue.map((u, i) => (
+                                <div key={i} style={{ padding: "9px 11px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "9px", fontSize: "11.5px", color: C.text }}>
+                                  <b>{u.borrowerName || "(대여자 미상)"}</b>가 {u.borrowDate}에 {u.quantity || 1}개 대여 — <span style={{ color: C.warn, fontWeight: 700 }}>{u.days}일째 미반납</span>. 실물이 사라졌거나 반납 처리를 놓쳤을 수 있습니다.
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {!diagnosis.hasIssue ? (
+                          <div style={{ fontSize: "12px", color: C.label, lineHeight: 1.6 }}>
+                            기록 기준으로는 뚜렷한 이상 신호가 없습니다. 데이터 입력 실수(수량 오기입), 실물 카운트 오차, 또는 아직 실사 기록이 부족해서 비교할 구간이 없을 가능성이 있습니다.
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>
