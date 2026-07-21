@@ -6,17 +6,30 @@ import { fetchScenarioAllLogs } from "../utils/borrowApi";
 // 모듈 레벨에서 5분간 캐시한다. 실패해도 조용히 숨긴다(랜딩 화면의 부가 정보일 뿐이므로).
 const bottomItemsCache: { key: string; at: number; items: [string, number][] } = { key: "", at: 0, items: [] };
 
-function useBottomItems(scriptUrl: string, connected: boolean): [string, number][] {
-  const [items, setItems] = useState<[string, number][]>(
-    bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000 ? bottomItemsCache.items : []
-  );
+type BottomItemsState = {
+  items: [string, number][];
+  loading: boolean;
+  failed: boolean;
+};
+
+function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState {
+  const cached = bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000;
+  const [items, setItems] = useState<[string, number][]>(cached ? bottomItemsCache.items : []);
+  // 연동은 되어 있지만 아직 캐시가 없으면 곧바로 로딩 중 상태로 시작한다.
+  // → 카드가 나중에 "툭" 튀어나오지 않고, 랜딩 화면과 함께 스켈레톤으로 바로 보인다.
+  const [loading, setLoading] = useState(!!connected && !!scriptUrl && !cached);
+  const [failed, setFailed] = useState(false);
+
   useEffect(() => {
-    if (!connected || !scriptUrl) return;
+    if (!connected || !scriptUrl) { setLoading(false); return; }
     if (bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000) {
       setItems(bottomItemsCache.items);
+      setLoading(false);
       return;
     }
     let cancelled = false;
+    setLoading(true);
+    setFailed(false);
     (async () => {
       try {
         const logs = await fetchScenarioAllLogs(scriptUrl);
@@ -30,14 +43,16 @@ function useBottomItems(scriptUrl: string, connected: boolean): [string, number]
         bottomItemsCache.key = scriptUrl;
         bottomItemsCache.at = Date.now();
         bottomItemsCache.items = bottom;
-        if (!cancelled) setItems(bottom);
+        if (!cancelled) { setItems(bottom); setLoading(false); }
       } catch {
-        /* 조용히 무시 — 랜딩 화면의 부가 정보 */
+        // 조용히 무시하되, 로딩 스켈레톤은 접어서 실패를 티내지 않는다(랜딩 화면의 부가 정보일 뿐이므로).
+        if (!cancelled) { setLoading(false); setFailed(true); }
       }
     })();
     return () => { cancelled = true; };
   }, [scriptUrl, connected]);
-  return items;
+
+  return { items, loading, failed };
 }
 
 interface LandingPageProps {
@@ -66,7 +81,7 @@ export default function LandingPage({
   onOpenSetup,
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
-  const bottomItems = useBottomItems(scriptUrl, connected);
+  const { items: bottomItems, loading: bottomLoading } = useBottomItems(scriptUrl, connected);
 
   return (
     <div
@@ -117,7 +132,7 @@ export default function LandingPage({
         >
           자재 대여 · 반납 · 관리
         </h1>
-        {bottomItems.length > 0 ? (
+        {connected && (bottomLoading || bottomItems.length > 0) ? (
           <div
             style={{
               display: "inline-block",
@@ -136,14 +151,33 @@ export default function LandingPage({
               <TrendingDown size={14} style={{ color: isLightMode ? "#2563eb" : "#60a5fa" }} />
               가장 적게 대여된 물품
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              {bottomItems.map(([name, qty]) => (
-                <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
-                  <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                  <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}회</span>
-                </div>
-              ))}
-            </div>
+            {bottomLoading ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    style={{
+                      height: "13px",
+                      borderRadius: "6px",
+                      width: i === 0 ? "70%" : i === 1 ? "55%" : "62%",
+                      background: isLightMode ? "#e2e8f0" : "#1e293b",
+                      animation: "landingSkeletonPulse 1.2s ease-in-out infinite",
+                      animationDelay: `${i * 0.12}s`,
+                    }}
+                  />
+                ))}
+                <style>{`@keyframes landingSkeletonPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                {bottomItems.map(([name, qty]) => (
+                  <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
+                    <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                    <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : null}
       </div>
