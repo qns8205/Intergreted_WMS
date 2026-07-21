@@ -438,9 +438,16 @@ export default function App() {
   const initializedRef = useRef(false);
 
   // 3. 토스트 알림 표시 유틸
+  // 토큰으로 각 호출을 구분해, 겹쳐서 호출됐을 때 오래된 타이머가 방금 뜬 새 토스트를
+  // 조기에 지워버리는 문제를 막는다. (예: A 토스트 → 곧이어 B 토스트가 뜬 경우,
+  // A의 2.8초 타이머가 나중에 발동해 B를 순식간에 지워버려 "경고가 안 뜬 것처럼" 보이는 버그)
+  const toastTokenRef = useRef(0);
   const showToast = (msg: string, type: "info" | "ok" | "warn" | "error" = "info") => {
+    const myToken = ++toastTokenRef.current;
     setToast({ msg, type });
-    setTimeout(() => setToast(null), 2800);
+    setTimeout(() => {
+      if (toastTokenRef.current === myToken) setToast(null);
+    }, 2800);
   };
 
   // 3-1. 모바일용 관리자 모드 시스템 활성화 지원
