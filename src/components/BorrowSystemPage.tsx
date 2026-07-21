@@ -399,8 +399,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   function step3ScenarioNext() {
     if (sidInput.trim() !== "" && !tryAddSid()) return;
     if (sidCart.length === 0) { showToast("시나리오 ID를 하나 이상 입력하거나 추가해주세요.", "warn"); return; }
+    if (sidCart.some((e) => e.loading)) { showToast("SID 정보를 불러오는 중입니다. 잠시 후 다시 시도해주세요.", "warn"); return; }
     const blocked = sidCart.find((e) => e.scenario?.blocked);
     if (blocked && blocked.scenario) { showToast(blocked.scenario.blockReason, "error"); return; }
+    // 조회 자체가 실패한 SID는 Scenario 시트 등록 여부를 확인할 수 없으므로, 확실해질 때까지 진행을 막는다.
+    const failed = sidCart.find((e) => e.scenario?.fetchError);
+    if (failed) { showToast(`${failed.sid} 조회에 실패해 Scenario 시트 등록 여부를 확인할 수 없습니다. 다시 시도해주세요.`, "error"); return; }
     setMode("b4s");
   }
 
@@ -441,6 +445,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       });
     } else {
       if (sidCart.some((e) => e.loading)) { showToast("Scenario 시트의 필요 물품을 불러오는 중입니다. 잠시 후 다시 시도해주세요.", "warn"); return; }
+      // Scenario 시트에 없는 SID(또는 조회 실패로 확인 못한 SID)는 최종 제출 직전에도 한 번 더 막는다.
+      const blockedEntry = sidCart.find((e) => e.scenario?.blocked || e.scenario?.fetchError);
+      if (blockedEntry) {
+        showToast(blockedEntry.scenario?.blockReason || `${blockedEntry.sid}는 Scenario 시트 등록 여부를 확인할 수 없어 대여할 수 없습니다.`, "error");
+        return;
+      }
       // 재고 합산 검증 (필요 물품 + 추가 물품)
       const totals: Record<string, { name: string; quantity: number }> = {};
       const addQty = (id: string, nm: string, q: number) => {
@@ -1381,14 +1391,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                             <button onClick={() => loadSidScenario(entry.sid)} style={{ marginTop: "4px", fontSize: "11px", fontWeight: 700, color: C.accentText, background: "none", border: `1px solid ${C.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer" }}>다시 시도</button>
                           </div>
                         ) : entry.scenario?.blocked ? (
-                          <div style={{ fontSize: "11px", color: C.error, marginTop: "3px", fontWeight: 700 }}>{entry.scenario.blockReason}</div>
-                        ) : entry.scenario?.syncNeeded ? (
                           <div style={{ marginTop: "4px" }}>
-                            <div style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>Scenario 시트에서 이 SID를 찾지 못했습니다. 대여는 계속할 수 있습니다.</div>
-                            {entry.scenario.errorMessage ? (
-                              <div style={{ fontSize: "10px", color: C.label, marginTop: "2px" }}>({entry.scenario.errorMessage})</div>
-                            ) : null}
-                            <button onClick={() => loadSidScenario(entry.sid)} style={{ marginTop: "4px", fontSize: "11px", fontWeight: 700, color: C.accentText, background: "none", border: `1px solid ${C.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer" }}>다시 시도</button>
+                            <div style={{ fontSize: "11px", color: C.error, fontWeight: 700 }}>{entry.scenario.blockReason || "Scenario 시트에 등록되어 있지 않아 대여할 수 없습니다."}</div>
+                            <button onClick={() => loadSidScenario(entry.sid)} style={{ marginTop: "4px", fontSize: "11px", fontWeight: 700, color: C.accentText, background: "none", border: `1px solid ${C.border}`, borderRadius: "6px", padding: "3px 8px", cursor: "pointer" }}>다시 확인</button>
                           </div>
                         ) : (
                           <div style={{ fontSize: "11px", color: C.label, marginTop: "3px" }}>
@@ -1427,8 +1432,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                       <div style={{ color: C.label, fontSize: "12px" }}>불러오는 중…</div>
                     ) : s?.fetchError ? (
                       <div style={{ color: C.error, fontSize: "12px", fontWeight: 700 }}>조회 실패: {s.fetchError}</div>
-                    ) : s?.syncNeeded ? (
-                      <div style={{ color: C.warn, fontSize: "12px", fontWeight: 700 }}>Scenario 시트에서 이 SID를 찾지 못했습니다. 대여는 가능합니다.</div>
+                    ) : s?.blocked ? (
+                      <div style={{ color: C.error, fontSize: "12px", fontWeight: 700 }}>{s.blockReason || "Scenario 시트에 등록되어 있지 않아 대여할 수 없습니다."}</div>
                     ) : (
                       <div style={{ color: C.label, fontSize: "12px", lineHeight: 1.5 }}>
                         <div>EN: {s?.highLevelEn || "-"}</div>
