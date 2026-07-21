@@ -51,7 +51,7 @@ interface BorrowSystemPageProps {
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
 export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
-  // 열람에서 일반 자재을 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
+  // 열람에서 공구 및 부품류를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
   const rootMode: Mode = initialKind === "warehouse" ? "wborrow"
     : initialKind === "scenario" ? "b1"
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
@@ -130,7 +130,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [reqCat, setReqCat] = useState("");
   const [reqSub, setReqSub] = useState("");
 
-  /* ---------- 일반 자재 상태 ---------- */
+  /* ---------- 공구 및 부품류 상태 ---------- */
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [whLoading, setWhLoading] = useState(false);
@@ -189,7 +189,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       setWhLoaded(true);
     } catch (e: any) {
       setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
-      showToast(`일반 자재을 불러오지 못했습니다: ${e.message}`, "error");
+      showToast(`공구 및 부품류를 불러오지 못했습니다: ${e.message}`, "error");
     }
     finally { setWhLoading(false); }
   }, [connected, scriptUrl, whLoaded, showToast]);
@@ -790,14 +790,14 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     })();
   }
 
-  /* ══════════════════════ 일반 자재 대여/반납 ══════════════════════ */
+  /* ══════════════════════ 공구 및 부품류 대여/반납 ══════════════════════ */
 
 
   async function handleWarehouseBorrow(actionType: "대여" | "소모" = "대여") {
     const user = whName.trim();
     if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
     if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    if (whCart.length === 0) { showToast(`${actionType}할 일반 자재을 담아주세요.`, "warn"); return; }
+    if (whCart.length === 0) { showToast(`${actionType}할 공구 및 부품류를 담아주세요.`, "warn"); return; }
     // 재고 검증
     for (const c of whCart) {
       const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
@@ -815,7 +815,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setResultInfo({
       ok: true,
       isSyncing: true,
-      title: actionType === "소모" ? "일반 자재 소모 진행 중..." : "일반 자재 대여 진행 중...",
+      title: actionType === "소모" ? "공구 및 부품류 소모 진행 중..." : "공구 및 부품류 대여 진행 중...",
       sub: actionType === "소모"
         ? `${total}개 물품의 소모를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
         : `${total}개 물품의 대여를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`,
@@ -843,7 +843,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           setResultInfo((prev: any) => ({
             ...prev,
             isSyncing: false,
-            title: actionType === "소모" ? "일반 자재 소모 완료!" : "일반 자재 대여 완료!",
+            title: actionType === "소모" ? "공구 및 부품류 소모 완료!" : "공구 및 부품류 대여 완료!",
             sub: actionType === "소모"
               ? `${total}개 물품을 소모 처리했습니다.`
               : `${total}개 물품을 대여 처리했습니다.`,
@@ -889,7 +889,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setResultInfo({
       ok: true,
       isSyncing: true,
-      title: "일반 자재 반납 진행 중...",
+      title: "공구 및 부품류 반납 진행 중...",
       sub: `${total}개 물품의 반납을 기록하고 있습니다. 화면을 닫으셔도 구글 시트에 안전하게 완료됩니다.`,
       receipt: {
         borrower: whName.trim(),
@@ -914,7 +914,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           setResultInfo((prev: any) => ({
             ...prev,
             isSyncing: false,
-            title: "일반 자재 반납 완료!",
+            title: "공구 및 부품류 반납 완료!",
             sub: `${total}개 물품을 반납 처리했습니다.`,
           }));
           
@@ -928,7 +928,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           setResultInfo((prev: any) => ({
             ...prev,
             isSyncing: false,
-            title: "일반 자재 반납 완료!",
+            title: "공구 및 부품류 반납 완료!",
             sub: `${total}개 물품을 반납 처리했습니다. (로컬 데모)`,
           }));
           setWhReturnSel({});
@@ -1025,7 +1025,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     pickBorrowKind: "대여 신청", pickReturnKind: "반납 처리",
     b1: "시나리오 대여 신청", b2: "시나리오 대여 신청", b3g: "시나리오 대여 신청",
     b4g: "시나리오 대여 신청", b3s: "시나리오 대여 신청", b4s: "시나리오 대여 신청",
-    return: "시나리오 반납 처리", wborrow: "일반 자재 대여", wreturn: "일반 자재 반납", result: "",
+    return: "시나리오 반납 처리", wborrow: "공구 및 부품류 대여", wreturn: "공구 및 부품류 반납", result: "",
   };
 
   function goPrev() {
@@ -1261,7 +1261,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             {[
               { kind: "scenario", icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품", sub: "SID 기반 대여 및 일반 대여 (Slack 연동)" },
-              { kind: "warehouse", icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "일반 자재", sub: "창고 재고를 랙·슬롯 기준으로 대여/반납" },
+              { kind: "warehouse", icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 및 부품류", sub: "창고 재고를 랙·슬롯 기준으로 대여/반납" },
             ].map((m) => (
               <div
                 key={m.kind}
@@ -1754,7 +1754,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {/* ───────── 일반 자재 대여 ───────── */}
+        {/* ───────── 공구 및 부품류 대여 ───────── */}
         {mode === "wborrow" ? (
           <div>
             <label style={labelStyle}>대여자 성함</label>
@@ -1766,7 +1766,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             {whCart.length > 0 ? (
               <div style={{ marginBottom: "14px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "13px", color: C.label }}>담은 일반 자재</span>
+                  <span style={{ fontSize: "13px", color: C.label }}>담은 공구 및 부품류</span>
                   <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{whCartCount}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
@@ -1803,10 +1803,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
               {whLoading ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 일반 자재을 불러오는 중...</div>
+                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 공구 및 부품류를 불러오는 중...</div>
               ) : !whLoaded || whItems.length === 0 ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                  <div>일반 자재 목록을 불러오지 못했습니다.</div>
+                  <div>공구 및 부품류 목록을 불러오지 못했습니다.</div>
                   <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
                 </div>
               ) : whFiltered.length === 0 ? (
@@ -1888,12 +1888,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {/* ───────── 일반 자재 반납 ───────── */}
+        {/* ───────── 공구 및 부품류 반납 ───────── */}
         {mode === "wreturn" ? (
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
               <div style={{ flex: 1, padding: "12px 14px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "12px", lineHeight: 1.6 }}>
-                현재 대여 중인 일반 자재 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
+                현재 대여 중인 공구 및 부품류 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
               </div>
               <button
                 onClick={() => !whReturnLoading && loadWhReturn()}
@@ -1918,7 +1918,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             {whReturnLoading ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "48px 0", color: C.label }}><Spinner size={30} /> 대여 내역을 불러오는 중...</div>
             ) : whReturnItems.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 일반 자재이 없습니다.</div>
+              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 공구 및 부품류가 없습니다.</div>
             ) : (
               <>
                 {(() => {
