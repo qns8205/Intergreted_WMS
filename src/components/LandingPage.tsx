@@ -140,7 +140,7 @@ export default function LandingPage({
               {bottomItems.map(([name, qty]) => (
                 <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
                   <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                  <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
+                  <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}회</span>
                 </div>
               ))}
             </div>
