@@ -1470,7 +1470,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── 반납 처리 ───────── */}
         {mode === "return" ? (
           <div>
-            <label style={labelStyle}>반납 처리할 물품을 선택해주세요</label>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+              <label style={{ ...labelStyle, marginBottom: 0 }}>반납 처리할 물품을 선택해주세요</label>
+              <button
+                onClick={() => !returnLoading && loadUnreturned()}
+                disabled={returnLoading}
+                title="새로고침"
+                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.label, fontSize: "12px", fontWeight: 700, cursor: returnLoading ? "default" : "pointer", opacity: returnLoading ? 0.6 : 1, flexShrink: 0 }}
+              >
+                <style>{`@keyframes spinSyncBtn { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .sync-icon-spin { animation: spinSyncBtn 0.9s linear infinite; }`}</style>
+                <RotateCcw size={13} className={returnLoading ? "sync-icon-spin" : undefined} /> 새로고침
+              </button>
+            </div>
             <div style={{ position: "relative", marginBottom: "12px" }}>
               <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
               <input value={returnSearch} onChange={(e) => setReturnSearch(e.target.value)} placeholder="대여자 이름 · 물품명 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
@@ -1825,8 +1836,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── 일반 자재 반납 ───────── */}
         {mode === "wreturn" ? (
           <div>
-            <div style={{ marginBottom: "12px", padding: "12px 14px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "12px", lineHeight: 1.6 }}>
-              현재 대여 중인 일반 자재 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+              <div style={{ flex: 1, padding: "12px 14px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "12px", lineHeight: 1.6 }}>
+                현재 대여 중인 일반 자재 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
+              </div>
+              <button
+                onClick={() => !whReturnLoading && loadWhReturn()}
+                disabled={whReturnLoading}
+                title="새로고침"
+                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.label, fontSize: "12px", fontWeight: 700, cursor: whReturnLoading ? "default" : "pointer", opacity: whReturnLoading ? 0.6 : 1, flexShrink: 0, alignSelf: "flex-start" }}
+              >
+                <style>{`@keyframes spinSyncBtn { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .sync-icon-spin { animation: spinSyncBtn 0.9s linear infinite; }`}</style>
+                <RotateCcw size={13} className={whReturnLoading ? "sync-icon-spin" : undefined} /> 새로고침
+              </button>
             </div>
             <label style={labelStyle}>반납자 성함</label>
             <div style={{ position: "relative", marginBottom: "12px" }}>
