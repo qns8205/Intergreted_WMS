@@ -212,6 +212,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       setItemsLoaded(true);
     } catch (e: any) {
       showToast(`물품 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      // 로딩 실패 시 대기 중이던 자동 제출도 함께 취소한다.
+      // (그대로 두면 itemsLoaded가 영영 true가 되지 않아 "물품 정보 확인 중..." 상태로
+      //  버튼이 영구히 눌리지 않는 새로운 버그가 생긴다)
+      setPendingSubmit(false);
     } finally {
       setItemsLoading(false);
     }
