@@ -63,6 +63,14 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           fetchScenarioAllLogs(scriptUrl),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
         ]);
+        // 서버 정렬을 신뢰하되, 날짜 형식이 섞인 과거 데이터를 대비해 클라이언트에서도 최신순으로 재정렬
+        const parseTs = (v?: string) => {
+          const s = String(v || "").trim();
+          if (!s) return 0;
+          const t = Date.parse(s.replace(" ", "T"));
+          return isNaN(t) ? 0 : t;
+        };
+        list.sort((a, b) => (parseTs(b.borrowDate) - parseTs(a.borrowDate)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         setLogs(list);
         setAppVersion(ver);
       } else {
