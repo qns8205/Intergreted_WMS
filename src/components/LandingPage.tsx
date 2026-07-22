@@ -66,6 +66,7 @@ function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState
 interface LandingPageProps {
   onNavigate: (view: "borrow" | "return" | "browse" | "mylookup" | "login") => void;
   isLightMode: boolean;
+  isMobile?: boolean;
   scriptUrl: string;
   setScriptUrl: (url: string) => void;
   connecting: boolean;
@@ -79,6 +80,7 @@ interface LandingPageProps {
 export default function LandingPage({
   onNavigate,
   isLightMode,
+  isMobile = false,
   scriptUrl,
   setScriptUrl,
   connecting,
@@ -91,16 +93,18 @@ export default function LandingPage({
   const [showGuide, setShowGuide] = useState(false);
   const { items: bottomItems, loading: bottomLoading } = useBottomItems(scriptUrl, connected);
   const [bottomPage, setBottomPage] = useState(0);
-  const bottomPageCount = Math.max(1, Math.ceil(bottomItems.length / 10));
+  const bottomPageSize = isMobile ? 5 : 10;
+  const bottomSlideIntervalMs = 10000;
+  const bottomPageCount = Math.max(1, Math.ceil(bottomItems.length / bottomPageSize));
 
   // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
   useEffect(() => {
     if (bottomPageCount <= 1) return;
     const timer = setInterval(() => {
       setBottomPage((p) => (p + 1) % bottomPageCount);
-    }, 10000);
+    }, bottomSlideIntervalMs);
     return () => clearInterval(timer);
-  }, [bottomPageCount]);
+  }, [bottomPageCount, bottomSlideIntervalMs]);
 
   // 목록이 바뀌어 페이지 수가 줄어들면 범위를 벗어나지 않도록 보정
   useEffect(() => {
@@ -210,7 +214,7 @@ export default function LandingPage({
                   >
                     {Array.from({ length: bottomPageCount }).map((_, pageIdx) => (
                       <div key={pageIdx} style={{ flex: "0 0 100%", display: "flex", flexDirection: "column", gap: "4px" }}>
-                        {bottomItems.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
+                        {bottomItems.slice(pageIdx * bottomPageSize, pageIdx * bottomPageSize + bottomPageSize).map(([name, qty]) => (
                           <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
                             <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
                             <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
