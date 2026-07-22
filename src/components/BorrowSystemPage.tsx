@@ -1017,7 +1017,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setWhCart((prev) => {
       let next = [...prev];
       set.items.forEach((si) => {
-        const match = whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase());
+        const match = whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase() && w.name === si.name)
+          || whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase()); // 이름까지 일치하는 게 없으면 위치만으로 폴백
         if (!match) { notFound.push(si.name || si.location); return; }
         const stock = warehouseStockNum(match.stock);
         const idx = next.findIndex((c) => c.rowIndex === match.rowIndex);
