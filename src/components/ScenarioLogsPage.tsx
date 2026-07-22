@@ -6,6 +6,7 @@ import {
 import {
   ScenarioLogEntry, ReturnRequest, padSlot,
   fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
+  fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 
@@ -38,6 +39,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   };
 
   const [logs, setLogs] = useState<ScenarioLogEntry[]>([]);
+  const [allItems, setAllItems] = useState<ScenarioObjectAdmin[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -68,9 +70,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     setSel({});
     try {
       if (connected && scriptUrl) {
-        const [list, ver] = await Promise.all([
+        const [list, ver, catalog] = await Promise.all([
           fetchScenarioAllLogs(scriptUrl),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
+          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
         // 서버 정렬을 신뢰하되, 날짜 형식이 섞인 과거 데이터를 대비해 클라이언트에서도 재정렬.
         // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순 → 반납 처리된 건도 위로 올라온다.
@@ -84,6 +87,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         list.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         setLogs(list);
         setAppVersion(ver);
+        setAllItems(catalog);
         hasDataRef.current = list.length > 0;
       } else {
         setLogs([
@@ -149,6 +153,12 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     const byBorrower: Record<string, { total: number; unreturned: number; returned: number }> = {};
     const byItem: Record<string, number> = {};
     const byDay: Record<string, number> = {};
+    // 카탈로그의 모든 물품을 먼저 0으로 깔아둔다 — 한 번도 대여된 적 없는 물품도
+    // "가장 적게 대여된 물품"에 (당연히 0회로) 나와야 하기 때문.
+    allItems.forEach((it) => {
+      const nm = String(it.name || "").trim();
+      if (nm) byItem[nm] = 0;
+    });
     logs.forEach((l) => {
       const b = l.borrowerName || "(미상)";
       if (!byBorrower[b]) byBorrower[b] = { total: 0, unreturned: 0, returned: 0 };
@@ -165,7 +175,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     const bottomItems = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const recentDays = Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
     return { topBorrowers, topItems, bottomItems, recentDays };
-  }, [logs]);
+  }, [logs, allItems]);
 
   const selKey = (it: ScenarioLogEntry) => `${it.sheetType}:${it.rowIndex}`;
   const selCount = Object.keys(sel).length;
