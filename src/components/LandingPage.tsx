@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, TrendingDown } from "lucide-react";
-import { fetchScenarioAllLogs } from "../utils/borrowApi";
+import { fetchScenarioAllLogs, fetchScenarioObjectsForAdmin } from "../utils/borrowApi";
 
 // 가장 적게 대여된 물품: 랜딩 진입 때마다 무거운 전체 대장 조회를 반복하지 않도록
 // 모듈 레벨에서 5분간 캐시한다. 실패해도 조용히 숨긴다(랜딩 화면의 부가 정보일 뿐이므로).
@@ -32,8 +32,16 @@ function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState
     setFailed(false);
     (async () => {
       try {
-        const logs = await fetchScenarioAllLogs(scriptUrl);
+        const [logs, catalog] = await Promise.all([
+          fetchScenarioAllLogs(scriptUrl),
+          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
+        ]);
         const byItem: Record<string, number> = {};
+        // 카탈로그의 모든 물품을 먼저 0으로 깔아둔다 — 한 번도 대여된 적 없는 물품도 순위에 포함되도록.
+        catalog.forEach((it) => {
+          const nm = String(it.name || "").trim();
+          if (nm) byItem[nm] = 0;
+        });
         logs.forEach((l) => {
           const nm = String(l.itemName || "").trim();
           if (!nm || nm === "(물품 미등록)") return;
@@ -136,7 +144,7 @@ export default function LandingPage({
             color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
-          대여 · 반납 관리 시스템
+          공구 및 부품류 대여 · 반납 · 관리
         </h1>
         {connected && (bottomLoading || bottomItems.length > 0) ? (
           <div
