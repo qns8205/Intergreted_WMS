@@ -1632,10 +1632,9 @@ export default function App() {
         onSaveInventoryItem={saveInventoryItem}
         onDeleteInventory={deleteInventoryItemRow}
         onBack={() => {
-          setIsAdmin(false);
-          safeSetLocalStorage("wms_is_admin", "false");
-          setCurrentUser(null);
-          setCurrentView("login");
+          // 뒤로가기는 로그아웃이 아니라 초기 화면으로 돌아가는 동작이어야 한다.
+          // (창을 닫기 전까지는 관리자 세션이 유지되어야 하므로 isAdmin/currentUser는 건드리지 않는다)
+          setCurrentView("landing");
         }}
         isLightMode={isLightMode}
         toggleLightMode={toggleLightMode}
