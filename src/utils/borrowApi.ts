@@ -341,6 +341,7 @@ export interface WarehouseItem {
   note: string;
   manager: string;
   keywords?: string; // 한글 검색어 (검색 보조)
+  isConsumable?: boolean; // 소모성 물품 여부 — 대여/소모 중 무엇을 누르든 항상 소모로 처리
 }
 
 // 위치 문자열 "A-01" → { rack: "A", slot: "01" }
