@@ -7,6 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
+import StockAdjustModal from "./components/StockAdjustModal";
 import SidePanel from "./components/SidePanel";
 import RackGroupedView from "./components/RackGroupedView";
 import ScenarioAdminPage from "./components/ScenarioAdminPage";
@@ -410,11 +411,13 @@ export default function App() {
   const [defaultLocationForNewItem, setDefaultLocationForNewItem] = useState<string | null>(null);
   const [defaultSpecForNewItem, setDefaultSpecForNewItem] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [stockAdjustItem, setStockAdjustItem] = useState<InventoryItem | null>(null);
 
   // 탭(뷰)을 전환하면 열려 있던 품목 편집/추가 모달을 닫는다.
   useEffect(() => {
     setEditingItem(null);
     setShowAddForm(false);
+    setStockAdjustItem(null);
   }, [currentView]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -2489,6 +2492,7 @@ export default function App() {
                 isLightMode={isLightMode}
                 isAdmin={isAdmin}
                 onEditItem={(item) => setEditingItem(item)}
+                onAdjustStock={(item) => setStockAdjustItem(item)}
                 onImageClick={(url) => setImageModalUrl(url)}
               />
             </div>
@@ -2550,6 +2554,26 @@ export default function App() {
           }}
           defaultManager={currentUser ? (currentUser.name || currentUser.id) : "관리자"}
           inventory={inventory}
+        />
+      )}
+
+      {/* ===== 4-1. 재고 변경 모달 (공구 및 부품류) ===== */}
+      {stockAdjustItem && (
+        <StockAdjustModal
+          scriptUrl={scriptUrl}
+          connected={connected}
+          isLightMode={isLightMode}
+          category="inventory"
+          rowIndex={stockAdjustItem.rowIndex}
+          itemId={stockAdjustItem.location}
+          itemLabel={stockAdjustItem.name}
+          currentStock={typeof stockAdjustItem.stock === "number" ? stockAdjustItem.stock : Number(stockAdjustItem.stock) || 0}
+          managerName={currentUser ? (currentUser.name || currentUser.id) : "관리자"}
+          showToast={showToast}
+          onClose={() => setStockAdjustItem(null)}
+          onSaved={(newStock) => {
+            setInventory((prev) => prev.map((it) => (it.rowIndex === stockAdjustItem.rowIndex ? { ...it, stock: newStock } : it)));
+          }}
         />
       )}
 
