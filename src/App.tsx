@@ -8,6 +8,7 @@ import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import StockAdjustModal from "./components/StockAdjustModal";
+import ItemSetManageModal from "./components/ItemSetManageModal";
 import SidePanel from "./components/SidePanel";
 import RackGroupedView from "./components/RackGroupedView";
 import ScenarioAdminPage from "./components/ScenarioAdminPage";
@@ -412,12 +413,14 @@ export default function App() {
   const [defaultSpecForNewItem, setDefaultSpecForNewItem] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [stockAdjustItem, setStockAdjustItem] = useState<InventoryItem | null>(null);
+  const [showItemSetManager, setShowItemSetManager] = useState(false);
 
   // 탭(뷰)을 전환하면 열려 있던 품목 편집/추가 모달을 닫는다.
   useEffect(() => {
     setEditingItem(null);
     setShowAddForm(false);
     setStockAdjustItem(null);
+    setShowItemSetManager(false);
   }, [currentView]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -2492,6 +2495,7 @@ export default function App() {
                 isAdmin={isAdmin}
                 onEditItem={(item) => setEditingItem(item)}
                 onAdjustStock={(item) => setStockAdjustItem(item)}
+                onManageSets={() => setShowItemSetManager(true)}
                 onImageClick={(url) => setImageModalUrl(url)}
               />
             </div>
@@ -2573,6 +2577,18 @@ export default function App() {
           onSaved={(newStock) => {
             setInventory((prev) => prev.map((it) => (it.rowIndex === stockAdjustItem.rowIndex ? { ...it, stock: newStock } : it)));
           }}
+        />
+      )}
+
+      {/* ===== 4-2. 물품 세트 관리 모달 ===== */}
+      {showItemSetManager && (
+        <ItemSetManageModal
+          scriptUrl={scriptUrl}
+          connected={connected}
+          isLightMode={isLightMode}
+          inventory={inventory}
+          showToast={showToast}
+          onClose={() => setShowItemSetManager(false)}
         />
       )}
 
