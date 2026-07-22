@@ -460,6 +460,18 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                 </div>
               </div>
               {!isNew ? <div style={{ fontSize: "11px", color: C.label, marginTop: "8px" }}>재고 열에 수식이 걸려 있으면 재고 값은 무시됩니다. 대여 중({editing.rented ?? 0})은 자동 계산됩니다.</div> : null}
+
+              <div style={{ marginTop: "16px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: C.text }}>
+                  <input
+                    type="checkbox"
+                    checked={!!editing.excludeFromRanking}
+                    onChange={(e) => setEditing((p) => (p ? { ...p, excludeFromRanking: e.target.checked } : p))}
+                    style={{ width: 16, height: 16, accentColor: C.accent }}
+                  />
+                  "가장 적게 대여된 물품" 랭킹에서 이 물품 제외
+                </label>
+              </div>
             </div>
             <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: "10px", position: "sticky", bottom: 0, background: C.card }}>
               <button onClick={() => setEditing(null)} disabled={saving} style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "14px", fontWeight: 700 }}>취소</button>
