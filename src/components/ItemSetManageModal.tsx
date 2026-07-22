@@ -34,7 +34,7 @@ export default function ItemSetManageModal({ scriptUrl, connected, isLightMode, 
 
   const [sets, setSets] = useState<ItemSet[]>([]);
   const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState<{ originalName: string | null; name: string; items: { location: string; name: string; qty: number }[] } | null>(null);
+  const [editing, setEditing] = useState<{ originalName: string | null; name: string; items: { rowIndex: number; location: string; name: string; qty: number }[] } | null>(null);
   const [itemSearch, setItemSearch] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -55,23 +55,29 @@ export default function ItemSetManageModal({ scriptUrl, connected, isLightMode, 
   }
 
   function startEdit(set: ItemSet) {
-    setEditing({ originalName: set.name, name: set.name, items: set.items.map((i) => ({ ...i })) });
+    // 저장된 세트는 rowIndex가 없으므로(위치+이름으로 저장됨), 현재 재고 목록에서 매칭되는 행을 찾아 붙여준다.
+    // 매칭 실패(물품이 삭제된 경우)는 rowIndex -1로 두고, 편집 화면에서 계속 표시는 하되 목록 하이라이트만 안 된다.
+    const items = set.items.map((i) => {
+      const match = inventory.find((inv) => inv.location.trim().toUpperCase() === i.location.trim().toUpperCase() && inv.name === i.name);
+      return { rowIndex: match ? match.rowIndex : -Math.random(), location: i.location, name: i.name, qty: i.qty };
+    });
+    setEditing({ originalName: set.name, name: set.name, items });
     setItemSearch("");
   }
 
   function toggleItem(it: InventoryItem) {
     if (!editing) return;
-    const idx = editing.items.findIndex((i) => i.location === it.location);
+    const idx = editing.items.findIndex((i) => i.rowIndex === it.rowIndex);
     if (idx !== -1) {
       setEditing({ ...editing, items: editing.items.filter((_, i) => i !== idx) });
     } else {
-      setEditing({ ...editing, items: [...editing.items, { location: it.location, name: it.name, qty: 1 }] });
+      setEditing({ ...editing, items: [...editing.items, { rowIndex: it.rowIndex, location: it.location, name: it.name, qty: 1 }] });
     }
   }
 
-  function setQty(location: string, qty: number) {
+  function setQty(rowIndex: number, qty: number) {
     if (!editing) return;
-    setEditing({ ...editing, items: editing.items.map((i) => (i.location === location ? { ...i, qty: Math.max(1, qty) } : i)) });
+    setEditing({ ...editing, items: editing.items.map((i) => (i.rowIndex === rowIndex ? { ...i, qty: Math.max(1, qty) } : i)) });
   }
 
   async function handleSave() {
@@ -171,16 +177,16 @@ export default function ItemSetManageModal({ scriptUrl, connected, isLightMode, 
                   <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>선택된 물품 ({editing.items.length}종)</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                     {editing.items.map((it) => (
-                      <div key={it.location} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", background: C.accentSoft, borderRadius: "9px" }}>
+                      <div key={it.rowIndex} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", background: C.accentSoft, borderRadius: "9px" }}>
                         <span style={{ flex: 1, fontSize: "12.5px", fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name} <span style={{ color: C.label, fontWeight: 400 }}>({it.location})</span></span>
                         <input
                           type="number"
                           min={1}
                           value={it.qty}
-                          onChange={(e) => setQty(it.location, parseInt(e.target.value, 10) || 1)}
+                          onChange={(e) => setQty(it.rowIndex, parseInt(e.target.value, 10) || 1)}
                           style={{ width: "52px", padding: "5px 6px", borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: "12px", textAlign: "center" }}
                         />
-                        <button onClick={() => setEditing({ ...editing, items: editing.items.filter((i) => i.location !== it.location) })} style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: "transparent", color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
+                        <button onClick={() => setEditing({ ...editing, items: editing.items.filter((i) => i.rowIndex !== it.rowIndex) })} style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: "transparent", color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
                       </div>
                     ))}
                   </div>
@@ -199,7 +205,7 @@ export default function ItemSetManageModal({ scriptUrl, connected, isLightMode, 
               </div>
               <div style={{ maxHeight: "220px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "5px", marginBottom: "18px" }}>
                 {filteredInventory.slice(0, 60).map((it) => {
-                  const inSet = editing.items.some((i) => i.location === it.location);
+                  const inSet = editing.items.some((i) => i.rowIndex === it.rowIndex);
                   return (
                     <div
                       key={it.rowIndex}
