@@ -94,7 +94,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   // 기타 소속인데 성함을 안 적고 다음으로 넘어가려 할 때 — 토스트로는 놓치기 쉬워 큰 팝업으로 확실히 막는다.
   const [nameRequiredModal, setNameRequiredModal] = useState(false);
   const otherNameInputRef = useRef<HTMLInputElement>(null);
-  const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
+  const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string; note?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
   const [borrowerName, setBorrowerName] = useState(initialIdentity?.name || "");
@@ -820,6 +820,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       const stock = orig ? warehouseStockNum(orig.stock) : NaN;
       if (!isNaN(stock) && c.quantity > stock) { showToast(`['${c.name}'] 신청 수량(${c.quantity})이 재고(${stock})를 초과합니다.`, "warn"); return; }
     }
+
+    // 물품별 실제 처리 방식 결정: "소모성 물품"으로 지정된 항목은 어떤 버튼을 눌렀든 항상 소모로 처리한다.
+    const effectiveType = (c: WarehouseCartItem): "대여" | "소모" => {
+      const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
+      return orig?.isConsumable ? "소모" : actionType;
+    };
+    const borrowCount = whCart.filter((c) => effectiveType(c) === "대여").reduce((n, c) => n + c.quantity, 0);
+    const consumeCount = whCart.filter((c) => effectiveType(c) === "소모").reduce((n, c) => n + c.quantity, 0);
+    const isMixed = borrowCount > 0 && consumeCount > 0;
+
     setSubmitting(true);
     const total = whCart.reduce((n, c) => n + c.quantity, 0);
     const cartSnapshot = [...whCart];
@@ -828,19 +838,24 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     clearWarehouseCart(user, whEmpId.trim());
     setWhCart([]);
 
+    const progressTitle = isMixed ? "공구 및 부품류 처리 진행 중..." : actionType === "소모" ? "공구 및 부품류 소모 진행 중..." : "공구 및 부품류 대여 진행 중...";
+    const progressSub = isMixed
+      ? `대여 ${borrowCount}개, 소모 ${consumeCount}개를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
+      : actionType === "소모"
+        ? `${total}개 물품의 소모를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
+        : `${total}개 물품의 대여를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`;
+
     setResultInfo({
       ok: true,
       isSyncing: true,
-      title: actionType === "소모" ? "공구 및 부품류 소모 진행 중..." : "공구 및 부품류 대여 진행 중...",
-      sub: actionType === "소모"
-        ? `${total}개 물품의 소모를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
-        : `${total}개 물품의 대여를 구글 시트에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`,
+      title: progressTitle,
+      sub: progressSub,
       receipt: {
         borrower: user,
         date: nowString(),
         due: actionType === "대여" && whDueDate ? whDueDate : undefined,
         action: actionType,
-        items: cartSnapshot.map((c) => ({ name: c.name, qty: c.quantity, location: c.location })),
+        items: cartSnapshot.map((c) => ({ name: c.name, qty: c.quantity, location: c.location, note: effectiveType(c) === "소모" && actionType === "대여" ? "소모성 물품 — 자동 소모 처리" : undefined })),
       },
     });
     setMode("result");
@@ -851,18 +866,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       try {
         if (connected && scriptUrl) {
           await Promise.all(cartSnapshot.map(async (c) => {
-            const dueTag = actionType === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
-            const baseNote = whPurpose || (actionType === "소모" ? "소모 처리" : "대여 신청");
-            return postWarehouseRent(scriptUrl, { type: actionType, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
+            const type = effectiveType(c);
+            const dueTag = type === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
+            const baseNote = whPurpose || (type === "소모" ? "소모 처리" : "대여 신청");
+            return postWarehouseRent(scriptUrl, { type, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
           }));
-          
+
           setResultInfo((prev: any) => ({
             ...prev,
             isSyncing: false,
-            title: actionType === "소모" ? "공구 및 부품류 소모 완료!" : "공구 및 부품류 대여 완료!",
-            sub: actionType === "소모"
-              ? `${total}개 물품을 소모 처리했습니다.`
-              : `${total}개 물품을 대여 처리했습니다.`,
+            title: isMixed ? "공구 및 부품류 처리 완료!" : actionType === "소모" ? "공구 및 부품류 소모 완료!" : "공구 및 부품류 대여 완료!",
+            sub: isMixed
+              ? `대여 ${borrowCount}개, 소모 ${consumeCount}개를 처리했습니다.`
+              : actionType === "소모"
+                ? `${total}개 물품을 소모 처리했습니다.`
+                : `${total}개 물품을 대여 처리했습니다.`,
           }));
           
           // 리프레시
@@ -1839,10 +1857,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{whCartCount}개</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
-                  {whCart.map((item, idx) => (
+                  {whCart.map((item, idx) => {
+                    const orig = whItems.find((o) => o.rowIndex === item.rowIndex);
+                    return (
                     <div key={`${item.rowIndex}-${item.name}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{item.name}</div>
+                        <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: "6px" }}>
+                          {item.name}
+                          {orig?.isConsumable ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "1px 6px", flexShrink: 0 }}>🔥 소모성</span> : null}
+                        </div>
                         <div style={{ fontSize: "11px", color: C.label }}>{item.location}</div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
@@ -1852,7 +1875,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                       </div>
                       <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
@@ -2148,9 +2172,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 </div>
                 <div style={{ padding: "0 16px 12px" }}>
                   {resultInfo.receipt.items.map((it, i) => (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: `1px solid ${C.border}`, fontSize: "12px" }}>
-                      <span style={{ flex: 1, fontWeight: 600, wordBreak: "break-word" }}>{it.name}{it.location ? <span style={{ color: C.label, fontWeight: 400 }}> · {it.location}</span> : null}</span>
-                      <span style={{ fontWeight: 800, marginLeft: "8px" }}>{it.qty}개</span>
+                    <div key={i} style={{ padding: "7px 0", borderTop: `1px solid ${C.border}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
+                        <span style={{ flex: 1, fontWeight: 600, wordBreak: "break-word" }}>{it.name}{it.location ? <span style={{ color: C.label, fontWeight: 400 }}> · {it.location}</span> : null}</span>
+                        <span style={{ fontWeight: 800, marginLeft: "8px" }}>{it.qty}개</span>
+                      </div>
+                      {it.note ? <div style={{ fontSize: "10.5px", color: C.warn, marginTop: "2px", fontWeight: 700 }}>🔥 {it.note}</div> : null}
                     </div>
                   ))}
                 </div>
