@@ -12,6 +12,7 @@ import {
   fetchMyBorrowedItems, checkConfigDsRegistered, postRecordBorrow, postProcessReturn,
   DEMO_OBJECT_ITEMS, loadBrowseCart, clearBrowseCart, saveIdentity,
   WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum, compareRackSlot,
+  ItemSet, fetchItemSets,
   fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
   loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
@@ -138,6 +139,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whLoaded, setWhLoaded] = useState(false);
   const [whLoading, setWhLoading] = useState(false);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
+  const [itemSets, setItemSets] = useState<ItemSet[]>([]);
+  const [itemSetsLoaded, setItemSetsLoaded] = useState(false);
   const [whSearch, setWhSearch] = useState("");
   const [whCustomLoc, setWhCustomLoc] = useState("");
   const [whRack, setWhRack] = useState("");
@@ -184,12 +187,22 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!force && whLoaded) return;
     setWhLoading(true);
     try {
-      if (connected && scriptUrl) setWhItems(await fetchWarehouseInventory(scriptUrl));
-      else setWhItems([
-        { rowIndex: 2, location: "A-01", name: "랙 선반용 합판", photo: "", stock: 12, spec: "", note: "", manager: "고성민" },
-        { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
-      ]);
+      if (connected && scriptUrl) {
+        const [items, sets] = await Promise.all([
+          fetchWarehouseInventory(scriptUrl),
+          fetchItemSets(scriptUrl).catch(() => []), // 세트 조회 실패해도 대여 자체는 진행 가능해야 하므로 조용히 무시
+        ]);
+        setWhItems(items);
+        setItemSets(sets);
+      } else {
+        setWhItems([
+          { rowIndex: 2, location: "A-01", name: "랙 선반용 합판", photo: "", stock: 12, spec: "", note: "", manager: "고성민" },
+          { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
+        ]);
+        setItemSets([{ name: "예시 세트", items: [{ location: "A-01", name: "랙 선반용 합판", qty: 2 }] }]);
+      }
       setWhLoaded(true);
+      setItemSetsLoaded(true);
     } catch (e: any) {
       setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
       showToast(`공구 및 부품류를 불러오지 못했습니다: ${e.message}`, "error");
@@ -995,6 +1008,40 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     showToast(`'${nm}' 담았습니다.`, "ok");
   }
 
+  // 세트를 한 번에 장바구니에 담기 — 위치(location) 기준으로 실제 재고 항목을 찾아 매칭한다.
+  function addSetToCart(set: ItemSet) {
+    let addedCount = 0;
+    const notFound: string[] = [];
+    const shortages: string[] = [];
+
+    setWhCart((prev) => {
+      let next = [...prev];
+      set.items.forEach((si) => {
+        const match = whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase());
+        if (!match) { notFound.push(si.name || si.location); return; }
+        const stock = warehouseStockNum(match.stock);
+        const idx = next.findIndex((c) => c.rowIndex === match.rowIndex);
+        const already = idx !== -1 ? next[idx].quantity : 0;
+        const want = si.qty || 1;
+        const room = isNaN(stock) ? want : Math.max(0, stock - already);
+        const toAdd = Math.min(want, room);
+        if (toAdd <= 0) { shortages.push(match.name); return; }
+        if (toAdd < want) shortages.push(match.name);
+        if (idx !== -1) {
+          next = next.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + toAdd } : c));
+        } else {
+          next = [...next, { rowIndex: match.rowIndex, location: match.location, name: match.name, quantity: toAdd }];
+        }
+        addedCount += toAdd;
+      });
+      return next;
+    });
+
+    if (addedCount > 0) showToast(`'${set.name}' 세트에서 ${addedCount}개 담았습니다.${shortages.length ? " (일부 재고 부족)" : ""}`, addedCount > 0 && !notFound.length && !shortages.length ? "ok" : "warn");
+    if (notFound.length) showToast(`세트의 일부 물품을 찾을 수 없습니다: ${notFound.join(", ")}`, "warn");
+    if (!addedCount && !notFound.length) showToast("담을 수 있는 재고가 없습니다.", "warn");
+  }
+
   function chgWhCart(idx: number, d: number) {
     setWhCart((prev) => {
       const item = prev[idx]; if (!item) return prev;
@@ -1765,6 +1812,24 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
               <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
             </div>
+
+            {itemSetsLoaded && itemSets.length > 0 ? (
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ ...labelStyle, marginBottom: "8px" }}>세트로 담기 <span style={{ fontWeight: 400, color: C.label }}>(자주 쓰는 부품 묶음을 한 번에 담습니다)</span></label>
+                <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
+                  {itemSets.map((set) => (
+                    <button
+                      key={set.name}
+                      onClick={() => addSetToCart(set)}
+                      style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "4px", padding: "12px 14px", borderRadius: "12px", border: `1.5px solid ${C.accent}`, background: C.accentSoft, color: C.accentText, cursor: "pointer", minWidth: "140px" }}
+                    >
+                      <span style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "13px", fontWeight: 800 }}><PackageOpen size={14} /> {set.name}</span>
+                      <span style={{ fontSize: "11px", color: C.label }}>{set.items.length}종 · {set.items.reduce((n, i) => n + (i.qty || 1), 0)}개</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {whCart.length > 0 ? (
               <div style={{ marginBottom: "14px" }}>
