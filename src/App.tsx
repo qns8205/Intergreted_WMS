@@ -9,6 +9,7 @@ import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
+import SeatMapAdminPage from "./components/SeatMapAdminPage";
 import SidePanel from "./components/SidePanel";
 import RackGroupedView from "./components/RackGroupedView";
 import ScenarioAdminPage from "./components/ScenarioAdminPage";
@@ -30,6 +31,7 @@ import {
   RefreshCw,
   Settings,
   Grid,
+  LayoutGrid,
   Home,
   MapPin,
   ChevronRight,
@@ -150,7 +152,7 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario">("landing");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
@@ -1956,6 +1958,30 @@ export default function App() {
           </button>
           )}
 
+          {isAdmin && (
+          <button
+            onClick={() => setCurrentView("seatmap")}
+            title={sidebarCollapsed ? "좌석 배치도" : undefined}
+            style={{
+              width: "100%",
+              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 700,
+              justifyContent: sidebarCollapsed ? "center" : "flex-start",
+              background: currentView === "seatmap" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+              color: currentView === "seatmap" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
+              display: "flex",
+              alignItems: "center",
+              gap: sidebarCollapsed ? 0 : 10,
+              border: currentView === "seatmap" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
+            }}
+          >
+            <LayoutGrid size={18} />
+            {!sidebarCollapsed && <span>좌석 배치도</span>}
+          </button>
+          )}
+
           <button
             onClick={() => setCurrentView("rent")}
             title={sidebarCollapsed ? "대여 & 반납" : undefined}
@@ -2098,7 +2124,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2396,6 +2422,18 @@ export default function App() {
               showToast={showToast}
             />
           </div>
+        ) : currentView === "seatmap" && !isAdmin ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)", fontSize: "14px" }}>
+            좌석 배치도 관리는 관리자만 사용할 수 있습니다.
+          </div>
+        ) : currentView === "seatmap" ? (
+          <SeatMapAdminPage
+            scriptUrl={scriptUrl}
+            connected={connected}
+            isLightMode={isLightMode}
+            showToast={showToast}
+            onBack={() => setCurrentView("monitor")}
+          />
         ) : currentView === "defect" ? (
           <DefectLogsPage
             defectLogs={defectLogs}
