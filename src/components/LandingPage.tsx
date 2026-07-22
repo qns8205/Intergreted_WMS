@@ -136,7 +136,7 @@ export default function LandingPage({
             color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
-          공구 및 부품류 대여 · 반납 · 관리
+          대여 · 반납 관리 시스템
         </h1>
         {connected && (bottomLoading || bottomItems.length > 0) ? (
           <div
