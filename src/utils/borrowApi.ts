@@ -11,6 +11,7 @@ export interface ObjectItem {
   image: string;
   stock: number;
   rented: number;
+  excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
 }
 
 export interface ScenarioItem {
@@ -418,6 +419,7 @@ export interface ScenarioObjectAdmin {
   image: string;
   stock: number;
   rented: number;
+  excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
 }
 
 export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
