@@ -172,7 +172,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     });
     const topBorrowers = Object.entries(byBorrower).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
     const topItems = Object.entries(byItem).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const bottomItems = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 5);
+    // "가장 적게 대여된 물품" 랭킹에서 제외하도록 표시된 물품은 여기서만 걸러낸다 (많이 대여된 물품 순위엔 영향 없음).
+    const excludedNames = new Set(allItems.filter((it) => it.excludeFromRanking).map((it) => String(it.name || "").trim()));
+    const bottomItems = Object.entries(byItem).filter(([name]) => !excludedNames.has(name)).sort((a, b) => a[1] - b[1]).slice(0, 5);
     const recentDays = Object.entries(byDay).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 7);
     return { topBorrowers, topItems, bottomItems, recentDays };
   }, [logs, allItems]);
