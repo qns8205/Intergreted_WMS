@@ -81,6 +81,16 @@ export default function BrowsePage({
   const [leastBorrowedDetail, setLeastBorrowedDetail] = useState<{ item: ObjectItem; borrowCount: number } | null>(null);
   const swipeStartX = useRef<number | null>(null);
   const swipeDeltaX = useRef(0);
+  const stickyHeaderRef = useRef<HTMLDivElement>(null);
+  const [stickyHeaderHeight, setStickyHeaderHeight] = useState(64);
+  useEffect(() => {
+    const measure = () => {
+      if (stickyHeaderRef.current) setStickyHeaderHeight(stickyHeaderRef.current.getBoundingClientRect().height);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [step]);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [sciLoading, setSciLoading] = useState(false);
@@ -184,7 +194,7 @@ export default function BrowsePage({
   const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
   useEffect(() => {
     if (leastBorrowedPageCount <= 1) return;
-    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 10000);
+    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
     return () => clearInterval(timer);
   }, [leastBorrowedPageCount]);
 
@@ -421,7 +431,7 @@ export default function BrowsePage({
         }
       `}</style>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
+      <div ref={stickyHeaderRef} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button onClick={topBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           <ArrowLeft size={15} /> {step === "identity" ? "메인으로" : "이전"}
         </button>
@@ -511,9 +521,12 @@ export default function BrowsePage({
 
         {step === "scenario" ? (
           <>
-            {leastBorrowedLoading || leastBorrowed.length > 0 ? (
+            {leastBorrowedLoading || leastBorrowed.length > 0 || leastBorrowedLoaded ? (
               <div
                 style={{
+                  position: "sticky",
+                  top: stickyHeaderHeight,
+                  zIndex: 15,
                   marginBottom: "16px",
                   padding: "14px 16px",
                   borderRadius: "14px",
@@ -532,6 +545,16 @@ export default function BrowsePage({
                       <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
                     ))}
                     <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+                  </div>
+                ) : leastBorrowed.length === 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", fontSize: "12px", color: C.label }}>
+                    <span>불러오지 못했습니다.</span>
+                    <button
+                      onClick={() => { setLeastBorrowedLoaded(false); }}
+                      style={{ padding: "6px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "11px", fontWeight: 700 }}
+                    >
+                      다시 시도
+                    </button>
                   </div>
                 ) : (
                   <>
