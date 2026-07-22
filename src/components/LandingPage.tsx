@@ -47,7 +47,7 @@ function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState
           if (!nm || nm === "(물품 미등록)") return;
           byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
         });
-        const bottom = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 5) as [string, number][];
+        const bottom = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
         bottomItemsCache.key = scriptUrl;
         bottomItemsCache.at = Date.now();
         bottomItemsCache.items = bottom;
@@ -90,6 +90,22 @@ export default function LandingPage({
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
   const { items: bottomItems, loading: bottomLoading } = useBottomItems(scriptUrl, connected);
+  const [bottomPage, setBottomPage] = useState(0);
+  const bottomPageCount = Math.max(1, Math.ceil(bottomItems.length / 10));
+
+  // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
+  useEffect(() => {
+    if (bottomPageCount <= 1) return;
+    const timer = setInterval(() => {
+      setBottomPage((p) => (p + 1) % bottomPageCount);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [bottomPageCount]);
+
+  // 목록이 바뀌어 페이지 수가 줄어들면 범위를 벗어나지 않도록 보정
+  useEffect(() => {
+    if (bottomPage >= bottomPageCount) setBottomPage(0);
+  }, [bottomPageCount, bottomPage]);
 
   return (
     <div
@@ -183,14 +199,49 @@ export default function LandingPage({
                 <style>{`@keyframes landingSkeletonPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                {bottomItems.map(([name, qty]) => (
-                  <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
-                    <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                    <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
+              <>
+                <div style={{ position: "relative", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      transform: `translateX(-${bottomPage * 100}%)`,
+                      transition: "transform 0.5s ease",
+                    }}
+                  >
+                    {Array.from({ length: bottomPageCount }).map((_, pageIdx) => (
+                      <div key={pageIdx} style={{ flex: "0 0 100%", display: "flex", flexDirection: "column", gap: "4px" }}>
+                        {bottomItems.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
+                          <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
+                            <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                            <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+                {bottomPageCount > 1 ? (
+                  <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
+                    {Array.from({ length: bottomPageCount }).map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setBottomPage(i)}
+                        aria-label={`${i + 1}번째 페이지`}
+                        style={{
+                          width: i === bottomPage ? "14px" : "6px",
+                          height: "6px",
+                          borderRadius: "999px",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          background: i === bottomPage ? (isLightMode ? "#2563eb" : "#60a5fa") : (isLightMode ? "#cbd5e1" : "#334155"),
+                          transition: "all 0.3s ease",
+                        }}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         ) : null}
