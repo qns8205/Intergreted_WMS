@@ -574,7 +574,8 @@ export interface SeatOccupancyEntry {
   batchId: string;
   sheetType: string;
   shift: "day" | "night";
-  items: { name: string; qty: number }[];
+  items: { name: string; qty: number; returned: boolean }[];
+  allReturned: boolean;
 }
 
 export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit: string, shift?: "day" | "night"): Promise<SeatOccupancyEntry[]> {
