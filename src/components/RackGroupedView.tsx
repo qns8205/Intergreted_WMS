@@ -3,7 +3,7 @@ import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
-import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown, PackageOpen } from "lucide-react";
 
 interface Props {
   inventory: InventoryItem[];
@@ -11,10 +11,11 @@ interface Props {
   isAdmin: boolean;
   onEditItem: (item: InventoryItem) => void;
   onAdjustStock?: (item: InventoryItem) => void;
+  onManageSets?: () => void;
   onImageClick?: (url: string) => void;
 }
 
-export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onImageClick }: Props) {
+export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onManageSets, onImageClick }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
@@ -106,6 +107,11 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
         <button onClick={toggleAll} style={{ padding: "9px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap" }}>
           {allCollapsed ? "모두 펼치기" : "모두 접기"}
         </button>
+        {isAdmin && onManageSets ? (
+          <button onClick={onManageSets} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 14px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap" }}>
+            <PackageOpen size={13} /> 세트 관리
+          </button>
+        ) : null}
         <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{groups.length}개 {groupMode === "rack" ? "랙" : "슬롯"} · {totalShown}개 물품</span>
       </div>
 
