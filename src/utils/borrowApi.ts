@@ -76,6 +76,8 @@ export interface BorrowEntry {
   syncNeeded?: boolean;
   borrowedItems?: { id: string; name: string; quantity: number }[];
   generalOption?: string;
+  floor?: string; // 층수 (예: "B2") — 좌석 위치 기록용
+  unit?: string;  // 유닛 (예: "Unit 1") — 좌석 위치 기록용
 }
 
 export interface ReturnRequest {
@@ -535,6 +537,51 @@ export async function saveItemSet(
 
 export async function deleteItemSet(scriptUrl: string, name: string): Promise<{ success: boolean; message?: string }> {
   return apiPost(scriptUrl, "deleteItemSet", { name });
+}
+
+/* ══════════ 좌석 배치도 (층별 유닛 맵 + Day/Night 조회) ══════════ */
+
+export interface SeatUnit {
+  row: number;
+  col: number;
+  label: string; // 예: "Unit 1"
+}
+
+export interface SeatFloor {
+  id: string;   // 예: "B2"
+  name: string; // 표시용 이름 (id와 같아도 됨)
+  rows: number;
+  cols: number;
+  units: SeatUnit[];
+}
+
+export interface SeatMap {
+  floors: SeatFloor[];
+}
+
+export async function fetchSeatMap(scriptUrl: string): Promise<SeatMap> {
+  const data = await apiGet(scriptUrl, "getSeatMap", {});
+  return (data.map || { floors: [] }) as SeatMap;
+}
+
+export async function saveSeatMap(scriptUrl: string, map: SeatMap): Promise<{ success: boolean; message?: string }> {
+  return apiPost(scriptUrl, "saveSeatMap", map);
+}
+
+export interface SeatOccupancyEntry {
+  timestamp: string;
+  borrowerName: string;
+  batchId: string;
+  sheetType: string;
+  shift: "day" | "night";
+  items: { name: string; qty: number }[];
+}
+
+export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit: string, shift?: "day" | "night"): Promise<SeatOccupancyEntry[]> {
+  const params: Record<string, string> = { floor, unit };
+  if (shift) params.shift = shift;
+  const data = await apiGet(scriptUrl, "getSeatOccupancy", params);
+  return (data.items || []) as SeatOccupancyEntry[];
 }
 
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
