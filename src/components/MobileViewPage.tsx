@@ -87,7 +87,7 @@ export default function MobileViewPage({
   scriptUrl = "",
   currentView = "monitor",
 }: MobileViewPageProps) {
-  const [mode, setMode] = useState<Mode>("대여");
+  const [mode, setMode] = useState<Mode>(isAdmin ? "등록" : "대여");
   const [searchQuery, setSearchQuery] = useState("");
 
   // 탭 전환 슬라이딩 방향 추적 (대여→반납→등록→불량 순서)
@@ -348,10 +348,11 @@ export default function MobileViewPage({
       const subPath = parts[2] as SheetMode || null; // "detail", "form", "edit-inventory" or null
 
       // Sync tab mode
+      // 관리자 모드에서는 '대여 & 반납' 탭 자체를 없앴으므로, 해당 경로로 들어와도 등록 화면으로 대체한다.
       if (mainPath === "monitor") {
-        setMode("대여");
+        setMode(isAdmin ? "등록" : "대여");
       } else if (mainPath === "rent") {
-        setMode("반납");
+        setMode(isAdmin ? "등록" : "반납");
       } else if (mainPath === "defect") {
         setMode("불량");
       } else if (mainPath === "register") {
@@ -858,7 +859,7 @@ export default function MobileViewPage({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr 1fr" : "1fr",
+            gridTemplateColumns: isAdmin ? "1fr 1fr 1fr" : "1fr",
             gap: "6px",
             background: isLightMode ? "#f1f5f9" : "#111827",
             padding: "4px",
@@ -905,39 +906,6 @@ export default function MobileViewPage({
                 }}
               >
                 🧩 시나리오 물품
-              </button>
-              <button
-                className="mvp-btn"
-                onClick={() => switchMode(mode === "반납" ? "반납" : "대여")}
-                style={{
-                  padding: "10px 4px",
-                  borderRadius: "11px",
-                  fontSize: "12px",
-                  fontWeight: 800,
-                  background: (mode === "대여" || mode === "반납") ? TEXT_MAIN : "transparent",
-                  color: (mode === "대여" || mode === "반납") ? BG : TEXT_DIM,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "4px",
-                  boxShadow: (mode === "대여" || mode === "반납") ? "0 6px 14px rgba(0,0,0,0.18)" : "none",
-                }}
-              >
-                🔄 대여 & 반납
-                {outstandingRentals.length > 0 && (
-                  <span
-                    style={{
-                      background: (mode === "대여" || mode === "반납") ? "rgba(255,255,255,0.25)" : DANGER,
-                      color: (mode === "대여" || mode === "반납") ? BG : "#ffffff",
-                      fontSize: "9px",
-                      fontWeight: 800,
-                      borderRadius: "999px",
-                      padding: "1px 5px",
-                    }}
-                  >
-                    {outstandingRentals.length}
-                  </span>
-                )}
               </button>
               <button
                 className="mvp-btn"
