@@ -510,6 +510,30 @@ export async function fetchStockChangeHistory(
   return (data.items || []) as StockChangeRecord[];
 }
 
+/* ══════════ 물품 세트 (창고 물품 대여 시 여러 부품을 한 번에 담기) ══════════ */
+
+export interface ItemSet {
+  name: string;
+  items: { location: string; name: string; qty: number }[];
+}
+
+export async function fetchItemSets(scriptUrl: string): Promise<ItemSet[]> {
+  const data = await apiGet(scriptUrl, "getItemSets", {});
+  return (data.sets || []) as ItemSet[];
+}
+
+// originalName을 넘기면 그 이름의 기존 세트를 지우고 새 이름/구성으로 저장한다 (이름 변경 포함 수정).
+export async function saveItemSet(
+  scriptUrl: string,
+  set: { name: string; items: { location: string; name: string; qty: number }[]; originalName?: string }
+): Promise<{ success: boolean; message?: string }> {
+  return apiPost(scriptUrl, "saveItemSet", set);
+}
+
+export async function deleteItemSet(scriptUrl: string, name: string): Promise<{ success: boolean; message?: string }> {
+  return apiPost(scriptUrl, "deleteItemSet", { name });
+}
+
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
   const pa = String(la ?? "").toUpperCase().split("-");
