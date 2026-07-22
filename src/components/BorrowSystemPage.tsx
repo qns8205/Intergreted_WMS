@@ -1448,7 +1448,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     style={inputStyle}
                   >
                     <option value="">층수 선택</option>
-                    {seatMap.map((f) => <option key={f.id} value={f.id}>{f.name || f.id}</option>)}
+                    {seatMap.map((f) => <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>)}
                   </select>
                   <select
                     value={selUnit}
@@ -1457,7 +1457,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
                   >
                     <option value="">유닛 선택</option>
-                    {(seatMap.find((f) => f.id === selFloor)?.units || []).map((u) => (
+                    {(seatMap.find((f) => (f.name || f.id) === selFloor)?.units || []).map((u) => (
                       <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
                     ))}
                   </select>
