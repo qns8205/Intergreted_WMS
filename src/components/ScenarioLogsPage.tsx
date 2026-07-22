@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Search, RotateCcw, Package, MapPin, User, Check, Undo2, RefreshCw,
-  TrendingUp, Clock, CheckCircle2, Repeat,
+  TrendingUp, Clock, CheckCircle2, Repeat, X, UserCheck,
 } from "lucide-react";
 import {
   ScenarioLogEntry, ReturnRequest, padSlot,
@@ -48,6 +48,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [sel, setSel] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [reborrowing, setReborrowing] = useState(false);
+  const [reborrowModalOpen, setReborrowModalOpen] = useState(false);
+  const [reborrowTargetName, setReborrowTargetName] = useState("");
+  const [reborrowTargetEmpId, setReborrowTargetEmpId] = useState("");
+  const [reborrowSameName, setReborrowSameName] = useState(true); // true: 원래 반납자 명의 유지, false: 다른 사람 명의로 재대여
   const [showStats, setShowStats] = useState(false);
   const [visibleCount, setVisibleCount] = useState(30);
 
@@ -198,24 +202,47 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     finally { setSubmitting(false); }
   }
 
-  async function doReBorrow() {
+  function openReBorrowModal() {
     if (!isAdmin) { showToast("재대여는 관리자만 가능합니다.", "warn"); return; }
     const targets = selEntries.filter((e) => e.returned);
     if (!targets.length) { showToast("재대여할(반납완료) 물품을 선택해주세요.", "warn"); return; }
-    // 대여자별로 묶어서 각각 재대여
-    const byBorrower: Record<string, ScenarioLogEntry[]> = {};
-    targets.forEach((e) => { (byBorrower[e.borrowerName] ||= []).push(e); });
+    // 선택된 항목의 원래 대여자가 전부 동일하면 이름을 미리 채워준다.
+    const names = new Set(targets.map((e) => e.borrowerName));
+    setReborrowTargetName(names.size === 1 ? targets[0].borrowerName : "");
+    setReborrowTargetEmpId("");
+    setReborrowSameName(true);
+    setReborrowModalOpen(true);
+  }
+
+  async function doReBorrow() {
+    const targets = selEntries.filter((e) => e.returned);
+    if (!targets.length) return;
+
+    // 명의를 그대로 유지하는 경우: 기존처럼 원래 대여자별로 묶어서 각각 재대여.
+    // 다른 사람 명의로 재대여하는 경우: 선택된 항목 전부를 지정한 한 사람 앞으로 한 번에 재대여.
     setReborrowing(true);
     try {
       if (connected && scriptUrl) {
         let ok = 0;
-        for (const b of Object.keys(byBorrower)) {
-          const res = await reBorrowScenarioLogs(scriptUrl, byBorrower[b], appVersion);
-          if (res.success) ok += byBorrower[b].length;
-          else showToast(`${b} 재대여 실패: ${res.message}`, "error");
+        if (reborrowSameName) {
+          const byBorrower: Record<string, ScenarioLogEntry[]> = {};
+          targets.forEach((e) => { (byBorrower[e.borrowerName] ||= []).push(e); });
+          for (const b of Object.keys(byBorrower)) {
+            const res = await reBorrowScenarioLogs(scriptUrl, byBorrower[b], appVersion);
+            if (res.success) ok += byBorrower[b].length;
+            else showToast(`${b} 재대여 실패: ${res.message}`, "error");
+          }
+        } else {
+          const name = reborrowTargetName.trim();
+          if (!name) { showToast("재대여할 사람의 이름을 입력해주세요.", "warn"); setReborrowing(false); return; }
+          const empId = reborrowTargetEmpId.trim();
+          const res = await reBorrowScenarioLogs(scriptUrl, targets, appVersion, { name, employeeId: empId, affiliation: empId ? "cfgw" : "" });
+          if (res.success) ok += targets.length;
+          else showToast(`재대여 실패: ${res.message}`, "error");
         }
-        if (ok) showToast(`${ok}건을 동일 조건으로 다시 대여 신청했습니다.`, "ok");
+        if (ok) showToast(`${ok}건을 ${reborrowSameName ? "동일 조건으로" : `${reborrowTargetName.trim()}님 명의로`} 다시 대여 신청했습니다.`, "ok");
       } else { showToast("데모 모드: 실제 재대여는 연동 시 동작합니다.", "info"); }
+      setReborrowModalOpen(false);
       await load();
     } catch (e: any) { showToast(`재대여 실패: ${e.message}`, "error"); }
     finally { setReborrowing(false); }
@@ -347,7 +374,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           <span style={{ flex: 1, fontSize: "13px", fontWeight: 700, minWidth: "80px" }}>{selCount}건 선택됨</span>
           <button onClick={() => setSel({})} style={{ padding: "10px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>해제</button>
           {selHasReturned ? (
-            <button onClick={doReBorrow} disabled={reborrowing} title="반납완료된 항목을 동일 조건으로 다시 대여" style={{ padding: "10px 16px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: reborrowing ? 0.7 : 1 }}>
+            <button onClick={openReBorrowModal} disabled={reborrowing} title="반납완료된 항목을 다시 대여 (명의 선택 가능)" style={{ padding: "10px 16px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: reborrowing ? 0.7 : 1 }}>
               {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여</>}
             </button>
           ) : null}
@@ -356,6 +383,54 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               {submitting ? <><Spinner size={14} /> 처리 중...</> : <><Undo2 size={15} /> 반납 처리</>}
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* 재대여 명의 선택 모달 */}
+      {reborrowModalOpen ? (
+        <div onClick={() => !reborrowing && setReborrowModalOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(420px, 100%)", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+              <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, flex: 1, display: "flex", alignItems: "center", gap: "6px" }}><UserCheck size={17} style={{ color: C.accentText }} /> 재대여 명의</h2>
+              <button onClick={() => setReborrowModalOpen(false)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+
+            <div style={{ fontSize: "12.5px", color: C.label, marginBottom: "16px", lineHeight: 1.6 }}>
+              선택한 반납완료 {selEntries.filter((e) => e.returned).length}건을 다시 대여합니다. 명의를 원래 반납자로 유지할지, 다른 사람으로 지정할지 선택해주세요.
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px", borderRadius: "10px", border: `1.5px solid ${reborrowSameName ? C.accent : C.border}`, background: reborrowSameName ? C.accentSoft : "transparent", cursor: "pointer" }}>
+                <input type="radio" checked={reborrowSameName} onChange={() => setReborrowSameName(true)} />
+                <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>원래 반납자 명의로 재대여</span>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px", borderRadius: "10px", border: `1.5px solid ${!reborrowSameName ? C.accent : C.border}`, background: !reborrowSameName ? C.accentSoft : "transparent", cursor: "pointer" }}>
+                <input type="radio" checked={!reborrowSameName} onChange={() => setReborrowSameName(false)} />
+                <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>다른 사람 명의로 재대여</span>
+              </label>
+            </div>
+
+            {!reborrowSameName ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "5px" }}>대여자 이름 *</label>
+                  <input value={reborrowTargetName} onChange={(e) => setReborrowTargetName(e.target.value)} placeholder="이름 입력" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "5px" }}>사번 (선택)</label>
+                  <input value={reborrowTargetEmpId} onChange={(e) => setReborrowTargetEmpId(e.target.value)} placeholder="예: 1010" style={inputStyle} />
+                </div>
+              </div>
+            ) : null}
+
+            <button
+              onClick={doReBorrow}
+              disabled={reborrowing || (!reborrowSameName && !reborrowTargetName.trim())}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.warn, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer", opacity: (reborrowing || (!reborrowSameName && !reborrowTargetName.trim())) ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "7px" }}
+            >
+              {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여 신청</>}
+            </button>
+          </div>
         </div>
       ) : null}
     </div>
