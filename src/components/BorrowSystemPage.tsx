@@ -1457,9 +1457,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
                   >
                     <option value="">유닛 선택</option>
-                    {(seatMap.find((f) => (f.name || f.id) === selFloor)?.units || []).map((u) => (
-                      <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
-                    ))}
+                    {[...(seatMap.find((f) => (f.name || f.id) === selFloor)?.units || [])]
+                      .sort((a, b) => {
+                        const isPlainA = /^unit\s*\d+$/i.test(a.label.trim());
+                        const isPlainB = /^unit\s*\d+$/i.test(b.label.trim());
+                        if (isPlainA !== isPlainB) return isPlainA ? -1 : 1; // "Unit N" 형태가 먼저
+                        const numA = parseInt((a.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        const numB = parseInt((b.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        if (numA !== numB) return numA - numB; // 숫자 오름차순
+                        return a.label.localeCompare(b.label);
+                      })
+                      .map((u) => (
+                        <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
+                      ))}
                   </select>
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "6px" }}>지금 계신 층과 유닛(자리)을 선택해주세요.</div>
