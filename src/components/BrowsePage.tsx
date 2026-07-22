@@ -2,13 +2,13 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import {
   ArrowLeft, Search, User, IdCard, Boxes, Fingerprint, ChevronRight,
   Plus, Minus, X, ShoppingCart, Warehouse, MapPin, Trash2, HandHelping,
-  Building2, MoreHorizontal, RotateCcw, Check,
+  Building2, MoreHorizontal, RotateCcw, Check, TrendingDown,
 } from "lucide-react";
 import {
   ObjectItem, WarehouseItem, BrowseCartItem, WarehouseCartItem,
   padSlot, isKoreanName, parseRackSlot, warehouseStockNum, compareRackSlot,
   fetchObjectItems, fetchWarehouseInventory, checkConfigDsRegistered,
-  fetchMyBorrowedItems, fetchWarehouseBorrowedItems,
+  fetchMyBorrowedItems, fetchWarehouseBorrowedItems, fetchScenarioAllLogs,
   saveIdentity, loadIdentity,
   saveBrowseCart, loadBrowseCart, saveWarehouseCart, loadWarehouseCart,
   DEMO_OBJECT_ITEMS,
@@ -73,6 +73,11 @@ export default function BrowsePage({
 
   const [sciItems, setSciItems] = useState<ObjectItem[]>([]);
   const [sciLoaded, setSciLoaded] = useState(false);
+  // 시나리오 물품 열람 상단: 가장 적게 대여된 물품 20개를 5+5씩 슬라이드로 보여준다.
+  const [leastBorrowed, setLeastBorrowed] = useState<[string, number][]>([]);
+  const [leastBorrowedLoading, setLeastBorrowedLoading] = useState(false);
+  const [leastBorrowedLoaded, setLeastBorrowedLoaded] = useState(false);
+  const [leastBorrowedPage, setLeastBorrowedPage] = useState(0);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [sciLoading, setSciLoading] = useState(false);
@@ -147,6 +152,38 @@ export default function BrowsePage({
     if (step === "scenario" && !sciLoaded && !sciLoading) loadScenario();
     if (step === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
   }, [step, sciLoaded, sciLoading, whLoaded, whLoading, loadScenario, loadWarehouse]);
+
+  // 시나리오 물품 열람 화면 상단: 가장 적게 대여된 물품 20개 (카탈로그 전체를 0으로 깔고 로그로 덮어씀)
+  useEffect(() => {
+    if (step !== "scenario" || !sciLoaded || leastBorrowedLoaded || leastBorrowedLoading) return;
+    if (!connected || !scriptUrl) { setLeastBorrowedLoaded(true); return; }
+    setLeastBorrowedLoading(true);
+    fetchScenarioAllLogs(scriptUrl)
+      .then((logs) => {
+        const byItem: Record<string, number> = {};
+        sciItems.forEach((it) => {
+          const nm = String(it.name || "").trim();
+          if (nm) byItem[nm] = 0;
+        });
+        logs.forEach((l) => {
+          const nm = String(l.itemName || "").trim();
+          if (!nm || nm === "(물품 미등록)") return;
+          byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
+        });
+        const bottom = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
+        setLeastBorrowed(bottom);
+      })
+      .catch(() => { /* 조용히 무시 — 열람 화면의 부가 정보일 뿐 */ })
+      .finally(() => { setLeastBorrowedLoading(false); setLeastBorrowedLoaded(true); });
+  }, [step, sciLoaded, sciItems, connected, scriptUrl, leastBorrowedLoaded, leastBorrowedLoading]);
+
+  // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
+  const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
+  useEffect(() => {
+    if (leastBorrowedPageCount <= 1) return;
+    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
+    return () => clearInterval(timer);
+  }, [leastBorrowedPageCount]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -470,6 +507,65 @@ export default function BrowsePage({
         ) : null}
 
         {step === "scenario" ? (
+          <>
+            {leastBorrowedLoading || leastBorrowed.length > 0 ? (
+              <div
+                style={{
+                  marginBottom: "16px",
+                  padding: "14px 16px",
+                  borderRadius: "14px",
+                  border: `1px solid ${C.border}`,
+                  background: C.card,
+                  boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: C.label, marginBottom: "10px" }}>
+                  <TrendingDown size={14} style={{ color: C.accentText }} />
+                  가장 적게 대여된 물품
+                </div>
+                {leastBorrowedLoading ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}>
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
+                    ))}
+                    <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ position: "relative", overflow: "hidden" }}>
+                      <div style={{ display: "flex", transform: `translateX(-${leastBorrowedPage * 100}%)`, transition: "transform 0.5s ease" }}>
+                        {Array.from({ length: leastBorrowedPageCount }).map((_, pageIdx) => (
+                          <div
+                            key={pageIdx}
+                            style={{ flex: "0 0 100%", display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}
+                          >
+                            {leastBorrowed.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
+                              <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
+                                <span style={{ color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                                <span style={{ color: C.label, flexShrink: 0 }}>{qty}개</span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {leastBorrowedPageCount > 1 ? (
+                      <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
+                        {Array.from({ length: leastBorrowedPageCount }).map((_, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setLeastBorrowedPage(i)}
+                            aria-label={`${i + 1}번째 페이지`}
+                            style={{ width: i === leastBorrowedPage ? "14px" : "6px", height: "6px", borderRadius: "999px", border: "none", padding: 0, cursor: "pointer", background: i === leastBorrowedPage ? C.accent : C.border, transition: "all 0.3s ease" }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+
           <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }}
             filterRow={
               <>
@@ -505,6 +601,7 @@ export default function BrowsePage({
               );
             })}
           </ItemGrid>
+          </>
         ) : null}
 
         {step === "warehouse" ? (
