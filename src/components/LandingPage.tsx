@@ -98,7 +98,7 @@ export default function LandingPage({
     if (bottomPageCount <= 1) return;
     const timer = setInterval(() => {
       setBottomPage((p) => (p + 1) % bottomPageCount);
-    }, 4000);
+    }, 10000);
     return () => clearInterval(timer);
   }, [bottomPageCount]);
 
