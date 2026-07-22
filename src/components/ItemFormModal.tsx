@@ -59,6 +59,7 @@ export default function ItemFormModal({
           note: "",
           spec: defaultSpec || "",
           keywords: "",
+          isConsumable: false,
         }
   );
 
@@ -372,6 +373,18 @@ export default function ItemFormModal({
               placeholder="특이사항 또는 주의사항 입력"
               style={{ width: "100%" }}
             />
+          </Field>
+
+          <Field label="소모성 물품">
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px" }}>
+              <input
+                type="checkbox"
+                checked={!!form.isConsumable}
+                onChange={(e) => update("isConsumable", e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: "#2563eb" }}
+              />
+              이 물품은 항상 소모로 처리 (대여자가 "대여"를 눌러도 자동으로 소모 처리되어 반납 대상에서 제외됩니다)
+            </label>
           </Field>
 
           <Field label="🔎 한글 검색어 (선택)">
