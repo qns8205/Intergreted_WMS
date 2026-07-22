@@ -1495,6 +1495,7 @@ export default function App() {
   if (currentView === "landing") {
     return (
       <LandingPage
+        isMobile={isMobile}
         onNavigate={(view) => {
           if (view === "borrow") {
             setBorrowIdentity(null);
