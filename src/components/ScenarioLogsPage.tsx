@@ -51,6 +51,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [reborrowModalOpen, setReborrowModalOpen] = useState(false);
   const [reborrowTargetName, setReborrowTargetName] = useState("");
   const [reborrowTargetEmpId, setReborrowTargetEmpId] = useState("");
+  const [reborrowTargetAffiliation, setReborrowTargetAffiliation] = useState<"cfgw" | "configds" | "other">("cfgw");
   const [reborrowSameName, setReborrowSameName] = useState(true); // true: 원래 반납자 명의 유지, false: 다른 사람 명의로 재대여
   const [showStats, setShowStats] = useState(false);
   const [visibleCount, setVisibleCount] = useState(30);
@@ -210,6 +211,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     const names = new Set(targets.map((e) => e.borrowerName));
     setReborrowTargetName(names.size === 1 ? targets[0].borrowerName : "");
     setReborrowTargetEmpId("");
+    setReborrowTargetAffiliation("cfgw");
     setReborrowSameName(true);
     setReborrowModalOpen(true);
   }
@@ -236,7 +238,14 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           const name = reborrowTargetName.trim();
           if (!name) { showToast("재대여할 사람의 이름을 입력해주세요.", "warn"); setReborrowing(false); return; }
           const empId = reborrowTargetEmpId.trim();
-          const res = await reBorrowScenarioLogs(scriptUrl, targets, appVersion, { name, employeeId: empId, affiliation: empId ? "cfgw" : "" });
+          if (reborrowTargetAffiliation === "cfgw" && !empId) {
+            showToast("Cfgw-kr 소속은 사번을 입력해야 Slack 태깅이 정확히 됩니다.", "warn"); setReborrowing(false); return;
+          }
+          const res = await reBorrowScenarioLogs(scriptUrl, targets, appVersion, {
+            name,
+            employeeId: reborrowTargetAffiliation === "cfgw" ? empId : "",
+            affiliation: reborrowTargetAffiliation,
+          });
           if (res.success) ok += targets.length;
           else showToast(`재대여 실패: ${res.message}`, "error");
         }
@@ -417,16 +426,45 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   <input value={reborrowTargetName} onChange={(e) => setReborrowTargetName(e.target.value)} placeholder="이름 입력" style={inputStyle} />
                 </div>
                 <div>
-                  <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "5px" }}>사번 (선택)</label>
-                  <input value={reborrowTargetEmpId} onChange={(e) => setReborrowTargetEmpId(e.target.value)} placeholder="예: 1010" style={inputStyle} />
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "5px" }}>소속</label>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    {([
+                      { key: "cfgw" as const, label: "Cfgw-kr" },
+                      { key: "configds" as const, label: "ConfigDS" },
+                      { key: "other" as const, label: "기타" },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => setReborrowTargetAffiliation(opt.key)}
+                        style={{ flex: 1, padding: "9px", borderRadius: "9px", border: `1.5px solid ${reborrowTargetAffiliation === opt.key ? C.accent : C.border}`, background: reborrowTargetAffiliation === opt.key ? C.accentSoft : "transparent", color: reborrowTargetAffiliation === opt.key ? C.accentText : C.label, cursor: "pointer", fontSize: "12.5px", fontWeight: 700 }}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {reborrowTargetAffiliation === "cfgw" ? (
+                  <div>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "5px" }}>사번 * <span style={{ fontWeight: 400 }}>(Slack 태깅에 필요)</span></label>
+                    <input value={reborrowTargetEmpId} onChange={(e) => setReborrowTargetEmpId(e.target.value)} placeholder="예: 1010" style={inputStyle} />
+                  </div>
+                ) : reborrowTargetAffiliation === "configds" ? (
+                  <div style={{ fontSize: "11.5px", color: C.label, lineHeight: 1.6 }}>
+                    'ConfigDS계정' 시트에 등록된 이름과 정확히 일치해야 Slack 태깅이 됩니다.
+                  </div>
+                ) : (
+                  <div style={{ fontSize: "11.5px", color: C.label, lineHeight: 1.6 }}>
+                    기타 소속은 이메일 정보가 없어 Slack 태깅 없이 이름만 표시됩니다.
+                  </div>
+                )}
               </div>
             ) : null}
 
             <button
               onClick={doReBorrow}
-              disabled={reborrowing || (!reborrowSameName && !reborrowTargetName.trim())}
-              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.warn, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer", opacity: (reborrowing || (!reborrowSameName && !reborrowTargetName.trim())) ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "7px" }}
+              disabled={reborrowing || (!reborrowSameName && (!reborrowTargetName.trim() || (reborrowTargetAffiliation === "cfgw" && !reborrowTargetEmpId.trim())))}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.warn, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer", opacity: (reborrowing || (!reborrowSameName && (!reborrowTargetName.trim() || (reborrowTargetAffiliation === "cfgw" && !reborrowTargetEmpId.trim())))) ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "7px" }}
             >
               {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여 신청</>}
             </button>
