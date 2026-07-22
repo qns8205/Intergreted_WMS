@@ -143,10 +143,11 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
 
   function openOccupancy(unitLabel: string) {
     if (!activeFloor) return;
-    setOccModal({ floor: activeFloor.id, unit: unitLabel });
+    const floorKey = activeFloor.name || activeFloor.id;
+    setOccModal({ floor: floorKey, unit: unitLabel });
     setOccLoading(true);
     if (connected && scriptUrl) {
-      fetchSeatOccupancy(scriptUrl, activeFloor.id, unitLabel, shift)
+      fetchSeatOccupancy(scriptUrl, floorKey, unitLabel, shift)
         .then(setOccEntries)
         .catch((e) => showToast(`조회 실패: ${e.message}`, "error"))
         .finally(() => setOccLoading(false));
