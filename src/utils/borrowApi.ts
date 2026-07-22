@@ -473,6 +473,42 @@ export async function fetchStockFormulaStatus(scriptUrl: string, itemId: string)
   return (data.status || { found: false, stockIsFormula: false, rentedIsFormula: false }) as StockFormulaStatus;
 }
 
+/* ══════════ 재고 변경 (사유 기록 포함, 관리자용) ══════════ */
+
+export interface StockChangeRecord {
+  changedAt: string;
+  category: string; // "공구 및 부품류" | "시나리오 물품"
+  id: string;
+  itemName: string;
+  oldStock: number;
+  newStock: number;
+  diff: number;
+  reason: string;
+  manager: string;
+}
+
+// 공구 및 부품류(category: "inventory") 또는 시나리오 물품(category: "scenario")의
+// 현재 재고를 직접 변경. 사유(reason)는 필수이며, 변경 이력이 별도 시트에 남는다.
+export async function adjustStock(
+  scriptUrl: string,
+  payload: { category: "inventory" | "scenario"; rowIndex: number; newStock: number; reason: string; manager?: string }
+): Promise<{ success: boolean; message?: string; warning?: string; oldStock?: number; newStock?: number; diff?: number }> {
+  return apiPost(scriptUrl, "adjustStock", payload);
+}
+
+// category/id를 생략하면 전체 변경 이력을 최신순으로 반환.
+export async function fetchStockChangeHistory(
+  scriptUrl: string,
+  category?: "inventory" | "scenario",
+  id?: string
+): Promise<StockChangeRecord[]> {
+  const params: Record<string, string> = {};
+  if (category) params.category = category;
+  if (id) params.id = id;
+  const data = await apiGet(scriptUrl, "getStockChangeHistory", params);
+  return (data.items || []) as StockChangeRecord[];
+}
+
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
   const pa = String(la ?? "").toUpperCase().split("-");
