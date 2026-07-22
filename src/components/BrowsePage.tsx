@@ -78,6 +78,9 @@ export default function BrowsePage({
   const [leastBorrowedLoading, setLeastBorrowedLoading] = useState(false);
   const [leastBorrowedLoaded, setLeastBorrowedLoaded] = useState(false);
   const [leastBorrowedPage, setLeastBorrowedPage] = useState(0);
+  const [leastBorrowedDetail, setLeastBorrowedDetail] = useState<{ item: ObjectItem; borrowCount: number } | null>(null);
+  const swipeStartX = useRef<number | null>(null);
+  const swipeDeltaX = useRef(0);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [sciLoading, setSciLoading] = useState(false);
@@ -181,7 +184,7 @@ export default function BrowsePage({
   const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
   useEffect(() => {
     if (leastBorrowedPageCount <= 1) return;
-    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 10000);
+    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
     return () => clearInterval(timer);
   }, [leastBorrowedPageCount]);
 
@@ -532,7 +535,21 @@ export default function BrowsePage({
                   </div>
                 ) : (
                   <>
-                    <div style={{ position: "relative", overflow: "hidden" }}>
+                    <div
+                      onPointerDown={(e) => { swipeStartX.current = e.clientX; swipeDeltaX.current = 0; }}
+                      onPointerMove={(e) => { if (swipeStartX.current !== null) swipeDeltaX.current = e.clientX - swipeStartX.current; }}
+                      onPointerUp={() => {
+                        if (swipeStartX.current === null) return;
+                        const delta = swipeDeltaX.current;
+                        if (Math.abs(delta) > 40) {
+                          if (delta < 0) setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount);
+                          else setLeastBorrowedPage((p) => (p - 1 + leastBorrowedPageCount) % leastBorrowedPageCount);
+                        }
+                        swipeStartX.current = null;
+                        swipeDeltaX.current = 0;
+                      }}
+                      style={{ position: "relative", overflow: "hidden", touchAction: "pan-y", cursor: leastBorrowedPageCount > 1 ? "grab" : "default" }}
+                    >
                       <div style={{ display: "flex", transform: `translateX(-${leastBorrowedPage * 100}%)`, transition: "transform 0.5s ease" }}>
                         {Array.from({ length: leastBorrowedPageCount }).map((_, pageIdx) => (
                           <div
@@ -540,7 +557,14 @@ export default function BrowsePage({
                             style={{ flex: "0 0 100%", display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}
                           >
                             {leastBorrowed.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
-                              <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
+                              <div
+                                key={name}
+                                onClick={() => {
+                                  const it = sciItems.find((o) => o.name === name);
+                                  if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
+                                }}
+                                style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px", cursor: "pointer" }}
+                              >
                                 <span style={{ color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
                                 <span style={{ color: C.label, flexShrink: 0 }}>{qty}개</span>
                               </div>
@@ -744,6 +768,50 @@ export default function BrowsePage({
         <div onClick={() => setModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <button onClick={() => setModalUrl("")} style={{ position: "absolute", top: "16px", right: "20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}><X size={32} /></button>
           <img src={modalUrl} alt="" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: "8px", objectFit: "contain" }} />
+        </div>
+      ) : null}
+
+      {/* 가장 적게 대여된 물품 클릭 → 상세 정보 팝업 */}
+      {leastBorrowedDetail ? (
+        <div onClick={() => setLeastBorrowedDetail(null)} style={{ position: "fixed", inset: 0, zIndex: 9998, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(360px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div
+              onClick={() => leastBorrowedDetail.item.image && setModalUrl(getGoogleDriveImageUrl(leastBorrowedDetail.item.image))}
+              style={{ height: "200px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: leastBorrowedDetail.item.image ? "zoom-in" : "default" }}
+            >
+              {leastBorrowedDetail.item.image ? (
+                <img src={getGoogleDriveImageUrl(leastBorrowedDetail.item.image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <Boxes size={40} style={{ color: C.border }} />
+              )}
+            </div>
+            <div style={{ padding: "18px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
+                <h3 style={{ fontSize: "16px", fontWeight: 800, margin: 0, color: C.text }}>{leastBorrowedDetail.item.name}</h3>
+                <button onClick={() => setLeastBorrowedDetail(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer", flexShrink: 0 }}><X size={20} /></button>
+              </div>
+              <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>ID: {leastBorrowedDetail.item.id}</div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
+                {leastBorrowedDetail.item.rootSlot ? <Chip C={C} icon={<MapPin size={11} />} text={padSlot(leastBorrowedDetail.item.rootSlot)} tone="warn" /> : null}
+                {leastBorrowedDetail.item.category ? <Chip C={C} text={leastBorrowedDetail.item.category} tone="accent" /> : null}
+                <span style={{ display: "inline-flex", alignItems: "center", fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "6px", padding: "2px 7px" }}>재고 {leastBorrowedDetail.item.stock || 0}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", fontSize: "10px", fontWeight: 700, color: C.label, background: C.cardSub, borderRadius: "6px", padding: "2px 7px" }}>대여 중 {leastBorrowedDetail.item.rented || 0}</span>
+              </div>
+
+              <div style={{ padding: "10px 12px", background: C.cardSub, borderRadius: "10px", fontSize: "12.5px", color: C.text, marginBottom: "16px" }}>
+                최근 누적 대여 횟수 <b style={{ color: C.accentText }}>{leastBorrowedDetail.borrowCount}회</b>
+              </div>
+
+              <button
+                onClick={() => { addSci(leastBorrowedDetail.item); setLeastBorrowedDetail(null); }}
+                disabled={(leastBorrowedDetail.item.stock || 0) < 1}
+                style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: (leastBorrowedDetail.item.stock || 0) < 1 ? C.border : C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: (leastBorrowedDetail.item.stock || 0) < 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "7px" }}
+              >
+                <ShoppingCart size={15} /> {(leastBorrowedDetail.item.stock || 0) < 1 ? "재고 없음" : "장바구니에 담기"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
