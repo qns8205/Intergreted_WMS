@@ -90,6 +90,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
   // 재고 부족 경고를 크게 띄우는 모달 (null이면 안 뜸)
   const [stockShortfallModal, setStockShortfallModal] = useState<{ id: string; name: string; requested: number; stock: number }[] | null>(null);
+  // 기타 소속인데 성함을 안 적고 다음으로 넘어가려 할 때 — 토스트로는 놓치기 쉬워 큰 팝업으로 확실히 막는다.
+  const [nameRequiredModal, setNameRequiredModal] = useState(false);
+  const otherNameInputRef = useRef<HTMLInputElement>(null);
   const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
 
   /* ---------- 대여 신청 상태 ---------- */
@@ -329,7 +332,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   function validateStep1(): boolean {
     if (affiliation === "other") {
-      if (!otherName.trim()) { showToast("성함을 입력해주세요.", "warn"); return false; }
+      if (!otherName.trim()) { setNameRequiredModal(true); return false; }
       return true;
     }
     const v = borrowerName.trim();
@@ -1334,7 +1337,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <label style={labelStyle}>이름</label>
                 <div style={{ position: "relative" }}>
                   <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={onEnter(step1Next)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+                  <input ref={otherNameInputRef} value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={onEnter(step1Next)} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
                 </div>
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
                   기타 소속은 Slack 이메일 없이 성함만 입력합니다. (Slack 멘션은 제공되지 않습니다)
@@ -2135,6 +2138,33 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <button onClick={() => setStockShortfallModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
               닫기
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 기타 소속 성함 미입력 경고 모달 */}
+      {nameRequiredModal ? (
+        <div
+          onClick={() => { setNameRequiredModal(false); otherNameInputRef.current?.focus(); }}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(360px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
+          >
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.warnSoft, color: C.warn, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertCircle size={30} />
+            </div>
+            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>성함을 입력해주세요</div>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "22px", lineHeight: 1.6 }}>
+              기타 소속으로 대여하려면 성함 입력이 필수입니다.
+            </div>
+            <button
+              onClick={() => { setNameRequiredModal(false); otherNameInputRef.current?.focus(); }}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}
+            >
+              확인
             </button>
           </div>
         </div>
