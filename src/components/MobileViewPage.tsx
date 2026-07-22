@@ -803,28 +803,6 @@ export default function MobileViewPage({
         </div>
 
         <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-          {isAdmin ? (
-            <button
-              className="mvp-btn"
-              onClick={() => switchMode("시나리오")}
-              title="시나리오 물품 관리"
-              style={{
-                height: "36px",
-                padding: "0 12px",
-                borderRadius: "10px",
-                background: "rgba(37, 99, 235,0.15)",
-                border: "1px solid rgba(37, 99, 235,0.3)",
-                color: "#94a3b8",
-                display: "flex",
-                alignItems: "center",
-                gap: "5px",
-                fontSize: "12px",
-                fontWeight: 800,
-              }}
-            >
-              🧩 시나리오
-            </button>
-          ) : null}
           <button
             className="mvp-btn"
             onClick={toggleLightMode}
@@ -1765,7 +1743,18 @@ export default function MobileViewPage({
               ) : (
                 [...filteredDefectLogs]
                   .sort((a, b) => compareDatesDescending(a.timestamp, b.timestamp))
-                  .map((log, index) => (
+                  .map((log, index) => {
+                    // 불량 유형별 색상 (PC 버전 DefectLogsPage와 동일한 매핑)
+                    let typeBg = "rgba(148, 163, 184, 0.15)";
+                    let typeColor = TEXT_DIM;
+                    const typeVal = log.defectType || "기타";
+                    if (typeVal === "파손") { typeBg = "rgba(244, 63, 94, 0.15)"; typeColor = DANGER; }
+                    else if (typeVal === "오염") { typeBg = "rgba(245, 158, 11, 0.15)"; typeColor = "#f59e0b"; }
+                    else if (typeVal === "기능 오작동" || typeVal === "기능 이상") { typeBg = "rgba(37, 99, 235, 0.15)"; typeColor = ACCENT; }
+                    else if (typeVal === "수량 상이") { typeBg = "rgba(16, 185, 129, 0.15)"; typeColor = "#10b981"; }
+                    else if (typeVal === "누락") { typeBg = "rgba(239, 68, 68, 0.15)"; typeColor = "#ef4444"; }
+
+                    return (
                     <div
                       key={log.rowIndex || index}
                       style={{
@@ -1774,10 +1763,33 @@ export default function MobileViewPage({
                         borderRadius: "16px",
                         padding: "14px",
                         display: "flex",
-                        flexDirection: "column",
-                        gap: "6px",
+                        gap: "12px",
                       }}
                     >
+                      {/* 사진 썸네일 (PC 버전과 동일하게 탭하면 확대) */}
+                      <div
+                        onClick={() => log.photo && setLightbox(log.photo!)}
+                        style={{
+                          width: "56px",
+                          height: "56px",
+                          borderRadius: "10px",
+                          overflow: "hidden",
+                          background: isLightMode ? "#f1f5f9" : "#0f172a",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          flexShrink: 0,
+                          cursor: log.photo ? "zoom-in" : "default",
+                        }}
+                      >
+                        {log.photo ? (
+                          <img src={log.photo} alt="불량 이미지" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <ImageOff size={20} style={{ color: TEXT_DIM, opacity: 0.5 }} />
+                        )}
+                      </div>
+
+                      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "6px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "8px" }}>
                         <span style={{ fontSize: "14px", fontWeight: 800, color: TEXT_MAIN }}>
                           {log.name}
@@ -1786,17 +1798,19 @@ export default function MobileViewPage({
                           style={{
                             fontSize: "11px",
                             fontWeight: 800,
-                            color: DANGER,
-                            background: "rgba(239,68,68,0.1)",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
+                            color: typeColor,
+                            background: typeBg,
+                            padding: "2px 7px",
+                            borderRadius: "5px",
+                            flexShrink: 0,
+                            border: `1px solid ${typeColor}33`,
                           }}
                         >
-                          {log.defectType}
+                          {typeVal}
                         </span>
                       </div>
 
-                      <div style={{ display: "flex", gap: "8px", fontSize: "11px", color: TEXT_DIM }}>
+                      <div style={{ display: "flex", gap: "8px", fontSize: "11px", color: TEXT_DIM, flexWrap: "wrap" }}>
                         <span>📍 {log.location}</span>
                         <span>·</span>
                         <span>📦 {log.qty}개</span>
@@ -1820,6 +1834,7 @@ export default function MobileViewPage({
                         </div>
                       )}
 
+
                       <div
                         style={{
                           fontSize: "11px",
@@ -1838,8 +1853,10 @@ export default function MobileViewPage({
                       <div style={{ fontSize: "9.5px", color: TEXT_DIM, alignSelf: "flex-end", marginTop: "2px" }}>
                         📅 {log.timestamp}
                       </div>
+                      </div>
                     </div>
-                  ))
+                    );
+                  })
               )
             ) : (
               /* 4-B. 불량 제품 등록 폼 */
