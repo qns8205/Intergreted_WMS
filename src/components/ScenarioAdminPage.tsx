@@ -1,8 +1,9 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown,
 } from "lucide-react";
+import StockAdjustModal from "./StockAdjustModal";
 import {
   ScenarioObjectAdmin, padSlot,
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
@@ -55,6 +56,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
   // 오브젝트 클릭 시 "누가 얼마나 빌려갔는지" 보여주는 대여자 상세 모달
   const [borrowersItem, setBorrowersItem] = useState<ScenarioObjectAdmin | null>(null);
+  const [stockAdjustItem, setStockAdjustItem] = useState<ScenarioObjectAdmin | null>(null);
   const [unreturned, setUnreturned] = useState<UnreturnedItem[]>([]);
   const [unreturnedLoading, setUnreturnedLoading] = useState(false);
   const [unreturnedLoaded, setUnreturnedLoaded] = useState(false);
@@ -379,9 +381,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                   <span style={{ color: C.success, background: C.successSoft, padding: "2px 8px", borderRadius: "6px" }}>재고 {it.stock}</span>
                   <span style={{ color: C.accentText, background: C.accentSoft, padding: "2px 8px", borderRadius: "6px" }}>대여 중 {it.rented}</span>
                 </div>
-                <div style={{ marginTop: "auto", paddingTop: "8px", display: "flex", gap: "6px" }} onClick={(e) => e.stopPropagation()}>
-                  <button onClick={() => openEdit(it)} style={{ flex: 1, padding: "8px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}><Pencil size={13} /> 편집</button>
-                  <button onClick={() => remove(it)} style={{ flex: "0 0 auto", padding: "8px 10px", borderRadius: "9px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
+                <div style={{ marginTop: "auto", paddingTop: "8px", display: "flex", flexDirection: "column", gap: "6px" }} onClick={(e) => e.stopPropagation()}>
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button onClick={() => openEdit(it)} style={{ flex: 1, padding: "8px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}><Pencil size={13} /> 편집</button>
+                    <button onClick={() => remove(it)} style={{ flex: "0 0 auto", padding: "8px 10px", borderRadius: "9px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
+                  </div>
+                  <button onClick={() => setStockAdjustItem(it)} style={{ padding: "8px", borderRadius: "9px", border: "none", background: C.accentSoft, color: C.accentText, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}><ArrowUpDown size={13} /> 재고 변경</button>
                 </div>
               </div>
             </div>
@@ -683,6 +688,25 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         </div>,
         document.body
       ) : null}
+
+      {/* 재고 변경 모달 (시나리오 물품) */}
+      {stockAdjustItem && (
+        <StockAdjustModal
+          scriptUrl={scriptUrl}
+          connected={connected}
+          isLightMode={isLightMode}
+          category="scenario"
+          rowIndex={stockAdjustItem.rowIndex}
+          itemId={stockAdjustItem.id}
+          itemLabel={stockAdjustItem.name}
+          currentStock={stockAdjustItem.stock || 0}
+          showToast={showToast}
+          onClose={() => setStockAdjustItem(null)}
+          onSaved={(newStock) => {
+            setItems((prev) => prev.map((it) => (it.rowIndex === stockAdjustItem.rowIndex ? { ...it, stock: newStock } : it)));
+          }}
+        />
+      )}
     </div>
   );
 }
