@@ -558,15 +558,17 @@ export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioL
 export async function reBorrowScenarioLogs(
   scriptUrl: string,
   logs: ScenarioLogEntry[],
-  clientVersion: string
+  clientVersion: string,
+  target?: { name: string; affiliation?: string; employeeId?: string }
 ): Promise<BorrowResult> {
   // 대여자/이메일 기준으로 일반대여 항목으로 재구성 (재대여는 일반대여로 처리)
+  // target을 지정하면 원래 반납자가 아닌 다른 사람 명의로 재대여할 수 있다.
   const first = logs[0];
   const borrowList: BorrowEntry[] = [{
     itemType: "general",
-    borrowerName: first.borrowerName,
-    affiliation: "",
-    employeeId: "",
+    borrowerName: target?.name?.trim() || first.borrowerName,
+    affiliation: target?.affiliation || "",
+    employeeId: target?.employeeId?.trim() || "",
     borrowDate: nowString(),
     borrowPurpose: first.borrowPurpose || "재대여",
     generalOption: "재대여",
