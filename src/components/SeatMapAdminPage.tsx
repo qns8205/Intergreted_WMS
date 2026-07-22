@@ -299,8 +299,19 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
                   {occEntries.map((e, i) => (
                     <div key={i} style={{ padding: "12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 800, fontSize: "13.5px", color: C.text, marginBottom: "4px" }}>
-                        <User size={13} /> {e.borrowerName || "(대여자 미상)"}
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 800, fontSize: "13.5px", color: C.text, flex: 1 }}>
+                          <User size={13} /> {e.borrowerName || "(대여자 미상)"}
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "10.5px", fontWeight: 800, borderRadius: "999px", padding: "2px 9px", flexShrink: 0,
+                            color: e.allReturned ? C.success : C.warn,
+                            background: e.allReturned ? C.successSoft : C.warnSoft,
+                          }}
+                        >
+                          {e.allReturned ? "반납 완료" : "미반납"}
+                        </span>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: C.label, marginBottom: "8px" }}>
                         <Clock size={11} /> {e.timestamp}
@@ -310,6 +321,9 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                           {e.items.map((it, j) => (
                             <div key={j} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: C.text }}>
                               <Package size={11} style={{ color: C.label, flexShrink: 0 }} /> {it.name} <span style={{ color: C.label }}>x{it.qty}</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: it.returned ? C.success : C.warn, marginLeft: "auto" }}>
+                                {it.returned ? "반납됨" : "미반납"}
+                              </span>
                             </div>
                           ))}
                         </div>
