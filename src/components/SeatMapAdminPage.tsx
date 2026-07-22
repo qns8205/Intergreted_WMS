@@ -160,7 +160,12 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
   const inputStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", outline: "none" };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+    <div className="smp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+      <style>{`
+        @media (min-width: 900px) {
+          .smp-root { zoom: 1.15; }
+        }
+      `}</style>
       <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card }}>
         <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           <ArrowLeft size={15} /> 뒤로
