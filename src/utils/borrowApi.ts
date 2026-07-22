@@ -66,6 +66,7 @@ export interface BorrowEntry {
   borrowerName: string;
   affiliation: string;
   employeeId: string;
+  knownEmail?: string; // 재대여 등 이미 확인된 이메일이 있을 때 (Slack 태깅용, affiliation/employeeId 재추정 불필요)
   borrowDate: string;
   borrowPurpose: string;
   scenarioId?: string;
@@ -569,6 +570,9 @@ export async function reBorrowScenarioLogs(
     borrowerName: target?.name?.trim() || first.borrowerName,
     affiliation: target?.affiliation || "",
     employeeId: target?.employeeId?.trim() || "",
+    // 명의를 유지하는 재대여는 원래 로그에 저장된 이메일을 그대로 넘겨 Slack 태깅이 정확히 되도록 한다.
+    // 다른 사람 명의로 재대여하는 경우는 새로 지정된 사람 기준(affiliation/employeeId)으로 다시 계산해야 하므로 넘기지 않는다.
+    knownEmail: target ? undefined : (first.email || undefined),
     borrowDate: nowString(),
     borrowPurpose: first.borrowPurpose || "재대여",
     generalOption: "재대여",
