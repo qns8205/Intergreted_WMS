@@ -76,6 +76,7 @@ export default function BrowsePage({
   // 시나리오 물품 열람 상단: 가장 적게 대여된 물품 20개를 5+5씩 슬라이드로 보여준다.
   const [leastBorrowed, setLeastBorrowed] = useState<[string, number][]>([]);
   const [leastBorrowedLoading, setLeastBorrowedLoading] = useState(false);
+  const [leastBorrowedProgress, setLeastBorrowedProgress] = useState(0);
   const [leastBorrowedLoaded, setLeastBorrowedLoaded] = useState(false);
   const [leastBorrowedPage, setLeastBorrowedPage] = useState(0);
   const [leastBorrowedDetail, setLeastBorrowedDetail] = useState<{ item: ObjectItem; borrowCount: number } | null>(null);
@@ -171,6 +172,15 @@ export default function BrowsePage({
     if (step !== "scenario" || !sciLoaded || leastBorrowedLoaded || leastBorrowedLoading) return;
     if (!connected || !scriptUrl) { setLeastBorrowedLoaded(true); return; }
     setLeastBorrowedLoading(true);
+    setLeastBorrowedProgress(0);
+
+    // 실제 바이트 진행률은 알 수 없어서(GAS 응답에 Content-Length가 안 잡힘),
+    // 경과 시간에 따라 자연스럽게 느려지는 곡선으로 추정 진행률을 보여준다. 95%에서 멈춰있다가
+    // 실제 응답이 오면 finally에서 100%로 마무리한다.
+    const progressTimer = setInterval(() => {
+      setLeastBorrowedProgress((p) => (p >= 95 ? 95 : p + Math.max(1, (95 - p) * 0.08)));
+    }, 200);
+
     fetchScenarioAllLogs(scriptUrl)
       .then((logs) => {
         const byItem: Record<string, number> = {};
@@ -187,14 +197,19 @@ export default function BrowsePage({
         setLeastBorrowed(bottom);
       })
       .catch(() => { /* 조용히 무시 — 열람 화면의 부가 정보일 뿐 */ })
-      .finally(() => { setLeastBorrowedLoading(false); setLeastBorrowedLoaded(true); });
+      .finally(() => {
+        clearInterval(progressTimer);
+        setLeastBorrowedProgress(100);
+        setLeastBorrowedLoading(false);
+        setLeastBorrowedLoaded(true);
+      });
   }, [step, sciLoaded, sciItems, connected, scriptUrl, leastBorrowedLoaded, leastBorrowedLoading]);
 
   // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
   const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
   useEffect(() => {
     if (leastBorrowedPageCount <= 1) return;
-    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
+    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 10000);
     return () => clearInterval(timer);
   }, [leastBorrowedPageCount]);
 
@@ -540,11 +555,19 @@ export default function BrowsePage({
                   가장 적게 대여된 물품
                 </div>
                 {leastBorrowedLoading ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}>
-                    {Array.from({ length: 10 }).map((_, i) => (
-                      <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
-                    ))}
-                    <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <div style={{ flex: 1, height: "4px", borderRadius: "999px", background: C.cardSub, overflow: "hidden", marginRight: "8px" }}>
+                        <div style={{ width: `${Math.round(leastBorrowedProgress)}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.2s ease" }} />
+                      </div>
+                      <span style={{ fontSize: "11px", fontWeight: 700, color: C.accentText, flexShrink: 0 }}>{Math.round(leastBorrowedProgress)}%</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}>
+                      {Array.from({ length: 10 }).map((_, i) => (
+                        <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
+                      ))}
+                      <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+                    </div>
                   </div>
                 ) : leastBorrowed.length === 0 ? (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", fontSize: "12px", color: C.label }}>
