@@ -47,7 +47,9 @@ function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState
           if (!nm || nm === "(물품 미등록)") return;
           byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
         });
-        const bottom = Object.entries(byItem).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
+        // "가장 적게 대여된 물품" 랭킹에서 제외하도록 표시된 물품은 걸러낸다.
+        const excludedNames = new Set(catalog.filter((it) => it.excludeFromRanking).map((it) => String(it.name || "").trim()));
+        const bottom = Object.entries(byItem).filter(([name]) => !excludedNames.has(name)).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
         bottomItemsCache.key = scriptUrl;
         bottomItemsCache.at = Date.now();
         bottomItemsCache.items = bottom;
