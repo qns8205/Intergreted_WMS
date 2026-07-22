@@ -184,7 +184,7 @@ export default function BrowsePage({
   const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
   useEffect(() => {
     if (leastBorrowedPageCount <= 1) return;
-    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
+    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 10000);
     return () => clearInterval(timer);
   }, [leastBorrowedPageCount]);
 
