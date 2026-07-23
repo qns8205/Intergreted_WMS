@@ -112,6 +112,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [activeTypeInfo, setActiveTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
   const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
   const [typeOverflowModal, setTypeOverflowModal] = useState<{ current: number; adding: number; max: number } | null>(null); // 장바구니 담다가 한도 초과 시 (제출 직전 차단)
+  const [overdueReminderModal, setOverdueReminderModal] = useState<{ id: string; name: string; quantity: number; borrowDate: string; hoursAgo: number }[] | null>(null); // 48시간 넘게 미반납 중인 물품 확인창
   const [verifying, setVerifying] = useState(false);
   const [itemType, setItemType] = useState<"scenario" | "general">("scenario");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -431,12 +432,30 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           setTypeLimitModal(info);
           return;
         }
+        // 48시간 넘게 미반납 중인 물품이 있으면, 다음 단계로 넘어가기 전에 반납 안내 확인창을 띄운다.
+        const now = Date.now();
+        const overdue = info.items
+          .map((it) => {
+            const t = new Date(it.borrowDate.replace(" ", "T")).getTime();
+            const hoursAgo = isNaN(t) ? 0 : (now - t) / (1000 * 60 * 60);
+            return { ...it, hoursAgo };
+          })
+          .filter((it) => it.hoursAgo >= 48)
+          .sort((a, b) => b.hoursAgo - a.hoursAgo);
+        if (overdue.length > 0) {
+          setOverdueReminderModal(overdue);
+          return;
+        }
       } catch (e: any) {
         // 조회 실패해도 대여 진행 자체는 막지 않는다 (최종 제출 시 서버가 다시 검증함)
       } finally {
         setVerifying(false);
       }
     }
+    await finishStep1Advance();
+  }
+
+  async function finishStep1Advance() {
     if (affiliation === "configds" && connected && scriptUrl) {
       setVerifying(true);
       try {
@@ -1148,7 +1167,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   function resetAll() {
     setCart([]); setReqCart([]); setSidCart([]); setSidInput("");
-    setActiveTypeInfo(null); setTypeLimitModal(null); setTypeOverflowModal(null);
+    setActiveTypeInfo(null); setTypeLimitModal(null); setTypeOverflowModal(null); setOverdueReminderModal(null);
     setGeneralOption(""); setPurposeGeneral(""); setPurposeScenario("");
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
@@ -2412,6 +2431,41 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : null}
             <button onClick={() => setTypeLimitModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
               확인
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 48시간 넘게 미반납 중인 물품 반납 안내 (확인 후 다음 단계로 진행) */}
+      {overdueReminderModal ? (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            style={{ width: "min(420px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
+          >
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.warnSoft, color: C.warn, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertCircle size={30} />
+            </div>
+            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>반납이 늦어지고 있는 물품이 있어요</div>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+              아래 물품을 빌린 지 48시간이 지났습니다. 잊고 계셨다면 빠른 시일 내에 반납해주세요.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "20px", textAlign: "left" }}>
+              {overdueReminderModal.map((it) => (
+                <div key={it.id} style={{ padding: "10px 12px", background: C.warnSoft, borderRadius: "10px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>{it.name}{it.quantity > 1 ? ` x ${it.quantity}` : ""}</div>
+                  <div style={{ fontSize: "12px", color: C.warn, marginTop: "2px", fontWeight: 700 }}>
+                    {it.borrowDate} 대여 · 약 {Math.floor(it.hoursAgo / 24)}일 {Math.round(it.hoursAgo % 24)}시간 경과
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => { setOverdueReminderModal(null); finishStep1Advance(); }}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}
+            >
+              확인했습니다, 계속 진행
             </button>
           </div>
         </div>
