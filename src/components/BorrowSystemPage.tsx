@@ -14,6 +14,7 @@ import {
   WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum, compareRackSlot,
   ItemSet, fetchItemSets,
   SeatFloor, fetchSeatMap,
+  ActiveItemTypeInfo, fetchActiveItemTypeCount,
   fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
   loadWarehouseCart, clearWarehouseCart,
 } from "../utils/borrowApi";
@@ -107,6 +108,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [seatMapLoaded, setSeatMapLoaded] = useState(false);
   const [selFloor, setSelFloor] = useState("");
   const [selUnit, setSelUnit] = useState("");
+  // 물품 종류 최대 보유 개수 제한 관련 상태
+  const [activeTypeInfo, setActiveTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
+  const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
+  const [typeOverflowModal, setTypeOverflowModal] = useState<{ current: number; adding: number; max: number } | null>(null); // 장바구니 담다가 한도 초과 시 (제출 직전 차단)
   const [verifying, setVerifying] = useState(false);
   const [itemType, setItemType] = useState<"scenario" | "general">("scenario");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -322,6 +327,30 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return shortfalls;
   }, [cart, objectItems]);
 
+  // 물품 종류 최대 보유 개수(한도) 초과 여부 — 이미 보유 중인 종류 + 이번에 새로 담은(안 갖고 있던) 종류를 합산.
+  function computeTypeOverflow(newIds: Set<string>) {
+    if (!activeTypeInfo || activeTypeInfo.max <= 0) return null;
+    const heldIds = new Set(activeTypeInfo.items.map((it) => it.id));
+    let addingCount = 0;
+    newIds.forEach((id) => { if (!heldIds.has(id)) addingCount++; });
+    const total = activeTypeInfo.count + addingCount;
+    if (total <= activeTypeInfo.max) return null;
+    return { current: activeTypeInfo.count, adding: addingCount, max: activeTypeInfo.max };
+  }
+  const scenarioTypeOverflow = useMemo(() => {
+    const ids = new Set<string>();
+    sidCart.forEach((e) => (e.scenario?.items || []).forEach((it: any) => ids.add(it.id)));
+    reqCart.forEach((c) => ids.add(c.id));
+    return computeTypeOverflow(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidCart, reqCart, activeTypeInfo]);
+  const generalTypeOverflow = useMemo(() => {
+    const ids = new Set<string>();
+    cart.forEach((c) => ids.add(c.id));
+    return computeTypeOverflow(ids);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, activeTypeInfo]);
+
   function subsOf(cat: string): string[] {
     return cat && categoryMap[cat] ? Array.from<string>(categoryMap[cat]).sort() : [];
   }
@@ -391,6 +420,23 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   async function step1Next() {
     if (!validateStep1()) return;
+    // 이미 물품 종류 한도(15종류) 이상 보유 중이면 여기서 바로 막는다 (물품 선택 단계까지 안 가도 됨).
+    if (connected && scriptUrl) {
+      const nameForCheck = affiliation === "other" ? otherName.trim() : borrowerName.trim();
+      setVerifying(true);
+      try {
+        const info = await fetchActiveItemTypeCount(scriptUrl, nameForCheck);
+        setActiveTypeInfo(info);
+        if (info.max > 0 && info.count >= info.max) {
+          setTypeLimitModal(info);
+          return;
+        }
+      } catch (e: any) {
+        // 조회 실패해도 대여 진행 자체는 막지 않는다 (최종 제출 시 서버가 다시 검증함)
+      } finally {
+        setVerifying(false);
+      }
+    }
     if (affiliation === "configds" && connected && scriptUrl) {
       setVerifying(true);
       try {
@@ -1102,6 +1148,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   function resetAll() {
     setCart([]); setReqCart([]); setSidCart([]); setSidInput("");
+    setActiveTypeInfo(null); setTypeLimitModal(null); setTypeOverflowModal(null);
     setGeneralOption(""); setPurposeGeneral(""); setPurposeScenario("");
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
@@ -1527,7 +1574,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3g")} style={secondaryBtn}>이전</button>
               <button
-                onClick={() => (generalStockShortfall.length > 0 ? setStockShortfallModal(generalStockShortfall) : handleBorrowSubmit())}
+                onClick={() => {
+                  if (generalTypeOverflow) { setTypeOverflowModal(generalTypeOverflow); return; }
+                  if (generalStockShortfall.length > 0) { setStockShortfallModal(generalStockShortfall); return; }
+                  handleBorrowSubmit();
+                }}
                 disabled={submitting || pendingSubmit}
                 style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}
               >
@@ -1646,7 +1697,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setMode("b3s")} style={secondaryBtn}>이전</button>
               <button
-                onClick={() => (scenarioStockShortfall.length > 0 ? setStockShortfallModal(scenarioStockShortfall) : handleBorrowSubmit())}
+                onClick={() => {
+                  if (scenarioTypeOverflow) { setTypeOverflowModal(scenarioTypeOverflow); return; }
+                  if (scenarioStockShortfall.length > 0) { setStockShortfallModal(scenarioStockShortfall); return; }
+                  handleBorrowSubmit();
+                }}
                 disabled={submitting || pendingSubmit}
                 style={{ ...primaryBtn, opacity: (submitting || pendingSubmit) ? 0.7 : 1 }}
               >
@@ -2296,6 +2351,67 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             <button onClick={() => setStockShortfallModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
               닫기
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 물품 종류 한도 초과 경고 모달 (장바구니에 담다가 초과된 경우, 제출 직전 차단) */}
+      {typeOverflowModal ? (
+        <div
+          onClick={() => setTypeOverflowModal(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
+          >
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.errorSoft, color: C.error, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertCircle size={30} />
+            </div>
+            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>물품 종류 한도를 초과합니다</div>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+              현재 <b style={{ color: C.text }}>{typeOverflowModal.current}종류</b>를 대여 중이고, 이번에 새로운 <b style={{ color: C.text }}>{typeOverflowModal.adding}종류</b>가 담겨 있습니다.
+              <br />한 사람이 동시에 대여할 수 있는 물품 종류는 최대 <b style={{ color: C.text }}>{typeOverflowModal.max}종류</b>입니다.
+            </div>
+            <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+              담은 물품 종류 수를 줄이거나, 기존에 대여 중인 물품을 먼저 반납한 뒤 다시 시도해주세요.
+            </div>
+            <button onClick={() => setTypeOverflowModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
+              닫기
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 이미 물품 종류 한도 이상 보유 중일 때 (이름 입력 직후 차단) */}
+      {typeLimitModal ? (
+        <div
+          onClick={() => setTypeLimitModal(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
+          >
+            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.errorSoft, color: C.error, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+              <AlertCircle size={30} />
+            </div>
+            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>이미 물품 종류 한도에 도달했습니다</div>
+            <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+              현재 <b style={{ color: C.text }}>{typeLimitModal.count}종류</b>를 대여 중이라, 최대 <b style={{ color: C.text }}>{typeLimitModal.max}종류</b>를 이미 넘었거나 다 찼습니다. 새 물품을 대여하려면 먼저 아래 물품 중 일부를 반납해주세요.
+            </div>
+            {typeLimitModal.items.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "20px", textAlign: "left" }}>
+                {typeLimitModal.items.map((it) => (
+                  <div key={it.id} style={{ padding: "9px 12px", background: C.errorSoft, borderRadius: "10px", fontSize: "12.5px", color: C.text }}>
+                    {it.name}{it.quantity > 1 ? ` x ${it.quantity}` : ""} <span style={{ color: C.label }}>· {it.borrowDate}</span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <button onClick={() => setTypeLimitModal(null)} style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}>
+              확인
             </button>
           </div>
         </div>
