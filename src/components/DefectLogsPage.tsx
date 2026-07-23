@@ -5,6 +5,7 @@ import { AlertTriangle, Calendar, User, MapPin, Clipboard, Plus, Search, ArrowLe
 import { isFuzzyMatch, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
 import { parseDateString } from "../utils/date";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface DefectLogsPageProps {
   defectLogs: DefectLog[];
@@ -1223,6 +1224,7 @@ export default function DefectLogsPage({
           </div>
         </div>
       )}
+      <ScrollToTopButton />
     </div>
   );
 }
