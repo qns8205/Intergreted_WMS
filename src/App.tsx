@@ -2176,7 +2176,8 @@ export default function App() {
           )}
         </div>
 
-        {/* 품목 실시간 검색란 */}
+        {/* 품목 실시간 검색란 (랙 배치도 위치로 이동하는 용도라 모니터링 화면에서만 의미가 있음) */}
+        {currentView === "monitor" && (
         <div ref={searchContainerRef} style={{ position: "relative", width: 440 }}>
           <div
             style={{
@@ -2292,6 +2293,7 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
 
         {/* 우측 보조 컨트롤 영역 */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
