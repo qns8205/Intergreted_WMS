@@ -257,7 +257,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
             </div>
 
             <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "12px" }}>
-              빈 칸을 클릭하면 유닛이 생기고, 유닛을 다시 클릭하면 없어집니다. 유닛 이름은 칸 안 입력창에서 바로 바꿀 수 있어요. <b>∞</b> 버튼을 누르면 그 유닛을 물품 종류 10개 제한의 예외로 지정합니다 (주황색 테두리 = 예외 유닛).
+              빈 칸을 클릭하면 유닛이 생기고, 유닛을 다시 클릭하면 없어집니다. 유닛 이름은 칸 안 입력창에서 바로 바꿀 수 있어요. <b>∞</b> 버튼을 누르면 그 유닛을 물품 종류 최대 보유 개수 제한의 예외로 지정합니다 (주황색 테두리 = 예외 유닛).
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${activeFloor.cols}, 1fr)`, gap: "10px" }}>
@@ -277,7 +277,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                         />
                         <button
                           onClick={() => toggleExempt(r, c)}
-                          title={unit.exempt ? "예외 해제 (10종류 제한 적용)" : "예외 유닛으로 지정 (10종류 제한 면제)"}
+                          title={unit.exempt ? "예외 해제 (종류 제한 적용)" : "예외 유닛으로 지정 (종류 제한 면제)"}
                           style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "5px", border: "none", background: unit.exempt ? C.warn : C.cardSub, color: unit.exempt ? "#fff" : C.label, cursor: "pointer", fontSize: "10px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}
                         >
                           ∞
