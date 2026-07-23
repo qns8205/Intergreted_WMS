@@ -4,6 +4,7 @@ import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown, PackageOpen } from "lucide-react";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
   inventory: InventoryItem[];
@@ -82,8 +83,8 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
 
   return (
     <div>
-      {/* 상단 컨트롤 */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+      {/* 상단 컨트롤 (스크롤해도 고정) */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: "var(--canvas-bg, #020617)", padding: "10px 0", borderRadius: "10px" }}>
         <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
           <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색..." style={inputStyle} />
@@ -197,6 +198,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
           })}
         </div>
       )}
+      <ScrollToTopButton />
     </div>
   );
 }
