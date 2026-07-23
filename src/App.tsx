@@ -2427,13 +2427,15 @@ export default function App() {
             좌석 배치도 관리는 관리자만 사용할 수 있습니다.
           </div>
         ) : currentView === "seatmap" ? (
-          <SeatMapAdminPage
-            scriptUrl={scriptUrl}
-            connected={connected}
-            isLightMode={isLightMode}
-            showToast={showToast}
-            onBack={() => setCurrentView("monitor")}
-          />
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <SeatMapAdminPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              showToast={showToast}
+              onBack={() => setCurrentView("monitor")}
+            />
+          </div>
         ) : currentView === "defect" ? (
           <DefectLogsPage
             defectLogs={defectLogs}
