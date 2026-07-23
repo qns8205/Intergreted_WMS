@@ -9,6 +9,7 @@ import {
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
   scriptUrl: string;
@@ -318,8 +319,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         </div>
       ) : null}
 
-      {/* 필터 */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap", alignItems: "center" }}>
+      {/* 필터 (스크롤해도 고정) */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: "var(--canvas-bg, #020617)", padding: "10px 0" }}>
         <div style={{ position: "relative", flex: "2 1 240px", minWidth: 0 }}>
           <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품 · 대여자 · SID · 목적 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", width: "100%" }} />
@@ -483,6 +484,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           </div>
         </div>
       ) : null}
+      <ScrollToTopButton />
     </div>
   );
 }
