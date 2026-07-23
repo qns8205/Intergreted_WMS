@@ -1282,6 +1282,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         /* PC(넓은 화면)에서는 전체적으로 살짝 크게 — 모바일 폭(480px 이하)에는 영향 없음 */
         @media (min-width: 900px) {
           .bsp-root { zoom: 1.15; }
+          /* 대여/반납 화면의 물품 썸네일을 PC에서 더 크게 (물건이 잘 안 보인다는 피드백 반영) */
+          .bsp-thumb { width: 68px !important; height: 68px !important; flex-basis: 68px !important; }
         }
         
         .responsive-group-header {
@@ -2536,6 +2538,7 @@ function Thumb({ url, size = 48, C, setImageModalUrl }: { url?: string; size?: n
   const cardSubBg = C ? C.cardSub : "#f7f9fa";
   return (
     <div
+      className="bsp-thumb"
       onClick={(e) => { e.stopPropagation(); setImageModalUrl(src); }}
       style={{ flex: `0 0 ${size}px`, width: size, height: size, borderRadius: "8px", overflow: "hidden", border: `1px solid ${borderCol}`, cursor: "zoom-in", background: cardSubBg, display: "flex", alignItems: "center", justifyContent: "center" }}
     >
