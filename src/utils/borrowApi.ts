@@ -545,6 +545,7 @@ export interface SeatUnit {
   row: number;
   col: number;
   label: string; // 예: "Unit 1"
+  exempt?: boolean; // 물품 종류 최대 보유 개수(10종류) 제한 예외 유닛
 }
 
 export interface SeatFloor {
