@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History,
 } from "lucide-react";
 import StockAdjustModal from "./StockAdjustModal";
 import {
@@ -60,7 +60,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [unreturned, setUnreturned] = useState<UnreturnedItem[]>([]);
   const [unreturnedLoading, setUnreturnedLoading] = useState(false);
   const [unreturnedLoaded, setUnreturnedLoaded] = useState(false);
-  const [detailTab, setDetailTab] = useState<"borrowers" | "audit">("borrowers");
+  const [detailTab, setDetailTab] = useState<"borrowers" | "audit" | "history">("borrowers");
 
   // 재고 실사 기록 (수동으로 세어본 수량 vs 시스템 재고)
   const [auditHistory, setAuditHistory] = useState<StockAuditRecord[]>([]);
@@ -75,6 +75,28 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [diagnosedForId, setDiagnosedForId] = useState<string | null>(null);
   const [formulaStatus, setFormulaStatus] = useState<StockFormulaStatus | null>(null);
   const [itemLogs, setItemLogs] = useState<ScenarioLogEntry[]>([]);
+  // "전체 이력" 탭: 이 물품의 지금까지의 모든 대여·반납 기록 (반납완료 포함)
+  const [historyLogs, setHistoryLogs] = useState<ScenarioLogEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadedForId, setHistoryLoadedForId] = useState<string | null>(null);
+
+  const loadHistory = useCallback(async (itemId: string) => {
+    setHistoryLoading(true);
+    try {
+      if (connected && scriptUrl) {
+        const logs = await fetchScenarioAllLogs(scriptUrl);
+        const targetId = padSlot(itemId);
+        setHistoryLogs(logs.filter((l) => l.itemId && padSlot(l.itemId) === targetId));
+      } else {
+        setHistoryLogs([]);
+      }
+      setHistoryLoadedForId(itemId);
+    } catch (e: any) {
+      showToast(`대여·반납 기록을 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [connected, scriptUrl, showToast]);
 
   const loadUnreturned = useCallback(async () => {
     setUnreturnedLoading(true);
@@ -113,6 +135,8 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     setDiagnosedForId(null);
     setFormulaStatus(null);
     setItemLogs([]);
+    setHistoryLoadedForId(null);
+    setHistoryLogs([]);
     if (!unreturnedLoaded && !unreturnedLoading) loadUnreturned();
   }
 
@@ -232,6 +256,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       loadAuditHistory(borrowersItem.id);
     }
   }, [detailTab, borrowersItem, auditLoadedForId, auditLoading, loadAuditHistory]);
+
+  useEffect(() => {
+    if (detailTab === "history" && borrowersItem && historyLoadedForId !== borrowersItem.id && !historyLoading) {
+      loadHistory(borrowersItem.id);
+    }
+  }, [detailTab, borrowersItem, historyLoadedForId, historyLoading, loadHistory]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -494,13 +524,17 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "3px" }}>ID: {borrowersItem.id} · 재고 {borrowersItem.stock} · 대여 중 {borrowersItem.rented}</div>
               </div>
               <button
-                onClick={() => (detailTab === "borrowers" ? (!unreturnedLoading && loadUnreturned()) : (!auditLoading && loadAuditHistory(borrowersItem.id)))}
-                disabled={detailTab === "borrowers" ? unreturnedLoading : auditLoading}
+                onClick={() => {
+                  if (detailTab === "borrowers") { if (!unreturnedLoading) loadUnreturned(); }
+                  else if (detailTab === "audit") { if (!auditLoading) loadAuditHistory(borrowersItem.id); }
+                  else { if (!historyLoading) loadHistory(borrowersItem.id); }
+                }}
+                disabled={detailTab === "borrowers" ? unreturnedLoading : detailTab === "audit" ? auditLoading : historyLoading}
                 title="새로고침"
-                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 9px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: (detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? "default" : "pointer", opacity: (detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? 0.6 : 1, fontSize: "11px", fontWeight: 700 }}
+                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 9px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: (detailTab === "borrowers" ? unreturnedLoading : detailTab === "audit" ? auditLoading : historyLoading) ? "default" : "pointer", opacity: (detailTab === "borrowers" ? unreturnedLoading : detailTab === "audit" ? auditLoading : historyLoading) ? 0.6 : 1, fontSize: "11px", fontWeight: 700 }}
               >
                 <style>{`@keyframes sapSpinBtn { to { transform: rotate(360deg); } } .sap-spin-btn { animation: sapSpinBtn 0.9s linear infinite; }`}</style>
-                <RotateCcw size={13} className={(detailTab === "borrowers" ? unreturnedLoading : auditLoading) ? "sap-spin-btn" : undefined} />
+                <RotateCcw size={13} className={(detailTab === "borrowers" ? unreturnedLoading : detailTab === "audit" ? auditLoading : historyLoading) ? "sap-spin-btn" : undefined} />
               </button>
               <button onClick={() => setBorrowersItem(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
@@ -509,6 +543,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
             <div style={{ display: "flex", gap: "4px", padding: "10px 20px 0", borderBottom: `1px solid ${C.border}`, position: "sticky", top: "69px", background: C.card, zIndex: 1 }}>
               {[
                 { key: "borrowers" as const, label: "대여 현황", icon: <Users size={13} /> },
+                { key: "history" as const, label: "전체 이력", icon: <History size={13} /> },
                 { key: "audit" as const, label: "재고 실사", icon: <ClipboardCheck size={13} /> },
               ].map((t) => (
                 <button
@@ -551,6 +586,53 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                           <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
                         </div>
                       ))}
+                    </div>
+                  </>
+                )
+              ) : detailTab === "history" ? (
+                historyLoading && historyLoadedForId !== borrowersItem.id ? (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={26} /> 대여·반납 기록을 불러오는 중...</div>
+                ) : historyLogs.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>이 물품의 대여·반납 기록이 없습니다.</div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
+                      총 <b style={{ color: C.accentText }}>{historyLogs.length}건</b>의 기록 (최신순)
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {[...historyLogs]
+                        .sort((a, b) => {
+                          const ta = new Date((a.returnDate || a.borrowDate || "").replace(" ", "T")).getTime();
+                          const tb = new Date((b.returnDate || b.borrowDate || "").replace(" ", "T")).getTime();
+                          return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
+                        })
+                        .map((l, idx) => (
+                          <div key={`${l.sheetType}-${l.rowIndex}-${idx}`} style={{ padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.borrowerName || "(대여자 미상)"}</div>
+                                <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
+                                  <span>{l.sheetType === "scenario" ? `SID 대여${l.scenarioId ? ` (${l.scenarioId})` : ""}` : "일반 대여"}</span>
+                                  <span>·</span>
+                                  <span>대여 {l.borrowDate || "-"}</span>
+                                </div>
+                              </div>
+                              <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{l.quantity || 1}개</span>
+                              <span
+                                style={{
+                                  fontSize: "10.5px", fontWeight: 800, borderRadius: "999px", padding: "2px 9px", flexShrink: 0,
+                                  color: l.returned ? C.success : C.warn,
+                                  background: l.returned ? C.successSoft : C.warnSoft,
+                                }}
+                              >
+                                {l.returned ? "반납 완료" : "미반납"}
+                              </span>
+                            </div>
+                            {l.returned && l.returnDate ? (
+                              <div style={{ fontSize: "11px", color: C.label, marginTop: "5px" }}>반납 {l.returnDate}</div>
+                            ) : null}
+                          </div>
+                        ))}
                     </div>
                   </>
                 )
