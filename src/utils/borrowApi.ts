@@ -586,6 +586,19 @@ export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit:
   return (data.items || []) as SeatOccupancyEntry[];
 }
 
+/* ══════════ 물품 종류 최대 보유 개수 확인 ══════════ */
+
+export interface ActiveItemTypeInfo {
+  count: number;
+  max: number;
+  items: { id: string; name: string; quantity: number; borrowDate: string }[];
+}
+
+export async function fetchActiveItemTypeCount(scriptUrl: string, name: string): Promise<ActiveItemTypeInfo> {
+  const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
+  return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
+}
+
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
   const pa = String(la ?? "").toUpperCase().split("-");
