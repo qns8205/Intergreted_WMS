@@ -4,6 +4,7 @@ import {
   Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History,
 } from "lucide-react";
 import StockAdjustModal from "./StockAdjustModal";
+import ScrollToTopButton from "./ScrollToTopButton";
 import {
   ScenarioObjectAdmin, padSlot,
   fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
@@ -369,8 +370,8 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         }
       `}</style>
 
-      {/* 필터 바 */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center" }}>
+      {/* 필터 바 (스크롤해도 고정) */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: "var(--canvas-bg, #020617)", padding: "10px 0" }}>
         <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
           <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID · 물품명 · 위치 · 카테고리로 검색..." style={{ ...inputStyle, paddingLeft: "36px" }} />
@@ -801,6 +802,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
           }}
         />
       )}
+      <ScrollToTopButton />
     </div>
   );
 }
