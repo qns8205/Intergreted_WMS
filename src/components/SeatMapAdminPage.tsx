@@ -208,7 +208,25 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
         </div>
 
         {loading ? (
-          <div style={{ textAlign: "center", padding: "60px 0", color: C.label }}>불러오는 중...</div>
+          <div style={{ background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "40px 0", color: C.label }}>
+              <div
+                style={{
+                  width: "26px", height: "26px", borderRadius: "50%",
+                  border: `3px solid ${C.border}`, borderTopColor: C.accent,
+                  animation: "smpSpin 0.8s linear infinite",
+                }}
+              />
+              <span style={{ fontSize: "13px", fontWeight: 600 }}>좌석 배치도를 불러오는 중...</span>
+              <style>{`@keyframes smpSpin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px" }}>
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i} style={{ height: "84px", borderRadius: "12px", background: C.cardSub, opacity: 0.6, animation: "smpPulse 1.2s ease-in-out infinite", animationDelay: `${(i % 4) * 0.1}s` }} />
+              ))}
+              <style>{`@keyframes smpPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }`}</style>
+            </div>
+          </div>
         ) : !activeFloor ? (
           <div style={{ textAlign: "center", padding: "60px 0", color: C.label, fontSize: "13px" }}>
             아직 등록된 층이 없습니다. "층 추가"로 시작해보세요.
@@ -244,7 +262,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                   return unit ? (
                     <div
                       key={`${r}-${c}`}
-                      style={{ borderRadius: "12px", border: `1.5px solid ${C.accent}`, background: C.accentSoft, padding: "10px", minHeight: "64px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
+                      style={{ borderRadius: "12px", border: `1.5px solid ${C.accent}`, background: C.accentSoft, padding: "10px", height: "84px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
                     >
                       <input
                         value={unit.label}
@@ -270,7 +288,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                     <div
                       key={`${r}-${c}`}
                       onClick={() => toggleCell(r, c)}
-                      style={{ borderRadius: "12px", border: `1.5px dashed ${C.border}`, minHeight: "64px", display: "flex", alignItems: "center", justifyContent: "center", color: C.label, fontSize: "12px", cursor: "pointer" }}
+                      style={{ borderRadius: "12px", border: `1.5px dashed ${C.border}`, height: "84px", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", color: C.label, fontSize: "12px", cursor: "pointer" }}
                     >
                       + 유닛 추가
                     </div>
