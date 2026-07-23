@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { parseDateString } from "../utils/date";
 import { smartMatch } from "../utils/search";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface RentLogsPageProps {
   rentLogs: RentLog[];
@@ -1169,6 +1170,7 @@ export default function RentLogsPage({
           to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
+      <ScrollToTopButton />
     </div>
   );
 }
