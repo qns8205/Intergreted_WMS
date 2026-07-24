@@ -56,6 +56,8 @@ export interface UnreturnedItem {
   borrowPurpose: string;
   email: string;
   batchId: string;
+  floor?: string; // 대여 시 입력한 층수 (대여위치기록 시트에서 배치ID로 조회)
+  unit?: string;  // 대여 시 입력한 유닛
   generalOption?: string;
   image: string;
   stock: number;
@@ -631,6 +633,8 @@ export interface ScenarioLogEntry {
   borrowPurpose: string;
   email: string;
   batchId: string;
+  floor?: string; // 대여 시 입력한 층수
+  unit?: string;  // 대여 시 입력한 유닛
   generalOption?: string;
   returned: boolean;
   returnDate?: string; // 반납 처리 시각 (대장 최신 활동순 정렬에 사용)
