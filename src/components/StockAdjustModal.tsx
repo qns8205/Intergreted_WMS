@@ -9,8 +9,8 @@ interface Props {
   isLightMode: boolean;
   category: "inventory" | "scenario";
   rowIndex: number;
-  itemId: string; // 위치(공구 및 부품류) 또는 물품 ID(시나리오)
-  itemLabel: string; // 화면에 보여줄 물품명
+  itemId: string;
+  itemLabel: string;
   currentStock: number;
   managerName?: string;
   showToast: (msg: string, type: "ok" | "error" | "warn" | "info") => void;
@@ -18,11 +18,6 @@ interface Props {
   onSaved: (newStock: number) => void;
 }
 
-/**
- * 재고 변경 모달 (사유 필수 + 변경 이력 기록)
- * 공구 및 부품류(inventory)와 시나리오 물품(scenario) 양쪽에서 공용으로 사용.
- * 캐릭터(테마) 색상은 호출부와 결합시키지 않고 이 컴포넌트가 자체적으로 관리한다.
- */
 export default function StockAdjustModal({
   scriptUrl, connected, isLightMode, category, rowIndex, itemId, itemLabel, currentStock,
   managerName = "", showToast, onClose, onSaved,
@@ -47,7 +42,6 @@ export default function StockAdjustModal({
   const [submitting, setSubmitting] = useState(false);
   const [history, setHistory] = useState<StockChangeRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   useEffect(() => {
     if (!connected || !scriptUrl) return;
@@ -55,22 +49,40 @@ export default function StockAdjustModal({
     fetchStockChangeHistory(scriptUrl, category, itemId)
       .then(setHistory)
       .catch((e) => showToast(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error"))
-      .finally(() => { setHistoryLoading(false); setHistoryLoaded(true); });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scriptUrl, connected, category, itemId]);
+      .finally(() => setHistoryLoading(false));
+  }, [scriptUrl, connected, category, itemId, showToast]);
 
   const parsed = parseInt(newStock, 10);
   const diff = !isNaN(parsed) ? parsed - currentStock : null;
 
   async function handleSubmit() {
-    if (isNaN(parsed) || parsed < 0) { showToast("새 재고 수량을 올바르게 입력해주세요.", "warn"); return; }
-    if (!reason.trim()) { showToast("재고 변경 사유를 입력해주세요.", "warn"); return; }
-    if (parsed === currentStock) { showToast("현재 재고와 동일합니다. 값을 변경해주세요.", "warn"); return; }
+    if (isNaN(parsed) || parsed < 0) { 
+      showToast("새 재고 수량을 올바르게 입력해주세요.", "warn"); 
+      return; 
+    }
+    if (!reason.trim()) { 
+      showToast("재고 변경 사유를 입력해주세요.", "warn"); 
+      return; 
+    }
+    if (parsed === currentStock) { 
+      showToast("현재 재고와 동일합니다. 값을 변경해주세요.", "warn"); 
+      return; 
+    }
+
     setSubmitting(true);
     try {
       if (connected && scriptUrl) {
-        const res = await adjustStock(scriptUrl, { category, rowIndex, newStock: parsed, reason: reason.trim(), manager: managerName });
-        if (!res.success) { showToast(res.message || "재고 변경에 실패했습니다.", "error"); return; }
+        const res = await adjustStock(scriptUrl, { 
+          category, 
+          rowIndex, 
+          newStock: parsed, 
+          reason: reason.trim(), 
+          manager: managerName 
+        });
+        if (!res.success) { 
+          showToast(res.message || "재고 변경에 실패했습니다.", "error"); 
+          return; 
+        }
         if (res.warning) showToast(res.warning, "warn");
         else showToast("재고를 변경했습니다.", "ok");
       } else {
@@ -142,7 +154,7 @@ export default function StockAdjustModal({
           <div style={{ fontSize: "13px", fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: "5px", marginBottom: "10px" }}>
             <History size={13} style={{ color: C.label }} /> 변경 이력
           </div>
-          {historyLoading && !historyLoaded ? (
+          {historyLoading ? (
             <div style={{ textAlign: "center", padding: "20px 0", color: C.label, fontSize: "12px" }}>불러오는 중...</div>
           ) : history.length === 0 ? (
             <div style={{ textAlign: "center", padding: "20px 0", color: C.label, fontSize: "12px" }}>변경 이력이 없습니다.</div>
