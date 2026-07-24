@@ -181,6 +181,30 @@ function doGet(e) {
     if (action === "getWarehouseBorrowedItems") {
       return responseJSON({ success: true, items: getWarehouseBorrowedItems_(e.parameter.name || "") });
     }
+    if (action === "getWarehouseInventoryOnly") {
+      return responseJSON({ success: true, inventory: getInventoryData(sheet) });
+    }
+    if (action === "getStockChangeHistory") {
+      return responseJSON({ success: true, items: getStockChangeHistory_(ss, e.parameter.category, e.parameter.id) });
+    }
+    if (action === "getItemSets") {
+      return responseJSON({ success: true, sets: getItemSets_(ss) });
+    }
+    if (action === "getSeatMap") {
+      return responseJSON({ success: true, map: getSeatMap_(ss) });
+    }
+    if (action === "getSeatOccupancy") {
+      return responseJSON({ success: true, items: getSeatOccupancy_(ss, e.parameter.floor, e.parameter.unit, e.parameter.shift) });
+    }
+    if (action === "getActiveItemTypeCount") {
+      return responseJSON(getActiveItemTypeCount_(e.parameter.name));
+    }
+    if (action === "getStockAuditHistory") {
+      return responseJSON({ success: true, items: getStockAuditHistory_(ss, e.parameter.itemId) });
+    }
+    if (action === "getStockFormulaStatus") {
+      return responseJSON({ success: true, status: getStockFormulaStatus_(ss, e.parameter.itemId) });
+    }
 
     return responseJSON({ success: false, error: "알 수 없는 GET 액션입니다." });
   } catch (err) {
@@ -190,6 +214,7 @@ function doGet(e) {
 
 function doPost(e) {
   try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
     const payload = requestData.payload;
@@ -223,7 +248,21 @@ function doPost(e) {
       deleteScenarioObject_(payload.rowIndex);
       return responseJSON({ success: true });
     }
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (action === "adjustStock") {
+      return responseJSON(adjustStock_(ss, payload));
+    }
+    if (action === "saveItemSet") {
+      return responseJSON(saveItemSet_(ss, payload));
+    }
+    if (action === "deleteItemSet") {
+      return responseJSON(deleteItemSet_(ss, payload));
+    }
+    if (action === "saveSeatMap") {
+      return responseJSON(saveSeatMap_(ss, payload));
+    }
+    if (action === "recordStockAudit") {
+      return responseJSON(recordStockAudit_(ss, payload));
+    }
     const sheet = getInventorySheet(ss);
     if (!sheet) {
       return responseJSON({ success: false, error: "스프레드시트에서 데이터를 저장/조회할 시트 탭을 찾을 수 없습니다. 시트가 비어있는지 확인하세요." });
@@ -1356,7 +1395,7 @@ function getFormHtml(inventory) {
 //  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
 //  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
 //  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-VNe3oBXp0vtfSfXFjqFYTms7";
+var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-aWtHNheXdvHpTjggHL8RD1R0";
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
@@ -2163,6 +2202,25 @@ function parseItemLabel_(label) {
   return { id: id, name: name.trim(), quantity: qty };
 }
 
+function getSummaryCountText_(items) {
+  if (!items || !items.length) return "0개";
+  var map = {};
+  var totalQty = 0;
+  items.forEach(function (it) {
+    if (!it) return;
+    var pid = padObjectId_(it.id);
+    var key = pid || ("name:" + String(it.name || "").toLowerCase());
+    if (!pid && !it.name) return;
+    var q = Number(it.quantity) || 1;
+    totalQty += q;
+    map[key] = true;
+  });
+  var totalTypes = Object.keys(map).length;
+  if (totalTypes === 0) return "0개";
+  if (totalTypes === totalQty) return totalQty + "개";
+  return totalTypes + "종 / " + totalQty + "개";
+}
+
 function buildMergedLocationLines_(items, locations) {
   var map = {}, order = [];
   (items || []).forEach(function (it) {
@@ -2214,6 +2272,28 @@ function updateInventory_(itemId, qtyChange) {
   }
 }
 
+function getSeatLocationMap_(ss) {
+  var locMap = {};
+  try {
+    var sheet = ss.getSheetByName("대여위치기록");
+    if (sheet && sheet.getLastRow() > 1) {
+      var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+      data.forEach(function (row) {
+        var batchId = String(row[0] || "").trim();
+        if (batchId) {
+          locMap[batchId] = {
+            borrower: String(row[1] || "").trim(),
+            floor: String(row[2] || "").trim(),
+            unit: String(row[3] || "").trim(),
+            timestamp: formatDateValue_(row[4])
+          };
+        }
+      });
+    }
+  } catch (e) {}
+  return locMap;
+}
+
 function recordBorrow(borrowList, clientVersion) {
   if (!Array.isArray(borrowList) || !borrowList.length) return { success: false, message: "대여 요청 정보가 없습니다." };
   if (!clientVersion || clientVersion !== APP_VERSION) {
@@ -2228,6 +2308,7 @@ function recordBorrow(borrowList, clientVersion) {
     ensureScenarioLogSchema_(scenarioSheet);
     var generalSheet = getOrCreateSheet_(ss, GENERAL_SHEET_NAME, ["대여자", "대여 물품 ID", "대여 물품명", "수량", "대여일", "대여 목적", "반납 여부", "반납일", "이메일", "Slack Thread TS", "배치ID", "신청시각", "대여구분"]);
     ensureGeneralLogSchema_(generalSheet);
+    var locationSheet = getOrCreateSheet_(ss, "대여위치기록", ["배치ID", "대여자", "층수", "유닛", "기록시각"]);
     var contact = resolveBorrowerContact_(borrowList[0]);
     if (contact.affiliation === "configds" && !lookupConfigDsContact_(borrowList[0].borrowerName)) {
       return { success: false, message: "'ConfigDS계정' 시트에 등록되지 않은 이름입니다. 관리자에게 계정 등록을 요청한 뒤 다시 시도해주세요." };
@@ -2310,16 +2391,24 @@ function recordBorrow(borrowList, clientVersion) {
     var additionalBatchId = Utilities.getUuid();
     var scenarioRequestSubmittedAt = new Date();
 
+    var floorVal = borrowList[0].floor || "";
+    var unitVal = borrowList[0].unit || "";
+
     borrowList.forEach(function (info) {
       var borrowDateTime = normalizeDateTimeInput_(info.borrowDate);
       var purposeText = String(info.borrowPurpose || "").trim();
       if (purposeText && purposeTexts.indexOf(purposeText) === -1) purposeTexts.push(purposeText);
+      var itemFloor = info.floor || floorVal || "";
+      var itemUnit = info.unit || unitVal || "";
 
       if (info.itemType !== "scenario") {
         if (info.generalOption) generalOption = info.generalOption;
         var generalPurpose = info.borrowPurpose;
         var generalBatchId = Utilities.getUuid();
         var generalSubmittedAt = new Date();
+        if (itemFloor || itemUnit) {
+          locationSheet.appendRow([generalBatchId, info.borrowerName, itemFloor, itemUnit, generalSubmittedAt]);
+        }
         (info.borrowedItems || []).forEach(function (item) {
           generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, generalPurpose, "X", "", contact.email || "", "", generalBatchId, generalSubmittedAt, info.generalOption || ""]);
           generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
@@ -2331,6 +2420,12 @@ function recordBorrow(borrowList, clientVersion) {
         return;
       }
       var batchId = scenarioRequestBatchId, now = scenarioRequestSubmittedAt;
+      if (itemFloor || itemUnit) {
+        locationSheet.appendRow([batchId, info.borrowerName, itemFloor, itemUnit, now]);
+        if (info.additionalItems && info.additionalItems.length && !additionalItemsRecorded) {
+          locationSheet.appendRow([additionalBatchId, info.borrowerName, itemFloor, itemUnit, now]);
+        }
+      }
       var required = info.requiredObjects || [];
       var additional = additionalItemsRecorded ? [] : (info.additionalItems || []);
       if (additional.length) additionalItemsRecorded = true;
@@ -2369,7 +2464,23 @@ function recordBorrow(borrowList, clientVersion) {
 
     var locations = buildLocationMap_();
     var objLines = buildMergedLocationLines_(borrowedForThread, locations);
-    var replyText = "📍 *대여 물품 · 위치*\n" + (objLines.join("\n") || "없음");
+    var borrowedSummary = getSummaryCountText_(borrowedForThread);
+    var replyText = "📍 *대여 물품 · 위치* (총 " + borrowedSummary + ")\n" + (objLines.join("\n") || "없음");
+
+    var borrowerName = borrowList[0].borrowerName;
+    var remainingByBorrower = {};
+    getUnreturnedItems().forEach(function (u) {
+      var b = u.borrowerName || "";
+      var parsed = parseItemLabel_(u.itemLabel);
+      if (!parsed.id && !parsed.name) return;
+      if (!remainingByBorrower[b]) remainingByBorrower[b] = [];
+      remainingByBorrower[b].push(parsed);
+    });
+
+    var currentBorrowed = remainingByBorrower[borrowerName] || [];
+    var currentLines = buildMergedLocationLines_(currentBorrowed, locations);
+    var currentSummary = getSummaryCountText_(currentBorrowed);
+    var currentText = "📦 *현재 대여 중인 물품 · 위치* (총 " + currentSummary + ")\n" + (currentLines.join("\n") || "없음");
 
     var ts = postSlackMessage_(boxWrap_(mainText));
     var slackNote = "";
@@ -2377,9 +2488,10 @@ function recordBorrow(borrowList, clientVersion) {
       generalRows.forEach(function (r) { generalSheet.getRange(r, 10).setValue(ts); });
       scenarioRows.forEach(function (r) { scenarioSheet.getRange(r, 9).setValue(ts); });
       if (objLines.length) postThreadReply_(replyText, ts);
+      if (currentLines.length) postThreadReply_(currentText, ts);
     } else {
       // 봇 메인 메시지 실패 시: 스레드 없이 단일 메시지로라도 재시도 (웹훅 미사용)
-      var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText));
+      var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText + "\n───────────────\n" + currentText));
       slackNote = combined
         ? " (스레드 없이 단일 메시지로 발송했습니다)"
         : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
@@ -2396,6 +2508,7 @@ function getUnreturnedItems() {
     locations[o.id] = o.rootSlot;
     objectMap[o.id] = o;
   });
+  var locMap = getSeatLocationMap_(ss);
   var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
   if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
     var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
@@ -2406,7 +2519,9 @@ function getUnreturnedItems() {
       var itemId = idMatch ? padSlot_(idMatch[1]) : "";
       var parsedQty = parseItemLabel_(label).quantity || 1;
       var obj = objectMap[itemId] || {};
-      result.push({ sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1], itemLabel: label, itemKind: row[11] || "추가 대여물품", location: itemId ? (locations[itemId] || "") : "", quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4], email: String(row[7] || "").trim(), batchId: String(row[9] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
+      var batchId = String(row[9] || "");
+      var seatLoc = locMap[batchId] || {};
+      result.push({ sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1], itemLabel: label, itemKind: row[11] || "추가 대여물품", location: itemId ? (locations[itemId] || "") : "", quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4], email: String(row[7] || "").trim(), batchId: batchId, floor: seatLoc.floor || "", unit: seatLoc.unit || "", image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
     });
   }
   var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
@@ -2418,7 +2533,9 @@ function getUnreturnedItems() {
       var pid = padSlot_(id);
       var obj = objectMap[pid] || {};
       var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
-      result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
+      var batchId = String(row[10] || "");
+      var seatLoc = locMap[batchId] || {};
+      result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: batchId, floor: seatLoc.floor || "", unit: seatLoc.unit || "", generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
     });
   }
   return result;
@@ -2430,6 +2547,7 @@ function getScenarioAllLogs_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
   var locations = {}, objectMap = {};
   getObjectItems().forEach(function (o) { locations[o.id] = o.rootSlot; objectMap[o.id] = o; });
+  var locMap = getSeatLocationMap_(ss);
 
   var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
   if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
@@ -2442,12 +2560,15 @@ function getScenarioAllLogs_() {
       var itemId = idMatch ? padSlot_(idMatch[1]) : "";
       var parsedQty = parseItemLabel_(label).quantity || 1;
       var obj = objectMap[itemId] || {};
+      var batchId = String(row[9] || "");
+      var seatLoc = locMap[batchId] || {};
       result.push({
         sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1],
         itemLabel: label, itemKind: row[11] || "추가 대여물품",
         location: itemId ? (locations[itemId] || "") : "", itemId: itemId, itemName: parseItemLabel_(label).name || label,
         quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4],
-        email: String(row[7] || "").trim(), batchId: String(row[9] || ""),
+        email: String(row[7] || "").trim(), batchId: batchId,
+        floor: seatLoc.floor || "", unit: seatLoc.unit || "",
         returned: returned, returnedMark: String(row[5] || "").trim(),
         image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
       });
@@ -2464,13 +2585,16 @@ function getScenarioAllLogs_() {
       var pid = padSlot_(id);
       var obj = objectMap[pid] || {};
       var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
+      var batchId = String(row[10] || "");
+      var seatLoc = locMap[batchId] || {};
       result.push({
         sheetType: "general", rowIndex: i + 2, borrowerName: row[0],
         itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""),
         location: locations[pid] || "", itemId: pid, itemName: row[2],
         quantity: qty, borrowDate: formatDateValue_(row[4]),
         submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5],
-        email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""),
+        email: String(row[8] || "").trim(), batchId: batchId, generalOption: String(row[12] || ""),
+        floor: seatLoc.floor || "", unit: seatLoc.unit || "",
         returned: returned, returnedMark: String(row[6] || "").trim(),
         image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
       });
@@ -2577,11 +2701,13 @@ function processReturn(returnRequests, clientVersion) {
       var mainText = mainLines.join("\n");
 
       var returnLines = buildMergedLocationLines_(g.items, locations);
-      var replyText = "📍 *반납 물품 · 위치*\n" + (returnLines.join("\n") || "없음") + "\n반납일: " + today;
+      var returnSummary = getSummaryCountText_(g.items);
+      var replyText = "📍 *반납 물품 · 위치* (총 " + returnSummary + ")\n" + (returnLines.join("\n") || "없음") + "\n반납일: " + today;
 
       var remaining = remainingByBorrower[borrower] || [];
       var remainingLines = buildMergedLocationLines_(remaining, locations);
-      var remainingText = "📦 *현재 대여 중인 물품 · 위치*\n" + (remainingLines.join("\n") || "없음 (모두 반납 완료)");
+      var remainingSummary = getSummaryCountText_(remaining);
+      var remainingText = "📦 *현재 대여 중인 물품 · 위치* (총 " + remainingSummary + ")\n" + (remainingLines.join("\n") || "없음 (모두 반납 완료)");
 
       var ts = postSlackMessage_(boxWrap_(mainText));
       if (ts) {
@@ -2636,4 +2762,306 @@ function buildGeneralGroupInfo_(borrower, submittedAt, borrowDate) {
     display = formatDateValue_(borrowDate) || "";
   }
   return { key: String(borrower || "") + "|" + display, display: display };
+}
+
+/* ══════════ 신규 확장 API 헬퍼 함수 ══════════ */
+
+function getStockChangeHistory_(ss, category, targetId) {
+  var sheet = ss.getSheetByName("재고변경이력");
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var range = sheet.getRange(2, 1, lastRow - 1, 9);
+  var values = range.getValues();
+  var displayValues = range.getDisplayValues();
+  var list = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    var disp = displayValues[i];
+    var rowCat = String(row[1] || "").trim();
+    var rowId = String(row[2] || "").trim();
+    if (category && rowCat && rowCat !== category && (category === "inventory" ? rowCat !== "공구 및 부품류" : rowCat !== "시나리오 물품")) {
+      continue;
+    }
+    if (targetId && rowId && rowId.toLowerCase() !== String(targetId).trim().toLowerCase()) {
+      continue;
+    }
+    list.push({
+      changedAt: disp[0] || (row[0] instanceof Date ? formatDate(row[0]) : String(row[0] || "").trim()),
+      category: rowCat,
+      id: rowId,
+      itemName: String(row[3] || "").trim(),
+      oldStock: Number(row[4] || 0),
+      newStock: Number(row[5] || 0),
+      diff: Number(row[6] || 0),
+      reason: String(row[7] || "").trim(),
+      manager: String(row[8] || "").trim()
+    });
+  }
+  return list;
+}
+
+function adjustStock_(ss, payload) {
+  var category = payload.category;
+  var rowIndex = Number(payload.rowIndex);
+  var newStock = Number(payload.newStock);
+  var reason = String(payload.reason || "").trim();
+  var manager = String(payload.manager || "").trim();
+  
+  if (isNaN(newStock) || newStock < 0) {
+    return { success: false, error: "새 재고 수량이 유효하지 않습니다." };
+  }
+  if (!reason) {
+    return { success: false, error: "변경 사유를 입력해야 합니다." };
+  }
+  
+  var targetSheet = null;
+  var itemIdOrLoc = "";
+  var itemName = "";
+  var oldStock = 0;
+  
+  if (category === "inventory" || category === "공구 및 부품류") {
+    targetSheet = getInventorySheet(ss);
+    if (!targetSheet) return { success: false, error: "창고물품 시트를 찾을 수 없습니다." };
+    if (rowIndex < 2 || rowIndex > targetSheet.getLastRow()) {
+      return { success: false, error: "올바르지 않은 행 번호입니다." };
+    }
+    itemIdOrLoc = String(targetSheet.getRange(rowIndex, 1).getValue() || "").trim();
+    itemName = String(targetSheet.getRange(rowIndex, 3).getValue() || "").trim();
+    var rawOld = targetSheet.getRange(rowIndex, 5).getValue();
+    oldStock = isNaN(Number(rawOld)) ? 0 : Number(rawOld);
+    
+    targetSheet.getRange(rowIndex, 5, 1, 2).setValues([[newStock, formatDate(new Date())]]);
+  } else {
+    targetSheet = ss.getSheetByName(OBJECT_SHEET_NAME) || ss.getSheetByName("Sheet3");
+    if (!targetSheet) return { success: false, error: "시나리오 오브젝트 시트를 찾을 수 없습니다." };
+    if (rowIndex < 2 || rowIndex > targetSheet.getLastRow()) {
+      return { success: false, error: "올바르지 않은 행 번호입니다." };
+    }
+    itemIdOrLoc = String(targetSheet.getRange(rowIndex, 1).getValue() || "").trim();
+    itemName = String(targetSheet.getRange(rowIndex, 2).getValue() || "").trim();
+    var rawOldSc = targetSheet.getRange(rowIndex, 8).getValue();
+    oldStock = isNaN(Number(rawOldSc)) ? 0 : Number(rawOldSc);
+    
+    targetSheet.getRange(rowIndex, 8).setValue(newStock);
+  }
+  
+  var diff = newStock - oldStock;
+  
+  var logSheet = getOrCreateSheet_(ss, "재고변경이력", ["변경시각", "구분", "물품ID/위치", "물품명", "기존재고", "변경재고", "증감", "사유", "담당자"]);
+  logSheet.appendRow([
+    formatDate(new Date()),
+    category === "inventory" ? "공구 및 부품류" : "시나리오 물품",
+    itemIdOrLoc,
+    itemName,
+    oldStock,
+    newStock,
+    diff,
+    reason,
+    manager
+  ]);
+  
+  invalidateGetAllCache_();
+  return { success: true, oldStock: oldStock, newStock: newStock, diff: diff };
+}
+
+function getItemSets_(ss) {
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  var sets = [];
+  for (var i = 0; i < values.length; i++) {
+    var name = String(values[i][0] || "").trim();
+    if (!name) continue;
+    var rawItems = String(values[i][1] || "").trim();
+    var items = [];
+    try { items = JSON.parse(rawItems); } catch (e) {}
+    sets.push({ name: name, items: Array.isArray(items) ? items : [] });
+  }
+  return sets;
+}
+
+function saveItemSet_(ss, payload) {
+  var name = String(payload.name || "").trim();
+  var items = payload.items || [];
+  var originalName = String(payload.originalName || name).trim();
+  if (!name) return { success: false, message: "세트 이름을 입력해주세요." };
+  
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  var foundRow = -1;
+  if (lastRow >= 2) {
+    var names = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < names.length; i++) {
+      var existingName = String(names[i][0] || "").trim();
+      if (existingName === originalName || existingName === name) {
+        foundRow = i + 2;
+        break;
+      }
+    }
+  }
+  var jsonStr = JSON.stringify(items);
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, 2).setValues([[name, jsonStr]]);
+  } else {
+    sheet.appendRow([name, jsonStr]);
+  }
+  return { success: true };
+}
+
+function deleteItemSet_(ss, name) {
+  var targetName = String(name || "").trim();
+  if (!targetName) return { success: false };
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    var names = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < names.length; i++) {
+      if (String(names[i][0] || "").trim() === targetName) {
+        sheet.deleteRow(i + 2);
+        break;
+      }
+    }
+  }
+  return { success: true };
+}
+
+function getSeatMap_(ss) {
+  var sheet = getOrCreateSheet_(ss, "좌석배치도", ["배치도(JSON)"]);
+  var val = String(sheet.getRange(2, 1).getValue() || "").trim();
+  if (!val) {
+    try {
+      val = PropertiesService.getScriptProperties().getProperty("SEAT_MAP_JSON") || "";
+    } catch (e) {}
+  }
+  var map = { floors: [] };
+  if (val) {
+    try { map = JSON.parse(val); } catch (e) {}
+  }
+  return map;
+}
+
+function saveSeatMap_(ss, map) {
+  var sheet = getOrCreateSheet_(ss, "좌석배치도", ["배치도(JSON)"]);
+  var jsonStr = JSON.stringify(map || { floors: [] });
+  sheet.getRange(2, 1).setValue(jsonStr);
+  try {
+    PropertiesService.getScriptProperties().setProperty("SEAT_MAP_JSON", jsonStr);
+  } catch (e) {}
+  return { success: true };
+}
+
+function getSeatOccupancy_(ss, floor, unit, shift) {
+  var unreturned = getUnreturnedItems();
+  var batchMap = {};
+  var batchOrder = [];
+
+  for (var i = 0; i < unreturned.length; i++) {
+    var item = unreturned[i];
+    if (String(item.floor || "").trim().toUpperCase() === String(floor || "").trim().toUpperCase() &&
+        String(item.unit || "").trim().toUpperCase() === String(unit || "").trim().toUpperCase()) {
+      var key = item.batchId || (item.borrowerName + "_" + item.borrowDate);
+      if (!batchMap[key]) {
+        batchMap[key] = {
+          timestamp: item.borrowDate,
+          borrowerName: item.borrowerName,
+          batchId: item.batchId || "",
+          sheetType: item.sheetType,
+          shift: shift || "day",
+          items: [],
+          allReturned: false
+        };
+        batchOrder.push(key);
+      }
+      batchMap[key].items.push({ name: item.itemLabel, qty: item.quantity, returned: false });
+    }
+  }
+
+  return batchOrder.map(function(k) { return batchMap[k]; });
+}
+
+function getActiveItemTypeCount_(borrowerName) {
+  var items = getUnreturnedItems();
+  var nameClean = String(borrowerName || "").trim().toLowerCase();
+  var userItems = [];
+  var uniqueIds = {};
+  for (var i = 0; i < items.length; i++) {
+    if (String(items[i].borrowerName || "").trim().toLowerCase() === nameClean) {
+      userItems.push({
+        id: items[i].itemId || items[i].location,
+        name: items[i].itemLabel,
+        quantity: items[i].quantity,
+        borrowDate: items[i].borrowDate
+      });
+      uniqueIds[items[i].itemId || items[i].itemLabel] = true;
+    }
+  }
+  return {
+    count: Object.keys(uniqueIds).length,
+    max: 10,
+    items: userItems
+  };
+}
+
+function getStockAuditHistory_(ss, itemId) {
+  var sheet = getOrCreateSheet_(ss, "재고실사기록", ["실사시각", "물품ID", "물품명", "시스템재고", "실사재고", "오차", "실사자", "비고"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var displayValues = sheet.getRange(2, 1, lastRow - 1, 8).getDisplayValues();
+  var list = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    var idVal = String(row[1] || "").trim();
+    if (itemId && idVal.toLowerCase() !== String(itemId).trim().toLowerCase()) continue;
+    list.push({
+      auditedAt: displayValues[i][0] || formatDate(row[0]),
+      itemId: idVal,
+      itemName: String(row[2] || "").trim(),
+      systemStock: Number(row[3] || 0),
+      actualCount: Number(row[4] || 0),
+      diff: Number(row[5] || 0),
+      auditor: String(row[6] || "").trim(),
+      note: String(row[7] || "").trim()
+    });
+  }
+  return list;
+}
+
+function recordStockAudit_(ss, payload) {
+  var sheet = getOrCreateSheet_(ss, "재고실사기록", ["실사시각", "물품ID", "물품명", "시스템재고", "실사재고", "오차", "실사자", "비고"]);
+  var auditedAt = formatDate(new Date());
+  var diff = Number(payload.actualCount || 0) - Number(payload.systemStock || 0);
+  var rec = [
+    auditedAt,
+    String(payload.itemId || "").trim(),
+    String(payload.itemName || "").trim(),
+    Number(payload.systemStock || 0),
+    Number(payload.actualCount || 0),
+    diff,
+    String(payload.auditor || "").trim(),
+    String(payload.note || "").trim()
+  ];
+  sheet.appendRow(rec);
+  return { success: true, record: { auditedAt: auditedAt, itemId: payload.itemId, itemName: payload.itemName, systemStock: payload.systemStock, actualCount: payload.actualCount, diff: diff, auditor: payload.auditor, note: payload.note } };
+}
+
+function getStockFormulaStatus_(ss, itemId) {
+  var sheet = getInventorySheet(ss);
+  if (!sheet) return { found: false, stockIsFormula: false, rentedIsFormula: false };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { found: false, stockIsFormula: false, rentedIsFormula: false };
+  var formulas = sheet.getRange(2, 5, lastRow - 1, 2).getFormulas();
+  var locs = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < locs.length; i++) {
+    if (String(locs[i][0] || "").trim().toLowerCase() === String(itemId || "").trim().toLowerCase()) {
+      return {
+        found: true,
+        stockIsFormula: !!(formulas[i][0] && String(formulas[i][0]).indexOf("=") === 0),
+        rentedIsFormula: !!(formulas[i][1] && String(formulas[i][1]).indexOf("=") === 0)
+      };
+    }
+  }
+  return { found: false, stockIsFormula: false, rentedIsFormula: false };
 }
