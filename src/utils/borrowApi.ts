@@ -1,731 +1,489 @@
-// 대여 시스템(구 BorrowForm) API 헬퍼 및 공용 타입/유틸
-// 통합 GAS(AppsScript_Unified.gs)의 대여 액션들을 호출합니다.
+import React, { useEffect, useState } from "react";
+import {
+  ArrowLeft, Plus, Trash2, Sun, Moon, X, Package, User, Clock, FileJson, Copy, Check, RotateCcw,
+} from "lucide-react";
+import {
+  SeatFloor, SeatMap, fetchSeatMap, saveSeatMap,
+  SeatOccupancyEntry, fetchSeatOccupancy, DEFAULT_SEAT_MAP_DATA,
+} from "../utils/borrowApi";
 
-export interface ObjectItem {
-  id: string;
-  name: string;
-  sector: string;
-  rootSlot: string;
-  category: string;
-  subcategory: string;
-  image: string;
-  stock: number;
-  rented: number;
-  excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
+interface Props {
+  scriptUrl: string;
+  connected: boolean;
+  isLightMode: boolean;
+  showToast: (msg: string, type: "ok" | "error" | "warn" | "info") => void;
+  onBack: () => void;
 }
 
-export interface ScenarioItem {
-  id: string;
-  name: string;
-  quantity: number;
-  rootSlot?: string;
-  category?: string;
-  subcategory?: string;
-  image?: string;
-  stock?: number;
-  rented?: number;
+function makeFloorId(existing: SeatFloor[]): string {
+  let n = 1;
+  while (existing.some((f) => f.id === `F${n}`)) n++;
+  return `F${n}`;
 }
 
-export interface ScenarioDefinition {
-  sid: string;
-  found: boolean;
-  syncNeeded: boolean;
-  blocked: boolean;
-  blockReason: string;
-  highLevelEn: string;
-  highLevelKo: string;
-  items: ScenarioItem[];
-  errorMessage?: string; // 진단용: 서버 처리 중 문제가 있었다면 이유가 담긴다.
-  rowsScanned?: number;  // 진단용: Scenario 시트에서 실제로 읽은 행 수
-  fetchError?: string;   // 프론트 전용: 네트워크/파싱 등 요청 자체가 실패했을 때의 이유
-}
+export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, showToast, onBack }: Props) {
+  const C = {
+    bg: isLightMode ? "#f4f6f9" : "#0b1120",
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#626c7d" : "#8b98ac",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    success: isLightMode ? "#0d9488" : "#34d399",
+    successSoft: "rgba(16,185,129,0.12)",
+    warn: "#d97706",
+    warnSoft: "rgba(217,119,6,0.12)",
+    error: isLightMode ? "#dc2626" : "#f87171",
+    errorSoft: "rgba(239,68,68,0.12)",
+  };
 
-export interface UnreturnedItem {
-  sheetType: "scenario" | "general";
-  rowIndex: number;
-  borrowerName: string;
-  scenarioId?: string;
-  itemLabel: string;
-  itemKind?: string;
-  itemId?: string; // 물품 카탈로그(Sheet3) ID — 관리자 화면에서 오브젝트별 대여자 조회에 사용
-  location: string;
-  quantity: number;
-  borrowDate: string;
-  submitGroupKey?: string;
-  submitDisplay?: string;
-  borrowPurpose: string;
-  email: string;
-  batchId: string;
-  floor?: string; // 대여 시 입력한 층수 (대여위치기록 시트에서 배치ID로 조회)
-  unit?: string;  // 대여 시 입력한 유닛
-  generalOption?: string;
-  image: string;
-  stock: number;
-  rented: number;
-}
+  const [floors, setFloors] = useState<SeatFloor[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [activeFloorId, setActiveFloorId] = useState("");
+  const [shift, setShift] = useState<"day" | "night">("day");
 
-export interface BorrowEntry {
-  itemType: "scenario" | "general";
-  borrowerName: string;
-  affiliation: string;
-  employeeId: string;
-  knownEmail?: string; // 재대여 등 이미 확인된 이메일이 있을 때 (Slack 태깅용, affiliation/employeeId 재추정 불필요)
-  borrowDate: string;
-  borrowPurpose: string;
-  scenarioId?: string;
-  requiredObjects?: ScenarioItem[];
-  additionalItems?: ScenarioItem[];
-  syncNeeded?: boolean;
-  borrowedItems?: { id: string; name: string; quantity: number }[];
-  generalOption?: string;
-  floor?: string; // 층수 (예: "B2") — 좌석 위치 기록용
-  unit?: string;  // 유닛 (예: "Unit 1") — 좌석 위치 기록용
-}
+  const [occModal, setOccModal] = useState<{ floor: string; unit: string } | null>(null);
+  const [occEntries, setOccEntries] = useState<SeatOccupancyEntry[]>([]);
+  const [occLoading, setOccLoading] = useState(false);
 
-export interface ReturnRequest {
-  sheetType: "scenario" | "general";
-  rowIndex: number;
-  quantity: number;
-}
+  // JSON 직접 편집 모달 상태
+  const [jsonModalOpen, setJsonModalOpen] = useState(false);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonErr, setJsonErr] = useState("");
+  const [jsonCopied, setJsonCopied] = useState(false);
 
-export interface BorrowResult {
-  success: boolean;
-  message: string;
-}
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-/* ---------------- 위치 정렬 밴드 (Code.gs와 동일하게 유지할 것) ---------------- */
-const LOCATION_SORT_BANDS = [
-  { start: 186, end: 251, dir: "asc" },
-  { start: 120, end: 185, dir: "desc" },
-  { start: 60, end: 119, dir: "asc" },
-  { start: 0, end: 59, dir: "desc" },
-  { start: 100000, end: 100025, dir: "asc" },
-] as const;
+  const DEFAULT_FLOORS: SeatFloor[] = DEFAULT_SEAT_MAP_DATA.floors;
 
-export function computeLocationSortIndex(rootSlot: string | null | undefined): number {
-  const n = parseInt(String(rootSlot ?? "").replace(/\D/g, ""), 10);
-  if (isNaN(n)) return Number.MAX_SAFE_INTEGER;
-  let offset = 0;
-  for (const b of LOCATION_SORT_BANDS) {
-    const size = b.end - b.start + 1;
-    if (n >= b.start && n <= b.end) return offset + (b.dir === "asc" ? n - b.start : b.end - n);
-    offset += size;
+  function load() {
+    setLoading(true);
+    fetchSeatMap(scriptUrl)
+      .then((m) => {
+        const loadedFloors = (m.floors && m.floors.length > 0) ? m.floors : DEFAULT_FLOORS;
+        setFloors(loadedFloors);
+        setActiveFloorId(loadedFloors[0]?.id || "B2");
+      })
+      .catch((e) => {
+        showToast(`좌석맵을 불러오지 못했습니다: ${e.message}`, "error");
+        setFloors(DEFAULT_FLOORS);
+        setActiveFloorId("B2");
+      })
+      .finally(() => setLoading(false));
   }
-  return offset + n;
-}
 
-export function padSlot(raw: string | null | undefined): string {
-  const s = String(raw ?? "").trim().replace(/\D/g, "");
-  if (!s) return String(raw ?? "").trim();
-  return s.length < 6 ? s.padStart(6, "0") : s;
-}
-
-export function isKoreanName(v: string): boolean {
-  return /^[\uAC00-\uD7A3\u3131-\u318E\s]+$/.test(v);
-}
-
-export function nowString(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-/* ---------------- API 호출 (WMS callScript와 동일한 CORS 회피 패턴) ---------------- */
-// 연동 URL과 쿼리스트링을 안전하게 합친다.
-// scriptUrl에 이미 '?'(예: ...exec?usp=sharing)나 fragment('#'), 공백이 들어와도
-// action 파라미터가 묻히지 않도록 정규화한다. (특히 모바일에서 URL이 잘못 저장된 경우 방어)
-function normalizeScriptUrl(raw: string): string {
-  let u = String(raw || "").trim();
-  const hashIdx = u.indexOf("#");
-  if (hashIdx !== -1) u = u.slice(0, hashIdx); // fragment 제거
-  return u.trim();
-}
-
-function buildUrl(scriptUrl: string, qs: string): string {
-  const base = normalizeScriptUrl(scriptUrl);
-  if (!qs) return base;
-  return base + (base.indexOf("?") !== -1 ? "&" : "?") + qs;
-}
-
-// GET 요청은 전부 읽기 전용이므로 타임아웃 시 자동 재시도가 안전하다.
-// GAS 콜드스타트나 대용량 시트 조회(getScenarioAllLogs 등)는 30초를 넘길 수 있어
-// 액션별로 타임아웃/재시도 횟수를 조절할 수 있게 한다.
-interface ApiGetOptions {
-  timeoutMs?: number; // 1회 시도당 제한 시간 (기본 30초)
-  retries?: number;   // 타임아웃 시 추가 재시도 횟수 (기본 1회)
-}
-
-async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}, opts: ApiGetOptions = {}) {
-  if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
-  const timeoutMs = opts.timeoutMs ?? 30000;
-  const retries = opts.retries ?? 1;
-  const qs = new URLSearchParams({ action, ...params }).toString();
-  const url = buildUrl(scriptUrl, qs);
-
-  let res: Response | null = null;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs); // 무한로딩 방지
+  async function persist(next: SeatFloor[], notify = false) {
+    setFloors(next);
+    setSaving(true);
     try {
-      res = await fetch(url, { signal: controller.signal });
-      break; // 성공 시 루프 종료
+      const res = await saveSeatMap(scriptUrl, { floors: next } as SeatMap);
+      if (res.success) {
+        if (notify) showToast("좌석배치도 JSON이 정상 반영되었습니다.", "ok");
+      } else {
+        showToast(res.message || "저장에 실패했습니다.", "error");
+      }
     } catch (e: any) {
-      if (e?.name === "AbortError") {
-        if (attempt < retries) continue; // 타임아웃 → 조용히 재시도
-        throw new Error(`서버 응답이 지연되어 요청을 취소했습니다. (액션: ${action}, ${attempt + 1}회 시도, 네트워크 상태를 확인하고 다시 시도해주세요.)`);
-      }
-      let errMsg = e?.message || "서버와 연결할 수 없습니다.";
-      if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
-        errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
-      }
-      throw new Error(`[네트워크 오류] ${errMsg} (요청 URL: ${url.substring(0, 80)}...)`);
+      showToast(`저장 실패: ${e.message}`, "error");
     } finally {
-      clearTimeout(timer);
+      setSaving(false);
     }
   }
-  if (!res) throw new Error(`요청에 실패했습니다. (액션: ${action})`);
-  const text = await res.text();
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    const trimmedText = text.trim();
-    if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
-      throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. Apps Script에서 '배포 > 새 배포 > 웹앱'으로 배포하여 생성된 '.../exec'로 끝나는 배포 URL을 입력해주세요.");
-    }
-    if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
-      throw new Error("Apps Script 웹앱의 액세스 권한 설정 오류입니다. Apps Script 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 로그인이 불필요합니다.");
-    }
-    // HTML 형식의 서버 에러(런타임 에러) 메시지가 있는 경우 첫 150글자를 추출하여 노출시킵니다.
-    const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
-    throw new Error(`서버가 올바르지 않은 응답(HTML)을 반환했습니다. Apps Script 코드 오류 또는 권한 문제일 수 있습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
+
+  function openJsonModal() {
+    setJsonText(JSON.stringify({ floors }, null, 2));
+    setJsonErr("");
+    setJsonCopied(false);
+    setJsonModalOpen(true);
   }
-  if (!data.success) {
-    // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
-    if (data.error && String(data.error).indexOf("알 수 없는") !== -1) {
-      const shown = normalizeScriptUrl(scriptUrl);
-      throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
+
+  function handleApplyJson() {
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!parsed || !Array.isArray(parsed.floors) || parsed.floors.length === 0) {
+        setJsonErr("올바른 JSON 형식이 아닙니다. 'floors' 배열이 존재해야 합니다.");
+        return;
+      }
+      persist(parsed.floors, true);
+      setActiveFloorId(parsed.floors[0]?.id || "");
+      setJsonModalOpen(false);
+    } catch (e: any) {
+      setJsonErr(`JSON 파싱 오류: ${e.message}`);
     }
-    throw new Error(data.error || `요청 실패 (액션: ${action})`);
   }
-  return data;
-}
 
-async function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
-  if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
-  const cleanUrl = normalizeScriptUrl(scriptUrl);
-  let res: Response;
-  try {
-    res = await fetch(cleanUrl, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ action, payload }),
-    });
-  } catch (e: any) {
-    let errMsg = e?.message || "서버와 연결 불가";
-    if (errMsg.includes("Failed to fetch") || errMsg.includes("failed to fetch") || errMsg.includes("NetworkError") || errMsg.includes("Network error")) {
-      errMsg = "Failed to fetch (CORS/권한오류). 구글 Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 지정했는지 확인해 주세요. '나만(Only myself)'인 경우 구글 로그인으로 리다이렉트되어 CORS 정책에 의해 브라우저가 조회를 차단합니다. 또한 스크립트를 '새 버전'으로 등록하여 배포했는지와 실행권한 승인을 마쳤는지 확인이 필요합니다.";
+  function handleResetDefaultJson() {
+    if (!window.confirm("초기 기본 배치도 JSON으로 복구하시겠습니까?")) return;
+    persist(DEFAULT_SEAT_MAP_DATA.floors, true);
+    setActiveFloorId(DEFAULT_SEAT_MAP_DATA.floors[0]?.id || "");
+    setJsonModalOpen(false);
+  }
+
+  function handleCopyJson() {
+    navigator.clipboard.writeText(jsonText);
+    setJsonCopied(true);
+    setTimeout(() => setJsonCopied(false), 2000);
+  }
+
+  const activeFloor = floors.find((f) => f.id === activeFloorId) || null;
+
+  function addFloor() {
+    const id = makeFloorId(floors);
+    const next = [...floors, { id, name: id, rows: 3, cols: 4, units: [] }];
+    persist(next);
+    setActiveFloorId(id);
+  }
+
+  function renameFloor(name: string) {
+    if (!activeFloor) return;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, name } : f)));
+  }
+
+  function deleteFloor() {
+    if (!activeFloor) return;
+    if (!window.confirm(`'${activeFloor.name || activeFloor.id}' 층을 삭제할까요? 배치된 유닛도 함께 사라집니다.`)) return;
+    const next = floors.filter((f) => f.id !== activeFloor.id);
+    persist(next);
+    setActiveFloorId(next[0]?.id || "");
+  }
+
+  function addRow() {
+    if (!activeFloor) return;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, rows: f.rows + 1 } : f)));
+  }
+  function removeRow() {
+    if (!activeFloor || activeFloor.rows <= 1) return;
+    const newRows = activeFloor.rows - 1;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, rows: newRows, units: f.units.filter((u) => u.row < newRows) } : f)));
+  }
+  function addCol() {
+    if (!activeFloor) return;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, cols: f.cols + 1 } : f)));
+  }
+  function removeCol() {
+    if (!activeFloor || activeFloor.cols <= 1) return;
+    const newCols = activeFloor.cols - 1;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, cols: newCols, units: f.units.filter((u) => u.col < newCols) } : f)));
+  }
+
+  function toggleCell(row: number, col: number) {
+    if (!activeFloor) return;
+    const existing = activeFloor.units.find((u) => u.row === row && u.col === col);
+    if (existing) {
+      persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, units: f.units.filter((u) => !(u.row === row && u.col === col)) } : f)));
+    } else {
+      const nextNum = activeFloor.units.length + 1;
+      const label = `Unit ${nextNum}`;
+      persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, units: [...f.units, { row, col, label }] } : f)));
     }
-    throw new Error(`[네트워크 오류] POST 요청 실패: ${errMsg}`);
   }
-  const text = await res.text();
-  try {
-    const data = JSON.parse(text);
-    return data;
-  } catch {
-    const trimmedText = text.trim();
-    if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
-      throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. '배포 > 새 배포'를 통해 생성된 웹앱 URL을 입력해주세요.");
+
+  function renameUnit(row: number, col: number, label: string) {
+    if (!activeFloor) return;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, units: f.units.map((u) => (u.row === row && u.col === col ? { ...u, label } : u)) } : f)));
+  }
+
+  function toggleExempt(row: number, col: number) {
+    if (!activeFloor) return;
+    persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, units: f.units.map((u) => (u.row === row && u.col === col ? { ...u, exempt: !u.exempt } : u)) } : f)));
+  }
+
+  function openOccupancy(unitLabel: string) {
+    if (!activeFloor) return;
+    const floorKey = activeFloor.name || activeFloor.id;
+    setOccModal({ floor: floorKey, unit: unitLabel });
+    setOccLoading(true);
+    if (connected && scriptUrl) {
+      fetchSeatOccupancy(scriptUrl, floorKey, unitLabel, shift)
+        .then(setOccEntries)
+        .catch((e) => showToast(`조회 실패: ${e.message}`, "error"))
+        .finally(() => setOccLoading(false));
+    } else {
+      setOccEntries([]);
+      setOccLoading(false);
     }
-    if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
-      throw new Error("Apps Script 웹앱 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 합니다.");
-    }
-    const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
-    throw new Error(`서버가 올바르지 않은 POST 응답(HTML)을 반환했습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
   }
-}
 
-export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> {
-  const data = await apiGet(scriptUrl, "getBorrowAppInfo");
-  return String(data.version || "");
-}
-
-export async function fetchObjectItems(scriptUrl: string): Promise<ObjectItem[]> {
-  const data = await apiGet(scriptUrl, "getObjectItems", {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as ObjectItem[];
-}
-
-export async function fetchScenarioDefinition(scriptUrl: string, sid: string): Promise<ScenarioDefinition> {
-  const data = await apiGet(scriptUrl, "getScenarioDefinition", { scenarioId: sid });
-  return (data.scenario || { sid, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }) as ScenarioDefinition;
-}
-
-export async function fetchUnreturnedItems(scriptUrl: string): Promise<UnreturnedItem[]> {
-  const data = await apiGet(scriptUrl, "getUnreturnedItems", {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as UnreturnedItem[];
-}
-
-export async function fetchMyBorrowedItems(scriptUrl: string, name: string, employeeId: string): Promise<UnreturnedItem[]> {
-  const data = await apiGet(scriptUrl, "getMyBorrowedItems", { name, employeeId });
-  return (data.items || []) as UnreturnedItem[];
-}
-
-export async function checkConfigDsRegistered(scriptUrl: string, name: string): Promise<boolean> {
-  const data = await apiGet(scriptUrl, "isConfigDsRegistered", { name });
-  return !!data.registered;
-}
-
-export async function postRecordBorrow(scriptUrl: string, borrowList: BorrowEntry[], clientVersion: string): Promise<BorrowResult> {
-  return (await apiPost(scriptUrl, "recordBorrow", { borrowList, clientVersion })) as BorrowResult;
-}
-
-export async function postProcessReturn(scriptUrl: string, returnRequests: ReturnRequest[], clientVersion: string): Promise<BorrowResult> {
-  return (await apiPost(scriptUrl, "processReturn", { returnRequests, clientVersion })) as BorrowResult;
-}
-
-/* ---------------- 데모 데이터 (미연동 시) ---------------- */
-export const DEMO_OBJECT_ITEMS: ObjectItem[] = [
-  { id: "000008", name: "fruit", sector: "Seoul-Root", rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", image: "", stock: 15, rented: 8 },
-  { id: "000019", name: "towel (정사각형 소형 행주)", sector: "Seoul-Root", rootSlot: "000098", category: "청소 및 위생용품", subcategory: "위생 및 타월", image: "", stock: 58, rented: 3 },
-  { id: "002900", name: "Water hose", sector: "Seoul-Root", rootSlot: "000184", category: "생활용품", subcategory: "기타", image: "", stock: 10, rented: 0 },
-  { id: "002884", name: "Mechanical Pencil", sector: "Seoul-Root", rootSlot: "000246", category: "사무용품", subcategory: "필기구", image: "", stock: 25, rented: 5 },
-  { id: "001531", name: "electronic scale", sector: "Seoul-Root", rootSlot: "000028", category: "전자기기", subcategory: "측정기기", image: "", stock: 4, rented: 1 },
-];
-
-/* ══════════ 열람 ↔ 대여 공용: 신원 & 장바구니 (localStorage) ══════════ */
-
-export interface BrowseIdentity { name: string; employeeId: string }
-export interface BrowseCartItem { id: string; name: string; quantity: number; rootSlot?: string }
-
-const IDENTITY_KEY = "wms_browse_identity";
-const CART_PREFIX = "wms_browse_cart:";
-
-export function identityKey(name: string, employeeId: string): string {
-  return `${String(name || "").trim()}|${String(employeeId || "").trim()}`;
-}
-
-export function saveIdentity(identity: BrowseIdentity): void {
-  try { localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity)); } catch {}
-}
-
-export function loadIdentity(): BrowseIdentity | null {
-  try {
-    const raw = localStorage.getItem(IDENTITY_KEY);
-    return raw ? (JSON.parse(raw) as BrowseIdentity) : null;
-  } catch { return null; }
-}
-
-export function saveBrowseCart(name: string, employeeId: string, items: BrowseCartItem[]): void {
-  try {
-    const k = CART_PREFIX + identityKey(name, employeeId);
-    if (items.length === 0) localStorage.removeItem(k);
-    else localStorage.setItem(k, JSON.stringify(items));
-  } catch {}
-}
-
-export function loadBrowseCart(name: string, employeeId: string): BrowseCartItem[] {
-  try {
-    const raw = localStorage.getItem(CART_PREFIX + identityKey(name, employeeId));
-    return raw ? (JSON.parse(raw) as BrowseCartItem[]) : [];
-  } catch { return []; }
-}
-
-export function clearBrowseCart(name: string, employeeId: string): void {
-  try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
-}
-
-/* ══════════ 공구 및 부품류 (공구 및 부품류 시트) 타입 & 헬퍼 ══════════ */
-
-export interface WarehouseItem {
-  rowIndex: number;
-  location: string;   // 예: "A-01", "F-02"
-  name: string;
-  photo: string;
-  stock: number | string | null;
-  spec: string;
-  note: string;
-  manager: string;
-  keywords?: string; // 한글 검색어 (검색 보조)
-  isConsumable?: boolean; // 소모성 물품 여부 — 대여/소모 중 무엇을 누르든 항상 소모로 처리
-}
-
-// 위치 문자열 "A-01" → { rack: "A", slot: "01" }
-export function parseRackSlot(loc: string | null | undefined): { rack: string; slot: string } {
-  const t = String(loc ?? "").trim().toUpperCase();
-  const parts = t.split("-");
-  if (parts.length < 2) return { rack: t, slot: "" };
-  return { rack: parts[0], slot: parts.slice(1).join("-") };
-}
-
-export function warehouseStockNum(stock: number | string | null): number {
-  if (stock === "" || stock === null || stock === undefined) return NaN; // N/A 취급
-  const n = Number(stock);
-  return isNaN(n) ? NaN : n;
-}
-
-export interface WarehouseCartItem {
-  rowIndex: number;
-  location: string;
-  name: string;
-  quantity: number;
-}
-
-const WH_CART_PREFIX = "wms_wh_cart:";
-
-export function saveWarehouseCart(name: string, employeeId: string, items: WarehouseCartItem[]): void {
-  try {
-    const k = WH_CART_PREFIX + identityKey(name, employeeId);
-    if (items.length === 0) localStorage.removeItem(k);
-    else localStorage.setItem(k, JSON.stringify(items));
-  } catch {}
-}
-
-export function loadWarehouseCart(name: string, employeeId: string): WarehouseCartItem[] {
-  try {
-    const raw = localStorage.getItem(WH_CART_PREFIX + identityKey(name, employeeId));
-    return raw ? (JSON.parse(raw) as WarehouseCartItem[]) : [];
-  } catch { return []; }
-}
-
-export function clearWarehouseCart(name: string, employeeId: string): void {
-  try { localStorage.removeItem(WH_CART_PREFIX + identityKey(name, employeeId)); } catch {}
-}
-
-// 창고 재고 조회 (인벤토리 시트만 읽는 경량 액션 — getAll 대비 훨씬 빠름)
-export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getWarehouseInventoryOnly", {}, { timeoutMs: 30000, retries: 1 });
-    return (data.inventory || []) as WarehouseItem[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      // 배포 버전이 이전 버전인 경우 getAll로 자동 폴백하여 재고 목록을 가져옵니다.
-      const data = await apiGet(scriptUrl, "getAll", {}, { timeoutMs: 30000, retries: 1 });
-      return (data.inventory || []) as WarehouseItem[];
-    }
-    throw err;
-  }
-}
-
-// 공구 및 부품류 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
-export async function postWarehouseRent(
-  scriptUrl: string,
-  payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
-): Promise<any> {
-  return apiPost(scriptUrl, "rentInventoryItem", payload);
-}
-
-export async function fetchWarehouseBorrowedItems(scriptUrl: string, name: string): Promise<any[]> {
-  const data = await apiGet(scriptUrl, "getWarehouseBorrowedItems", { name });
-  return (data.items || []) as any[];
-}
-
-/* ══════════ 시나리오 오브젝트 관리 (WMS 관리자용) ══════════ */
-
-export interface ScenarioObjectAdmin {
-  rowIndex: number;
-  id: string;
-  name: string;
-  sector: string;
-  rootSlot: string;
-  category: string;
-  subcategory: string;
-  image: string;
-  stock: number;
-  rented: number;
-  excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
-}
-
-export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
-  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as ScenarioObjectAdmin[];
-}
-
-export async function updateScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin> & { rowIndex: number }): Promise<any> {
-  return apiPost(scriptUrl, "updateScenarioObject", payload);
-}
-
-export async function addScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin>): Promise<any> {
-  return apiPost(scriptUrl, "addScenarioObject", payload);
-}
-
-export async function deleteScenarioObject(scriptUrl: string, rowIndex: number): Promise<any> {
-  return apiPost(scriptUrl, "deleteScenarioObject", { rowIndex });
-}
-
-/* ══════════ 재고 실사 기록 (관리자용) ══════════ */
-
-export interface StockAuditRecord {
-  auditedAt: string;
-  itemId: string;
-  itemName: string;
-  systemStock: number;
-  actualCount: number;
-  diff: number;
-  auditor: string;
-  note: string;
-}
-
-// itemId를 넘기면 해당 물품만, 생략하면 전체 실사 기록을 최신순으로 반환.
-export async function fetchStockAuditHistory(scriptUrl: string, itemId?: string): Promise<StockAuditRecord[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getStockAuditHistory", itemId ? { itemId } : {});
-    return (data.items || []) as StockAuditRecord[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) return [];
-    throw err;
-  }
-}
-
-export async function recordStockAudit(
-  scriptUrl: string,
-  payload: { itemId: string; itemName: string; systemStock: number; actualCount: number; auditor?: string; note?: string }
-): Promise<{ success: boolean; message?: string; record?: StockAuditRecord }> {
-  return apiPost(scriptUrl, "recordStockAudit", payload);
-}
-
-export interface StockFormulaStatus {
-  found: boolean;
-  stockIsFormula: boolean;
-  rentedIsFormula: boolean;
-}
-
-// 재고/대여중 열이 수식으로 되어 있으면 자동 갱신이 적용되지 않아, 실사 불일치의 흔한 원인이 된다.
-export async function fetchStockFormulaStatus(scriptUrl: string, itemId: string): Promise<StockFormulaStatus> {
-  try {
-    const data = await apiGet(scriptUrl, "getStockFormulaStatus", { itemId });
-    return (data.status || { found: false, stockIsFormula: false, rentedIsFormula: false }) as StockFormulaStatus;
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { found: false, stockIsFormula: false, rentedIsFormula: false };
-    }
-    throw err;
-  }
-}
-
-/* ══════════ 재고 변경 (사유 기록 포함, 관리자용) ══════════ */
-
-export interface StockChangeRecord {
-  changedAt: string;
-  category: string; // "공구 및 부품류" | "시나리오 물품"
-  id: string;
-  itemName: string;
-  oldStock: number;
-  newStock: number;
-  diff: number;
-  reason: string;
-  manager: string;
-}
-
-// 공구 및 부품류(category: "inventory") 또는 시나리오 물품(category: "scenario")의
-// 현재 재고를 직접 변경. 사유(reason)는 필수이며, 변경 이력이 별도 시트에 남는다.
-export async function adjustStock(
-  scriptUrl: string,
-  payload: { category: "inventory" | "scenario"; rowIndex: number; newStock: number; reason: string; manager?: string }
-): Promise<{ success: boolean; message?: string; warning?: string; oldStock?: number; newStock?: number; diff?: number }> {
-  return apiPost(scriptUrl, "adjustStock", payload);
-}
-
-// category/id를 생략하면 전체 변경 이력을 최신순으로 반환.
-export async function fetchStockChangeHistory(
-  scriptUrl: string,
-  category?: "inventory" | "scenario",
-  id?: string
-): Promise<StockChangeRecord[]> {
-  try {
-    const params: Record<string, string> = {};
-    if (category) params.category = category;
-    if (id) params.id = id;
-    const data = await apiGet(scriptUrl, "getStockChangeHistory", params);
-    return (data.items || []) as StockChangeRecord[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-/* ══════════ 물품 세트 (창고 물품 대여 시 여러 부품을 한 번에 담기) ══════════ */
-
-export interface ItemSet {
-  name: string;
-  items: { location: string; name: string; qty: number }[];
-}
-
-export async function fetchItemSets(scriptUrl: string): Promise<ItemSet[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getItemSets", {});
-    return (data.sets || []) as ItemSet[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-// originalName을 넘기면 그 이름의 기존 세트를 지우고 새 이름/구성으로 저장한다 (이름 변경 포함 수정).
-export async function saveItemSet(
-  scriptUrl: string,
-  set: { name: string; items: { location: string; name: string; qty: number }[]; originalName?: string }
-): Promise<{ success: boolean; message?: string }> {
-  return apiPost(scriptUrl, "saveItemSet", set);
-}
-
-export async function deleteItemSet(scriptUrl: string, name: string): Promise<{ success: boolean; message?: string }> {
-  return apiPost(scriptUrl, "deleteItemSet", { name });
-}
-
-/* ══════════ 좌석 배치도 (층별 유닛 맵 + Day/Night 조회) ══════════ */
-
-export interface SeatUnit {
-  row: number;
-  col: number;
-  label: string; // 예: "Unit 1"
-  exempt?: boolean; // 물품 종류 최대 보유 개수(10종류) 제한 예외 유닛
-}
-
-export interface SeatFloor {
-  id: string;   // 예: "B2"
-  name: string; // 표시용 이름 (id와 같아도 됨)
-  rows: number;
-  cols: number;
-  units: SeatUnit[];
-}
-
-export interface SeatMap {
-  floors: SeatFloor[];
-}
-
-export async function fetchSeatMap(scriptUrl: string): Promise<SeatMap> {
-  try {
-    const data = await apiGet(scriptUrl, "getSeatMap", {});
-    return (data.map || { floors: [] }) as SeatMap;
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { floors: [] };
-    }
-    throw err;
-  }
-}
-
-export async function saveSeatMap(scriptUrl: string, map: SeatMap): Promise<{ success: boolean; message?: string }> {
-  return apiPost(scriptUrl, "saveSeatMap", map);
-}
-
-export interface SeatOccupancyEntry {
-  timestamp: string;
-  borrowerName: string;
-  batchId: string;
-  sheetType: string;
-  shift: "day" | "night";
-  items: { name: string; qty: number; returned: boolean }[];
-  allReturned: boolean;
-}
-
-export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit: string, shift?: "day" | "night"): Promise<SeatOccupancyEntry[]> {
-  try {
-    const params: Record<string, string> = { floor, unit };
-    if (shift) params.shift = shift;
-    const data = await apiGet(scriptUrl, "getSeatOccupancy", params);
-    return (data.items || []) as SeatOccupancyEntry[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-/* ══════════ 물품 종류 최대 보유 개수 확인 ══════════ */
-
-export interface ActiveItemTypeInfo {
-  count: number;
-  max: number;
-  items: { id: string; name: string; quantity: number; borrowDate: string }[];
-}
-
-export async function fetchActiveItemTypeCount(scriptUrl: string, name: string): Promise<ActiveItemTypeInfo> {
-  try {
-    const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
-    return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { count: 0, max: 10, items: [] };
-    }
-    throw err;
-  }
-}
-
-// 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
-export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
-  const pa = String(la ?? "").toUpperCase().split("-");
-  const pb = String(lb ?? "").toUpperCase().split("-");
-  const ra = pa[0] || "", rb = pb[0] || "";
-  if (ra !== rb) return ra < rb ? -1 : 1;
-  let sa = parseInt(String(pa[1] ?? "").replace(/\D/g, ""), 10);
-  let sb = parseInt(String(pb[1] ?? "").replace(/\D/g, ""), 10);
-  if (isNaN(sa)) sa = 999999;
-  if (isNaN(sb)) sb = 999999;
-  return sa - sb;
-}
-
-/* ══════════ 시나리오 대여 대장 (반납완료 포함 전체 조회 + 재대여) ══════════ */
-
-export interface ScenarioLogEntry {
-  sheetType: "scenario" | "general";
-  rowIndex: number;
-  borrowerName: string;
-  scenarioId?: string;
-  itemLabel: string;
-  itemKind?: string;
-  location: string;
-  itemId: string;
-  itemName: string;
-  quantity: number;
-  borrowDate: string;
-  submitGroupKey?: string;
-  submitDisplay?: string;
-  borrowPurpose: string;
-  email: string;
-  batchId: string;
-  floor?: string; // 대여 시 입력한 층수
-  unit?: string;  // 대여 시 입력한 유닛
-  generalOption?: string;
-  returned: boolean;
-  returnDate?: string; // 반납 처리 시각 (대장 최신 활동순 정렬에 사용)
-  image: string;
-  stock: number;
-  rented: number;
-}
-
-export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioLogEntry[]> {
-  const data = await apiGet(scriptUrl, "getScenarioAllLogs", {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as ScenarioLogEntry[];
-}
-
-// 반납완료된 대여를 그대로 다시 대여 신청 (동일 물품/수량/대여자)
-export async function reBorrowScenarioLogs(
-  scriptUrl: string,
-  logs: ScenarioLogEntry[],
-  clientVersion: string,
-  target?: { name: string; affiliation?: string; employeeId?: string }
-): Promise<BorrowResult> {
-  // 대여자/이메일 기준으로 일반대여 항목으로 재구성 (재대여는 일반대여로 처리)
-  // target을 지정하면 원래 반납자가 아닌 다른 사람 명의로 재대여할 수 있다.
-  const first = logs[0];
-  const borrowList: BorrowEntry[] = [{
-    itemType: "general",
-    borrowerName: target?.name?.trim() || first.borrowerName,
-    affiliation: target?.affiliation || "",
-    employeeId: target?.employeeId?.trim() || "",
-    // 명의를 유지하는 재대여는 원래 로그에 저장된 이메일을 그대로 넘겨 Slack 태깅이 정확히 되도록 한다.
-    // 다른 사람 명의로 재대여하는 경우는 새로 지정된 사람 기준(affiliation/employeeId)으로 다시 계산해야 하므로 넘기지 않는다.
-    knownEmail: target ? undefined : (first.email || undefined),
-    borrowDate: nowString(),
-    borrowPurpose: first.borrowPurpose || "재대여",
-    generalOption: "재대여",
-    borrowedItems: logs.map((l) => ({ id: l.itemId, name: l.itemName, quantity: l.quantity })),
-  }];
-  return postRecordBorrow(scriptUrl, borrowList, clientVersion);
+  const inputStyle: React.CSSProperties = { padding: "9px 12px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", outline: "none" };
+
+  return (
+    <div className="smp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text }}>
+      <style>{`
+        @media (min-width: 900px) {
+          .smp-root { zoom: 1.15; }
+        }
+      `}</style>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card }}>
+        <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
+          <ArrowLeft size={15} /> 뒤로
+        </button>
+        <h1 style={{ fontSize: "17px", fontWeight: 800, margin: 0, flex: 1 }}>좌석 배치도 관리</h1>
+
+        {/* Day / Night 전환 */}
+        <div style={{ display: "flex", border: `1px solid ${C.border}`, borderRadius: "10px", overflow: "hidden" }}>
+          <button
+            onClick={() => setShift("day")}
+            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", border: "none", background: shift === "day" ? C.warn : C.card, color: shift === "day" ? "#fff" : C.label, cursor: "pointer", fontSize: "12.5px", fontWeight: 700 }}
+          >
+            <Sun size={14} /> Day Shift
+          </button>
+          <button
+            onClick={() => setShift("night")}
+            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", border: "none", borderLeft: `1px solid ${C.border}`, background: shift === "night" ? C.accent : C.card, color: shift === "night" ? "#fff" : C.label, cursor: "pointer", fontSize: "12.5px", fontWeight: 700 }}
+          >
+            <Moon size={14} /> Night Shift
+          </button>
+        </div>
+
+        {/* JSON 편집 / 동기화 버튼 */}
+        <button
+          onClick={openJsonModal}
+          style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.accent, cursor: "pointer", fontSize: "12.5px", fontWeight: 700 }}
+        >
+          <FileJson size={15} /> JSON 편집
+        </button>
+      </div>
+
+      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "24px 20px 80px" }}>
+        {/* 층 선택/관리 */}
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginBottom: "20px" }}>
+          {floors.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setActiveFloorId(f.id)}
+              style={{ padding: "9px 16px", borderRadius: "10px", border: `1.5px solid ${f.id === activeFloorId ? C.accent : C.border}`, background: f.id === activeFloorId ? C.accentSoft : C.card, color: f.id === activeFloorId ? C.accent : C.text, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+            >
+              {f.name || f.id}
+            </button>
+          ))}
+          <button onClick={addFloor} style={{ display: "flex", alignItems: "center", gap: "5px", padding: "9px 14px", borderRadius: "10px", border: `1.5px dashed ${C.accent}`, background: C.accentSoft, color: C.accent, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+            <Plus size={14} /> 층 추가
+          </button>
+          {saving ? <span style={{ fontSize: "12px", color: C.label }}>저장 중...</span> : null}
+        </div>
+
+        {loading ? (
+          <div style={{ background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "40px 0", color: C.label }}>
+              <div
+                style={{
+                  width: "26px", height: "26px", borderRadius: "50%",
+                  border: `3px solid ${C.border}`, borderTopColor: C.accent,
+                  animation: "smpSpin 0.8s linear infinite",
+                }}
+              />
+              <span style={{ fontSize: "13px", fontWeight: 600 }}>좌석 배치도를 불러오는 중...</span>
+              <style>{`@keyframes smpSpin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px" }}>
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i} style={{ height: "84px", borderRadius: "12px", background: C.cardSub, opacity: 0.6, animation: "smpPulse 1.2s ease-in-out infinite", animationDelay: `${(i % 4) * 0.1}s` }} />
+              ))}
+              <style>{`@keyframes smpPulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 0.8; } }`}</style>
+            </div>
+          </div>
+        ) : !activeFloor ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: C.label, fontSize: "13px" }}>
+            아직 등록된 층이 없습니다. "층 추가"로 시작해보세요.
+          </div>
+        ) : (
+          <div style={{ background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+              <input
+                value={activeFloor.name}
+                onChange={(e) => renameFloor(e.target.value)}
+                placeholder="층 이름 (예: B2)"
+                style={{ ...inputStyle, fontWeight: 700, fontSize: "14px", flex: "1 1 160px" }}
+              />
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button onClick={addRow} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>행 추가</button>
+                <button onClick={removeRow} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>행 제거</button>
+                <button onClick={addCol} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>열 추가</button>
+                <button onClick={removeCol} style={{ padding: "8px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>열 제거</button>
+              </div>
+              <button onClick={deleteFloor} style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 12px", borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
+                <Trash2 size={13} /> 층 삭제
+              </button>
+            </div>
+
+            <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "12px" }}>
+              빈 칸을 클릭하면 유닛이 생기고, 유닛을 다시 클릭하면 없어집니다. 유닛 이름은 칸 안 입력창에서 바로 바꿀 수 있어요. <b>∞</b> 버튼을 누르면 그 유닛을 물품 종류 최대 보유 개수 제한의 예외로 지정합니다 (주황색 테두리 = 예외 유닛).
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${activeFloor.cols}, 1fr)`, gap: "10px" }}>
+              {Array.from({ length: activeFloor.rows }).map((_, r) =>
+                Array.from({ length: activeFloor.cols }).map((_, c) => {
+                  const unit = activeFloor.units.find((u) => u.row === r && u.col === c);
+                  return unit ? (
+                    <div
+                      key={`${r}-${c}`}
+                      style={{ borderRadius: "12px", border: `1.5px solid ${unit.exempt ? C.warn : C.accent}`, background: unit.exempt ? C.warnSoft : C.accentSoft, padding: "10px", height: "84px", boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <input
+                          value={unit.label}
+                          onChange={(e) => renameUnit(r, c, e.target.value)}
+                          style={{ background: "transparent", border: "none", outline: "none", fontWeight: 800, fontSize: "13px", color: unit.exempt ? C.warn : C.accent, width: "100%", minWidth: 0 }}
+                        />
+                        <button
+                          onClick={() => toggleExempt(r, c)}
+                          title={unit.exempt ? "예외 해제 (종류 제한 적용)" : "예외 유닛으로 지정 (종류 제한 면제)"}
+                          style={{ flexShrink: 0, width: 20, height: 20, borderRadius: "5px", border: "none", background: unit.exempt ? C.warn : C.cardSub, color: unit.exempt ? "#fff" : C.label, cursor: "pointer", fontSize: "10px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}
+                        >
+                          ∞
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button
+                          onClick={() => openOccupancy(unit.label)}
+                          style={{ flex: 1, padding: "6px", borderRadius: "7px", border: "none", background: C.card, color: C.text, cursor: "pointer", fontSize: "11px", fontWeight: 700 }}
+                        >
+                          조회
+                        </button>
+                        <button
+                          onClick={() => toggleCell(r, c)}
+                          style={{ padding: "6px 8px", borderRadius: "7px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer" }}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      key={`${r}-${c}`}
+                      onClick={() => toggleCell(r, c)}
+                      style={{ borderRadius: "12px", border: `1.5px dashed ${C.border}`, height: "84px", boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", color: C.label, fontSize: "12px", cursor: "pointer" }}
+                    >
+                      + 유닛 추가
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 좌석 점유 조회 모달 */}
+      {occModal ? (
+        <div onClick={() => setOccModal(null)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(420px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card }}>
+              <div style={{ flex: 1 }}>
+                <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0 }}>{occModal.floor} · {occModal.unit}</h2>
+                <div style={{ fontSize: "12px", color: C.label, marginTop: "3px", display: "flex", alignItems: "center", gap: "5px" }}>
+                  {shift === "day" ? <Sun size={12} /> : <Moon size={12} />} {shift === "day" ? "Day Shift" : "Night Shift"}
+                </div>
+              </div>
+              <button onClick={() => setOccModal(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: "16px 20px" }}>
+              {occLoading ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "12px" }}>불러오는 중...</div>
+              ) : occEntries.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>이 시프트에 이 유닛에서 대여한 기록이 없습니다.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                  {occEntries.map((e, i) => (
+                    <div key={i} style={{ padding: "12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 800, fontSize: "13.5px", color: C.text, flex: 1 }}>
+                          <User size={13} /> {e.borrowerName || "(대여자 미상)"}
+                        </div>
+                        <span
+                          style={{
+                            fontSize: "10.5px", fontWeight: 800, borderRadius: "999px", padding: "2px 9px", flexShrink: 0,
+                            color: e.allReturned ? C.success : C.warn,
+                            background: e.allReturned ? C.successSoft : C.warnSoft,
+                          }}
+                        >
+                          {e.allReturned ? "반납 완료" : "미반납"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "11px", color: C.label, marginBottom: "8px" }}>
+                        <Clock size={11} /> {e.timestamp}
+                      </div>
+                      {e.items.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+                          {e.items.map((it, j) => (
+                            <div key={j} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: C.text }}>
+                              <Package size={11} style={{ color: C.label, flexShrink: 0 }} /> {it.name} <span style={{ color: C.label }}>x{it.qty}</span>
+                              <span style={{ fontSize: "10px", fontWeight: 700, color: it.returned ? C.success : C.warn, marginLeft: "auto" }}>
+                                {it.returned ? "반납됨" : "미반납"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: "11px", color: C.label }}>대여 물품 정보 없음</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* JSON 직접 편집 및 동기화 모달 */}
+      {jsonModalOpen ? (
+        <div onClick={() => setJsonModalOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px, 100%)", maxHeight: "85vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, borderTopLeftRadius: "16px", borderTopRightRadius: "16px" }}>
+              <FileJson size={18} style={{ color: C.accent }} />
+              <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, flex: 1 }}>좌석배치도 JSON 직접 편집</h2>
+              <button onClick={() => setJsonModalOpen(false)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: "20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ fontSize: "12px", color: C.label, lineHeight: "1.5" }}>
+                좌석배치도 JSON 데이터입니다. 저장된 JSON을 직접 확인하거나, 새로 편집/붙여넣기한 뒤 <b>적용 및 저장</b> 버튼을 누르면 구글 시트와 앱 전체에 반영됩니다.
+              </div>
+              <textarea
+                value={jsonText}
+                onChange={(e) => setJsonText(e.target.value)}
+                rows={15}
+                style={{
+                  width: "100%", padding: "12px", borderRadius: "10px", border: `1px solid ${C.border}`,
+                  background: C.cardSub, color: C.text, fontFamily: "monospace", fontSize: "12px",
+                  outline: "none", resize: "vertical", boxSizing: "border-box"
+                }}
+              />
+              {jsonErr ? (
+                <div style={{ color: C.error, fontSize: "12px", fontWeight: 600 }}>{jsonErr}</div>
+              ) : null}
+              <div style={{ display: "flex", gap: "8px", justifyContent: "space-between", alignItems: "center", marginTop: "8px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    onClick={handleCopyJson}
+                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
+                  >
+                    {jsonCopied ? <Check size={14} style={{ color: C.success }} /> : <Copy size={14} />}
+                    {jsonCopied ? "복사완료!" : "JSON 복사"}
+                  </button>
+                  <button
+                    onClick={handleResetDefaultJson}
+                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.warn, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
+                  >
+                    <RotateCcw size={14} /> 기본 JSON 복구
+                  </button>
+                </div>
+                <button
+                  onClick={handleApplyJson}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 18px", borderRadius: "9px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+                >
+                  적용 및 저장
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
