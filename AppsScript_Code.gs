@@ -1499,7 +1499,7 @@ function getObjectItems() {
   if (lastRow < 2) return [];
 
   var lastCol = sheet.getLastColumn();
-  var colsToRead = Math.min(lastCol, 9);
+  var colsToRead = Math.min(lastCol, 10);
   if (colsToRead < 1) return [];
 
   var data = sheet.getRange(2, 1, lastRow - 1, colsToRead).getValues();
@@ -1523,6 +1523,10 @@ function getObjectItems() {
     if (colsToRead > 8) {
       rented = (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0;
     }
+    var excludeFromRanking = false;
+    if (colsToRead > 9) {
+      excludeFromRanking = String(row[9] || "").trim().toUpperCase() === "Y";
+    }
 
     result.push({
       id: id,
@@ -1533,7 +1537,8 @@ function getObjectItems() {
       subcategory: subcategory,
       image: image,
       stock: stock,
-      rented: rented
+      rented: rented,
+      excludeFromRanking: excludeFromRanking
     });
   }
   result.sort(function (a, b) {
@@ -1548,7 +1553,7 @@ function getObjectItems() {
 
 // ─────────────────────────────────────────────
 // 시나리오 오브젝트 관리 (WMS 관리자 모드용)
-// 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9)
+// 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9) 랭킹제외(10/J열)
 // 사진: 창고물품과 동일하게 data:image/... 가 오면 드라이브 업로드 후 링크 저장
 // ─────────────────────────────────────────────
 function getScenarioImageFolderId_() {
@@ -1561,7 +1566,8 @@ function getScenarioObjectsForAdmin_() {
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+  var lastCol = Math.max(sheet.getLastColumn(), 10);
+  var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var result = [];
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
@@ -1576,7 +1582,8 @@ function getScenarioObjectsForAdmin_() {
       subcategory: String(row[5] || "").trim(),
       image: String(row[6] || "").trim(),
       stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0,
-      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0
+      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0,
+      excludeFromRanking: String(row[9] || "").trim().toUpperCase() === "Y"
     });
   }
   return result;
@@ -1597,7 +1604,8 @@ function updateScenarioObject_(item) {
   if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
   var rowIndex = Number(item.rowIndex);
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
-  var range = sheet.getRange(rowIndex, 1, 1, 9);
+  var lastCol = Math.max(sheet.getLastColumn(), 10);
+  var range = sheet.getRange(rowIndex, 1, 1, lastCol);
   var cur = range.getValues()[0];
 
   if (item.id !== undefined) cur[0] = padSlot_(String(item.id).trim());
@@ -1614,6 +1622,9 @@ function updateScenarioObject_(item) {
       cur[7] = (item.stock === "" || item.stock == null) ? "" : Number(item.stock);
     }
   }
+  if (item.excludeFromRanking !== undefined) {
+    cur[9] = item.excludeFromRanking ? "Y" : "N";
+  }
   range.setValues([cur]);
   return {
     rowIndex: rowIndex, id: padSlot_(String(cur[0]).trim()), name: String(cur[1]).trim(),
@@ -1621,7 +1632,8 @@ function updateScenarioObject_(item) {
     category: String(cur[4] || "").trim(), subcategory: String(cur[5] || "").trim(),
     image: String(cur[6] || "").trim(),
     stock: (cur[7] !== "" && cur[7] !== undefined) ? Number(cur[7]) : 0,
-    rented: (cur[8] !== "" && cur[8] !== undefined) ? Number(cur[8]) : 0
+    rented: (cur[8] !== "" && cur[8] !== undefined) ? Number(cur[8]) : 0,
+    excludeFromRanking: String(cur[9] || "").trim().toUpperCase() === "Y"
   };
 }
 
@@ -1640,10 +1652,11 @@ function addScenarioObject_(item) {
     item.subcategory || "",
     img,
     (item.stock === "" || item.stock == null) ? 0 : Number(item.stock),
-    0
+    0,
+    item.excludeFromRanking ? "Y" : "N"
   ];
-  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
-  return { rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3], category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0 };
+  sheet.getRange(nextRow, 1, 1, 10).setValues([rowValues]);
+  return { rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3], category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0, excludeFromRanking: rowValues[9] === "Y" };
 }
 
 function deleteScenarioObject_(rowIndex) {
@@ -2277,17 +2290,42 @@ function getSeatLocationMap_(ss) {
   try {
     var sheet = ss.getSheetByName("대여위치기록");
     if (sheet && sheet.getLastRow() > 1) {
-      var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
+      var lastCol = Math.max(sheet.getLastColumn(), 6);
+      var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, lastCol).getValues();
       data.forEach(function (row) {
-        var batchId = String(row[0] || "").trim();
-        if (batchId) {
-          locMap[batchId] = {
-            borrower: String(row[1] || "").trim(),
-            floor: String(row[2] || "").trim(),
-            unit: String(row[3] || "").trim(),
-            timestamp: formatDateValue_(row[4])
-          };
+        var v1 = String(row[0] || "").trim();
+        var borrower = String(row[1] || "").trim();
+        var floor = String(row[2] || "").trim();
+        var unit = String(row[3] || "").trim();
+        var v5 = String(row[4] || "").trim();
+
+        var isV1Date = /^\d{4}[.\-\/]/.test(v1) || v1.indexOf("오전") !== -1 || v1.indexOf("오후") !== -1;
+        var isV5Date = /^\d{4}[.\-\/]/.test(v5) || v5.indexOf("오전") !== -1 || v5.indexOf("오후") !== -1;
+
+        var primaryBatchId = "";
+        var ts = "";
+
+        if (isV1Date && v5) {
+          primaryBatchId = v5;
+          ts = v1;
+        } else if (isV5Date && v1) {
+          primaryBatchId = v1;
+          ts = v5;
+        } else {
+          primaryBatchId = v1;
+          ts = v5;
         }
+
+        var entry = {
+          borrower: borrower,
+          floor: floor,
+          unit: unit,
+          timestamp: formatDateValue_(ts || v1 || v5)
+        };
+
+        if (primaryBatchId) locMap[primaryBatchId] = entry;
+        if (v1 && v1 !== primaryBatchId) locMap[v1] = entry;
+        if (v5 && v5 !== primaryBatchId) locMap[v5] = entry;
       });
     }
   } catch (e) {}
@@ -2935,9 +2973,65 @@ function getSeatMap_(ss) {
       val = PropertiesService.getScriptProperties().getProperty("SEAT_MAP_JSON") || "";
     } catch (e) {}
   }
-  var map = { floors: [] };
+  var map = null;
   if (val) {
     try { map = JSON.parse(val); } catch (e) {}
+  }
+  if (!map || !map.floors || map.floors.length === 0) {
+    map = {
+      floors: [
+        {
+          id: "B2",
+          name: "B2",
+          rows: 4,
+          cols: 5,
+          units: [
+            { row: 0, col: 0, label: "Unit 4 (Franka)" },
+            { row: 0, col: 1, label: "Unit 5 (Franka)" },
+            { row: 0, col: 2, label: "Unit 7 (Franka)" },
+            { row: 2, col: 0, label: "Unit 3 (Franka)" },
+            { row: 2, col: 1, label: "Unit 2 (Franka)" },
+            { row: 0, col: 3, label: "Unit 8 (Franka)" },
+            { row: 3, col: 4, label: "Unit 1 (Franka)" }
+          ]
+        },
+        {
+          id: "B1",
+          name: "B1",
+          rows: 4,
+          cols: 4,
+          units: [
+            { row: 0, col: 0, label: "Unit 9 (Vega)" },
+            { row: 1, col: 1, label: "Unit 10 (Vega)" },
+            { row: 1, col: 3, label: "Unit 5 (Vega)" },
+            { row: 2, col: 3, label: "Unit 6 (Vega)" },
+            { row: 3, col: 3, label: "Unit 7 (Vega)" },
+            { row: 3, col: 1, label: "Unit 8 (Vega)" }
+          ]
+        },
+        {
+          id: "2F",
+          name: "2F",
+          rows: 5,
+          cols: 5,
+          units: [
+            { row: 0, col: 0, label: "Unit 4" },
+            { row: 1, col: 0, label: "Unit 3" },
+            { row: 1, col: 1, label: "Unit 1" },
+            { row: 4, col: 0, label: "Unit 6" },
+            { row: 2, col: 3, label: "Human Unit 5" },
+            { row: 3, col: 3, label: "Human Unit 6" },
+            { row: 0, col: 4, label: "Human Unit 1" },
+            { row: 1, col: 4, label: "Human Unit 2" },
+            { row: 2, col: 4, label: "Human Unit 3" },
+            { row: 3, col: 4, label: "Human Unit 4" }
+          ]
+        }
+      ]
+    };
+    try {
+      sheet.getRange(2, 1).setValue(JSON.stringify(map));
+    } catch (e) {}
   }
   return map;
 }
@@ -2952,15 +3046,69 @@ function saveSeatMap_(ss, map) {
   return { success: true };
 }
 
+function getShiftType_(borrowDateStr) {
+  if (!borrowDateStr) return "day";
+  var str = String(borrowDateStr).trim();
+  var hours = -1;
+  var minutes = -1;
+
+  var krTimeMatch = str.match(/(오전|오후)\s*(\d{1,2}):(\d{1,2})/);
+  if (krTimeMatch) {
+    var isPm = krTimeMatch[1] === "오후";
+    var h = parseInt(krTimeMatch[2], 10);
+    var m = parseInt(krTimeMatch[3], 10);
+    if (isPm && h < 12) h += 12;
+    if (!isPm && h === 12) h = 0;
+    hours = h;
+    minutes = m;
+  } else {
+    var timeMatch = str.match(/(\d{1,2}):(\d{2})/);
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1], 10);
+      minutes = parseInt(timeMatch[2], 10);
+    }
+  }
+
+  if (hours < 0) return "day";
+
+  var totalMin = hours * 60 + minutes;
+  var dayStartMin = 8 * 60 + 50;  // 08:50 (530)
+  var dayEndMin = 17 * 60 + 45;   // 17:45 (1065)
+  var nightEndMin = 1 * 60 + 0;   // 01:00 (60)
+
+  if (totalMin >= dayStartMin && totalMin <= dayEndMin) {
+    return "day";
+  }
+  if (totalMin > dayEndMin || totalMin <= nightEndMin) {
+    return "night";
+  }
+  return "day";
+}
+
 function getSeatOccupancy_(ss, floor, unit, shift) {
   var unreturned = getUnreturnedItems();
   var batchMap = {};
   var batchOrder = [];
 
+  var targetFloor = String(floor || "").trim().toUpperCase();
+  var targetUnit = String(unit || "").trim().toUpperCase();
+  var cleanTargetUnit = targetUnit.replace(/\s*\(.*?\)\s*/g, "").trim();
+  var reqShift = String(shift || "").trim().toLowerCase();
+
   for (var i = 0; i < unreturned.length; i++) {
     var item = unreturned[i];
-    if (String(item.floor || "").trim().toUpperCase() === String(floor || "").trim().toUpperCase() &&
-        String(item.unit || "").trim().toUpperCase() === String(unit || "").trim().toUpperCase()) {
+    var itemFloor = String(item.floor || "").trim().toUpperCase();
+    var itemUnit = String(item.unit || "").trim().toUpperCase();
+    var cleanItemUnit = itemUnit.replace(/\s*\(.*?\)\s*/g, "").trim();
+
+    var floorMatch = (itemFloor === targetFloor);
+    var unitMatch = (itemUnit === targetUnit) || (cleanItemUnit.length > 0 && cleanItemUnit === cleanTargetUnit);
+
+    if (floorMatch && unitMatch) {
+      var itemShift = getShiftType_(item.borrowDate);
+      if (reqShift === "day" && itemShift !== "day") continue;
+      if (reqShift === "night" && itemShift !== "night") continue;
+
       var key = item.batchId || (item.borrowerName + "_" + item.borrowDate);
       if (!batchMap[key]) {
         batchMap[key] = {
@@ -2968,7 +3116,7 @@ function getSeatOccupancy_(ss, floor, unit, shift) {
           borrowerName: item.borrowerName,
           batchId: item.batchId || "",
           sheetType: item.sheetType,
-          shift: shift || "day",
+          shift: itemShift,
           items: [],
           allReturned: false
         };

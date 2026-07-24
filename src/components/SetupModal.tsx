@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 // @ts-ignore
-import scriptCode from "../../AppsScript_Unified.gs?raw";
+import scriptCode from "../../AppsScript_Code.gs?raw";
 
 interface SetupModalProps {
   scriptUrl: string;
