@@ -54,31 +54,15 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const DEFAULT_FLOORS: SeatFloor[] = [
-    { id: "B2", name: "B2층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "B1", name: "B1층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "1F", name: "1층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "2F", name: "2층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-  ];
-
   function load() {
-    if (!connected || !scriptUrl) {
-      setFloors(DEFAULT_FLOORS);
-      setActiveFloorId("B2");
-      return;
-    }
+    if (!connected || !scriptUrl) return;
     setLoading(true);
     fetchSeatMap(scriptUrl)
       .then((m) => {
-        const loadedFloors = (m.floors && m.floors.length > 0) ? m.floors : DEFAULT_FLOORS;
-        setFloors(loadedFloors);
-        setActiveFloorId(loadedFloors[0].id);
+        setFloors(m.floors || []);
+        if (m.floors && m.floors.length && !activeFloorId) setActiveFloorId(m.floors[0].id);
       })
-      .catch((e) => {
-        showToast(`좌석맵을 불러오지 못했습니다: ${e.message}`, "error");
-        setFloors(DEFAULT_FLOORS);
-        setActiveFloorId("B2");
-      })
+      .catch((e) => showToast(`좌석맵을 불러오지 못했습니다: ${e.message}`, "error"))
       .finally(() => setLoading(false));
   }
 

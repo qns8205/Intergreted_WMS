@@ -58,8 +58,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [reborrowSameName, setReborrowSameName] = useState(true); // true: 원래 반납자 명의 유지, false: 다른 사람 명의로 재대여
   const [showStats, setShowStats] = useState(false);
   const [visibleCount, setVisibleCount] = useState(30);
-  const [viewMode, setViewMode] = useState<"log" | "byItem">("log");
-  const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
 
   // 필터가 바뀌면 페이지를 처음으로 되돌린다.
   useEffect(() => { setVisibleCount(30); }, [search, kindFilter, statusFilter, borrowerFilter]);
@@ -150,26 +148,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     });
     return Array.from(map.values());
   }, [filtered]);
-
-  // 물품별 보기: 현재 미반납(대여 중)인 항목만 물품 기준으로 묶는다.
-  const byItemGroups = useMemo(() => {
-    const map = new Map<string, {
-      key: string; itemName: string; itemId: string; location: string; totalQty: number;
-      entries: { borrowerName: string; quantity: number; floor?: string; unit?: string; borrowDate: string; scenarioId?: string; sheetType: string }[];
-    }>();
-    logs.forEach((it) => {
-      if (it.returned) return;
-      const nm = String(it.itemName || it.itemLabel || "").trim() || "(물품 미등록)";
-      const key = it.itemId ? `id:${it.itemId}` : `nm:${nm}`;
-      if (!map.has(key)) map.set(key, { key, itemName: nm, itemId: it.itemId || "", location: it.location || "", totalQty: 0, entries: [] });
-      const g = map.get(key)!;
-      g.totalQty += it.quantity || 1;
-      g.entries.push({ borrowerName: it.borrowerName, quantity: it.quantity || 1, floor: it.floor, unit: it.unit, borrowDate: it.borrowDate, scenarioId: it.scenarioId, sheetType: it.sheetType });
-    });
-    return Array.from(map.values()).sort((a, b) => b.totalQty - a.totalQty || a.itemName.localeCompare(b.itemName));
-  }, [logs]);
-
-  const selectedItemGroup = useMemo(() => byItemGroups.find((g) => g.key === selectedItemKey) || null, [byItemGroups, selectedItemKey]);
 
   // ── 분석: 대여자별·기간별 집계 ──
   const stats = useMemo(() => {
@@ -314,61 +292,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         }
       `}</style>
 
-      {/* 내부 탭: 대여 로그 / 물품별 보기 */}
-      <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
-        {[
-          { key: "log" as const, label: "대여 로그" },
-          { key: "byItem" as const, label: "현재 대여 물품별 보기" },
-        ].map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setViewMode(t.key)}
-            style={{
-              padding: "8px 16px", borderRadius: "10px",
-              border: `1px solid ${viewMode === t.key ? C.accent : C.border}`,
-              background: viewMode === t.key ? C.accentSoft : C.card,
-              color: viewMode === t.key ? C.accentText : C.label,
-              cursor: "pointer", fontSize: "12.5px", fontWeight: 700,
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {viewMode === "byItem" ? (
-        <div>
-          <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
-            현재 대여 중인 물품 <b style={{ color: C.accentText }}>{byItemGroups.length}종</b>
-          </div>
-          {loading && !loaded ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
-          ) : byItemGroups.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
-              {byItemGroups.map((g) => (
-                <div
-                  key={g.key}
-                  onClick={() => setSelectedItemKey(g.key)}
-                  style={{ padding: "14px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, cursor: "pointer", display: "flex", flexDirection: "column", gap: "6px" }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <Package size={15} style={{ color: C.label, flexShrink: 0 }} />
-                    <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, wordBreak: "break-word", flex: 1 }}>{g.itemName}</div>
-                  </div>
-                  {g.itemId ? <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>[{padSlot(g.itemId)}]</div> : null}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px" }}>
-                    <span style={{ fontSize: "11px", color: C.label }}>{new Set(g.entries.map((e) => e.borrowerName)).size}명에게 대여 중</span>
-                    <span style={{ fontSize: "13px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px" }}>{g.totalQty}개</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <>
       {/* 요약 통계 */}
       <div style={{ display: "flex", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
         {[
@@ -558,45 +481,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             >
               {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여 신청</>}
             </button>
-          </div>
-        </div>
-      ) : null}
-      </>
-      )}
-
-      {/* 물품별 보기: 대여자 상세 모달 */}
-      {selectedItemGroup ? (
-        <div onClick={() => setSelectedItemKey(null)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(480px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "22px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
-              <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, flex: 1 }}>{selectedItemGroup.itemName}</h2>
-              <button onClick={() => setSelectedItemKey(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
-            </div>
-            <div style={{ fontSize: "12px", color: C.label, marginBottom: "16px" }}>
-              총 <b style={{ color: C.accentText }}>{selectedItemGroup.totalQty}개</b>가 <b style={{ color: C.accentText }}>{new Set(selectedItemGroup.entries.map((e) => e.borrowerName)).size}명</b>에게 대여 중
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              {selectedItemGroup.entries
-                .sort((a, b) => (a.borrowDate < b.borrowDate ? 1 : -1))
-                .map((e, idx) => (
-                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                        <span style={{ fontWeight: 700, fontSize: "13px", color: C.text }}>{e.borrowerName || "(대여자 미상)"}</span>
-                        {e.floor || e.unit ? (
-                          <span style={{ fontSize: "10.5px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>
-                            {[e.floor, e.unit].filter(Boolean).join(" · ")}
-                          </span>
-                        ) : null}
-                      </div>
-                      <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
-                        {e.sheetType === "scenario" ? `SID 대여${e.scenarioId ? ` (${e.scenarioId})` : ""}` : "일반 대여"} · {e.borrowDate || "-"}
-                      </div>
-                    </div>
-                    <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{e.quantity}개</span>
-                  </div>
-                ))}
-            </div>
           </div>
         </div>
       ) : null}

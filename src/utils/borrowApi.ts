@@ -56,8 +56,6 @@ export interface UnreturnedItem {
   borrowPurpose: string;
   email: string;
   batchId: string;
-  floor?: string; // 대여 시 입력한 층수 (대여위치기록 시트에서 배치ID로 조회)
-  unit?: string;  // 대여 시 입력한 유닛
   generalOption?: string;
   image: string;
   stock: number;
@@ -393,17 +391,8 @@ export function clearWarehouseCart(name: string, employeeId: string): void {
 
 // 창고 재고 조회 (인벤토리 시트만 읽는 경량 액션 — getAll 대비 훨씬 빠름)
 export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getWarehouseInventoryOnly", {}, { timeoutMs: 30000, retries: 1 });
-    return (data.inventory || []) as WarehouseItem[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      // 배포 버전이 이전 버전인 경우 getAll로 자동 폴백하여 재고 목록을 가져옵니다.
-      const data = await apiGet(scriptUrl, "getAll", {}, { timeoutMs: 30000, retries: 1 });
-      return (data.inventory || []) as WarehouseItem[];
-    }
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getWarehouseInventoryOnly", {}, { timeoutMs: 30000, retries: 1 });
+  return (data.inventory || []) as WarehouseItem[];
 }
 
 // 공구 및 부품류 대여/반납 (WMS rentInventoryItem 재사용, Slack 미발송)
@@ -467,13 +456,8 @@ export interface StockAuditRecord {
 
 // itemId를 넘기면 해당 물품만, 생략하면 전체 실사 기록을 최신순으로 반환.
 export async function fetchStockAuditHistory(scriptUrl: string, itemId?: string): Promise<StockAuditRecord[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getStockAuditHistory", itemId ? { itemId } : {});
-    return (data.items || []) as StockAuditRecord[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) return [];
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getStockAuditHistory", itemId ? { itemId } : {});
+  return (data.items || []) as StockAuditRecord[];
 }
 
 export async function recordStockAudit(
@@ -491,15 +475,8 @@ export interface StockFormulaStatus {
 
 // 재고/대여중 열이 수식으로 되어 있으면 자동 갱신이 적용되지 않아, 실사 불일치의 흔한 원인이 된다.
 export async function fetchStockFormulaStatus(scriptUrl: string, itemId: string): Promise<StockFormulaStatus> {
-  try {
-    const data = await apiGet(scriptUrl, "getStockFormulaStatus", { itemId });
-    return (data.status || { found: false, stockIsFormula: false, rentedIsFormula: false }) as StockFormulaStatus;
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { found: false, stockIsFormula: false, rentedIsFormula: false };
-    }
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getStockFormulaStatus", { itemId });
+  return (data.status || { found: false, stockIsFormula: false, rentedIsFormula: false }) as StockFormulaStatus;
 }
 
 /* ══════════ 재고 변경 (사유 기록 포함, 관리자용) ══════════ */
@@ -531,18 +508,11 @@ export async function fetchStockChangeHistory(
   category?: "inventory" | "scenario",
   id?: string
 ): Promise<StockChangeRecord[]> {
-  try {
-    const params: Record<string, string> = {};
-    if (category) params.category = category;
-    if (id) params.id = id;
-    const data = await apiGet(scriptUrl, "getStockChangeHistory", params);
-    return (data.items || []) as StockChangeRecord[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
+  const params: Record<string, string> = {};
+  if (category) params.category = category;
+  if (id) params.id = id;
+  const data = await apiGet(scriptUrl, "getStockChangeHistory", params);
+  return (data.items || []) as StockChangeRecord[];
 }
 
 /* ══════════ 물품 세트 (창고 물품 대여 시 여러 부품을 한 번에 담기) ══════════ */
@@ -553,15 +523,8 @@ export interface ItemSet {
 }
 
 export async function fetchItemSets(scriptUrl: string): Promise<ItemSet[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getItemSets", {});
-    return (data.sets || []) as ItemSet[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getItemSets", {});
+  return (data.sets || []) as ItemSet[];
 }
 
 // originalName을 넘기면 그 이름의 기존 세트를 지우고 새 이름/구성으로 저장한다 (이름 변경 포함 수정).
@@ -598,15 +561,8 @@ export interface SeatMap {
 }
 
 export async function fetchSeatMap(scriptUrl: string): Promise<SeatMap> {
-  try {
-    const data = await apiGet(scriptUrl, "getSeatMap", {});
-    return (data.map || { floors: [] }) as SeatMap;
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { floors: [] };
-    }
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getSeatMap", {});
+  return (data.map || { floors: [] }) as SeatMap;
 }
 
 export async function saveSeatMap(scriptUrl: string, map: SeatMap): Promise<{ success: boolean; message?: string }> {
@@ -624,17 +580,10 @@ export interface SeatOccupancyEntry {
 }
 
 export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit: string, shift?: "day" | "night"): Promise<SeatOccupancyEntry[]> {
-  try {
-    const params: Record<string, string> = { floor, unit };
-    if (shift) params.shift = shift;
-    const data = await apiGet(scriptUrl, "getSeatOccupancy", params);
-    return (data.items || []) as SeatOccupancyEntry[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
+  const params: Record<string, string> = { floor, unit };
+  if (shift) params.shift = shift;
+  const data = await apiGet(scriptUrl, "getSeatOccupancy", params);
+  return (data.items || []) as SeatOccupancyEntry[];
 }
 
 /* ══════════ 물품 종류 최대 보유 개수 확인 ══════════ */
@@ -646,15 +595,8 @@ export interface ActiveItemTypeInfo {
 }
 
 export async function fetchActiveItemTypeCount(scriptUrl: string, name: string): Promise<ActiveItemTypeInfo> {
-  try {
-    const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
-    return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { count: 0, max: 10, items: [] };
-    }
-    throw err;
-  }
+  const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
+  return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
 }
 
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
@@ -689,8 +631,6 @@ export interface ScenarioLogEntry {
   borrowPurpose: string;
   email: string;
   batchId: string;
-  floor?: string; // 대여 시 입력한 층수
-  unit?: string;  // 대여 시 입력한 유닛
   generalOption?: string;
   returned: boolean;
   returnDate?: string; // 반납 처리 시각 (대장 최신 활동순 정렬에 사용)

@@ -108,40 +108,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [seatMapLoaded, setSeatMapLoaded] = useState(false);
   const [selFloor, setSelFloor] = useState("");
   const [selUnit, setSelUnit] = useState("");
-  const [customUnit, setCustomUnit] = useState("");
-
-  const DEFAULT_SEAT_MAP = useMemo<SeatFloor[]>(() => [
-    {
-      id: "B2",
-      name: "B2층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "B1",
-      name: "B1층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "1F",
-      name: "1층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "2F",
-      name: "2층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    }
-  ], []);
-
-  const displaySeatMap = useMemo(() => (seatMap && seatMap.length > 0 ? seatMap : DEFAULT_SEAT_MAP), [seatMap, DEFAULT_SEAT_MAP]);
   // 물품 종류 최대 보유 개수 제한 관련 상태
   const [activeTypeInfo, setActiveTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
   const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
@@ -434,22 +400,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return validateSeatLocation();
   }
 
-  function parseBorrowDateTs(str: string): number {
-    if (!str) return Date.now();
-    let clean = String(str).trim().replace(/\./g, "-").replace(/\s+/g, " ");
-    clean = clean.replace(/-\s*/g, "-").trim();
-    const t1 = new Date(clean.replace(" ", "T")).getTime();
-    if (!isNaN(t1)) return t1;
-    const t2 = new Date(clean).getTime();
-    if (!isNaN(t2)) return t2;
-    return Date.now();
-  }
-
-  // 층수/유닛 입력을 필수로 검증한다.
+  // 관리자가 좌석맵을 하나라도 등록해뒀다면 층수/유닛 입력을 필수로 요구한다.
+  // (좌석맵이 아예 설정 안 된 조직은 이 필드 자체를 안 보여주고 막지도 않는다.)
   function validateSeatLocation(): boolean {
+    if (seatMap.length === 0) return true;
     if (!selFloor) { showToast("층수를 선택해주세요.", "warn"); return false; }
-    const finalUnit = selUnit === "custom" ? customUnit.trim() : selUnit.trim();
-    if (!finalUnit) { showToast("유닛을 선택하거나 직접 입력해주세요.", "warn"); return false; }
+    if (!selUnit) { showToast("유닛을 선택해주세요.", "warn"); return false; }
     return true;
   }
 
@@ -480,7 +436,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         const now = Date.now();
         const overdue = info.items
           .map((it) => {
-            const t = parseBorrowDateTs(it.borrowDate);
+            const t = new Date(it.borrowDate.replace(" ", "T")).getTime();
             const hoursAgo = isNaN(t) ? 0 : (now - t) / (1000 * 60 * 60);
             return { ...it, hoursAgo };
           })
@@ -628,12 +584,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           return;
         }
       }
-      const finalUnit = (selUnit === "custom" ? customUnit.trim() : selUnit.trim()) || undefined;
       borrowList.push({
         itemType: "general", borrowerName: name, ...contact,
         borrowedItems: cart.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity })),
         generalOption, borrowDate: nowStr, borrowPurpose: purposeGeneral,
-        floor: selFloor || undefined, unit: finalUnit,
+        floor: selFloor || undefined, unit: selUnit || undefined,
       });
     } else {
       if (sidCart.some((e) => e.loading)) { showToast("Scenario 시트의 필요 물품을 불러오는 중입니다. 잠시 후 다시 시도해주세요.", "warn"); return; }
@@ -664,7 +619,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           return;
         }
       }
-      const finalUnit = (selUnit === "custom" ? customUnit.trim() : selUnit.trim()) || undefined;
       sidCart.forEach((entry) => {
         const scenario = entry.scenario || ({ items: [], syncNeeded: true } as any);
         borrowList.push({
@@ -674,7 +628,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           additionalItems,
           syncNeeded: !!scenario.syncNeeded,
           borrowDate: nowStr, borrowPurpose: purposeScenario,
-          floor: selFloor || undefined, unit: finalUnit,
+          floor: selFloor || undefined, unit: selUnit || undefined,
         });
       });
     }
@@ -1552,74 +1506,49 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             ) : null}
 
-            <div style={{ marginBottom: "16px" }}>
-              <label style={labelStyle}>좌석 위치 (층수 및 유닛) <span style={{ color: C.error }}>*</span></label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                <select
-                  value={selFloor}
-                  onChange={(e) => { setSelFloor(e.target.value); setSelUnit(""); setCustomUnit(""); }}
-                  style={inputStyle}
-                >
-                  <option value="">층수 선택</option>
-                  {displaySeatMap.map((f) => <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>)}
-                </select>
-                <select
-                  value={selUnit}
-                  onChange={(e) => setSelUnit(e.target.value)}
-                  disabled={!selFloor}
-                  style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
-                >
-                  <option value="">유닛 선택</option>
-                  {[...(displaySeatMap.find((f) => (f.name || f.id) === selFloor)?.units || [])]
-                    .sort((a, b) => {
-                      const isPlainA = /^unit\s*\d+$/i.test(a.label.trim());
-                      const isPlainB = /^unit\s*\d+$/i.test(b.label.trim());
-                      if (isPlainA !== isPlainB) return isPlainA ? -1 : 1; // "Unit N" 형태가 먼저
-                      const numA = parseInt((a.label.match(/\d+/) || ["Infinity"])[0], 10);
-                      const numB = parseInt((b.label.match(/\d+/) || ["Infinity"])[0], 10);
-                      if (numA !== numB) return numA - numB; // 숫자 오름차순
-                      return a.label.localeCompare(b.label);
-                    })
-                    .map((u) => (
-                      <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
-                    ))}
-                  <option value="custom">직접 입력...</option>
-                </select>
-              </div>
-              {selUnit === "custom" ? (
-                <div style={{ marginTop: "8px" }}>
-                  <input
-                    value={customUnit}
-                    onChange={(e) => setCustomUnit(e.target.value)}
-                    placeholder="유닛/좌석명을 입력해주세요 (예: Unit 15, B2-01)"
+            {seatMap.length > 0 ? (
+              <div style={{ marginBottom: "16px" }}>
+                <label style={labelStyle}>좌석 위치</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <select
+                    value={selFloor}
+                    onChange={(e) => { setSelFloor(e.target.value); setSelUnit(""); }}
                     style={inputStyle}
-                  />
+                  >
+                    <option value="">층수 선택</option>
+                    {seatMap.map((f) => <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>)}
+                  </select>
+                  <select
+                    value={selUnit}
+                    onChange={(e) => setSelUnit(e.target.value)}
+                    disabled={!selFloor}
+                    style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
+                  >
+                    <option value="">유닛 선택</option>
+                    {[...(seatMap.find((f) => (f.name || f.id) === selFloor)?.units || [])]
+                      .sort((a, b) => {
+                        const isPlainA = /^unit\s*\d+$/i.test(a.label.trim());
+                        const isPlainB = /^unit\s*\d+$/i.test(b.label.trim());
+                        if (isPlainA !== isPlainB) return isPlainA ? -1 : 1; // "Unit N" 형태가 먼저
+                        const numA = parseInt((a.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        const numB = parseInt((b.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        if (numA !== numB) return numA - numB; // 숫자 오름차순
+                        return a.label.localeCompare(b.label);
+                      })
+                      .map((u) => (
+                        <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
+                      ))}
+                  </select>
                 </div>
-              ) : null}
-              <div style={{ fontSize: "12px", color: C.label, marginTop: "6px" }}>지금 계신 층과 유닛(자리)을 선택해주세요.</div>
-            </div>
+                <div style={{ fontSize: "12px", color: C.label, marginTop: "6px" }}>지금 계신 층과 유닛(자리)을 선택해주세요.</div>
+              </div>
+            ) : null}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
               <button onClick={() => (onBack())} style={secondaryBtn}>이전</button>
               <button onClick={step1Next} disabled={verifying} style={{ ...primaryBtn, opacity: verifying ? 0.7 : 1 }}>
                 {verifying ? <><Spinner size={16} light /> 확인 중...</> : <>다음 단계 <ChevronRight size={15} /></>}
               </button>
-            </div>
-          </div>
-        ) : null}
-
-        {/* ───────── 대여자 및 대여 위치 요약 헤더 ───────── */}
-        {["b2", "b3s", "b4s", "b3g", "b4g"].includes(mode) ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: C.cardSub, borderRadius: "12px", marginBottom: "16px", border: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, color: C.text }}>
-              <User size={14} style={{ color: C.accentText }} />
-              <span>{affiliation === "other" ? otherName : borrowerName}</span>
-              <span style={{ fontSize: "11px", color: C.label }}>({affiliation.toUpperCase()})</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: C.accentText }}>
-              <Building2 size={13} />
-              <span>{selFloor} · {selUnit === "custom" ? customUnit : selUnit}</span>
-              <button onClick={() => setMode("b1")} style={{ background: "none", border: "none", color: C.label, fontSize: "11px", textDecoration: "underline", cursor: "pointer", marginLeft: "4px" }}>변경</button>
             </div>
           </div>
         ) : null}

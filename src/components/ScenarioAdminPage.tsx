@@ -577,14 +577,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                       {borrowersForItem.map((u, idx) => (
                         <div key={`${u.sheetType}-${u.rowIndex}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                              <span style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</span>
-                              {u.floor || u.unit ? (
-                                <span style={{ fontSize: "10.5px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px", flexShrink: 0 }}>
-                                  {[u.floor, u.unit].filter(Boolean).join(" · ")}
-                                </span>
-                              ) : null}
-                            </div>
+                            <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</div>
                             <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
                               <span>{u.sheetType === "scenario" ? `SID 대여${u.scenarioId ? ` (${u.scenarioId})` : ""}` : "일반 대여"}</span>
                               <span>·</span>
@@ -618,14 +611,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                           <div key={`${l.sheetType}-${l.rowIndex}-${idx}`} style={{ padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                                  <span style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.borrowerName || "(대여자 미상)"}</span>
-                                  {l.floor || l.unit ? (
-                                    <span style={{ fontSize: "10.5px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px", flexShrink: 0 }}>
-                                      {[l.floor, l.unit].filter(Boolean).join(" · ")}
-                                    </span>
-                                  ) : null}
-                                </div>
+                                <div style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.borrowerName || "(대여자 미상)"}</div>
                                 <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
                                   <span>{l.sheetType === "scenario" ? `SID 대여${l.scenarioId ? ` (${l.scenarioId})` : ""}` : "일반 대여"}</span>
                                   <span>·</span>
