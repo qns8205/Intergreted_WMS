@@ -385,23 +385,57 @@ export default function App() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [connected, scriptUrl]);
 
-  // 구버전 경고 배너: JSX 트리와 무관하게 항상 최상단에 뜨도록 DOM에 직접 붙인다.
-  // (App 컴포넌트 안에 화면별 return 분기가 여러 개라, 특정 화면에서만 배너가 빠지는 걸 방지)
-  // 닫기 버튼이 없어 새로고침 전까지 사라지지 않는다.
+  // 테스트용 트리거: 실제 재배포 없이도 구버전 화면을 재현해볼 수 있도록
+  // ① URL에 ?test_version_mismatch=1 을 붙이거나
+  // ② 브라우저 콘솔에서 window.__testVersionMismatch() 를 호출하면
+  // 아래의 전체 화면 차단 경고를 즉시 띄운다. 서버 폴링 로직과는 무관한 순수 테스트 스위치.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("test_version_mismatch") === "1") {
+      setVersionMismatch(true);
+    }
+    (window as any).__testVersionMismatch = () => setVersionMismatch(true);
+    return () => { delete (window as any).__testVersionMismatch; };
+  }, []);
+
+  // 구버전 경고: 배너가 아니라 화면 전체를 덮는 차단막으로 띄운다.
+  // JSX 트리와 무관하게 항상 최상단(모든 화면 위)에 뜨도록 DOM에 직접 붙이고,
+  // 뒤쪽 화면과의 상호작용도 완전히 막는다. 닫기 버튼이 없어 새로고침 전까지 절대 사라지지 않는다.
   useEffect(() => {
     if (!versionMismatch) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const el = document.createElement("div");
-    el.id = "wms-version-banner";
-    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px;font-weight:700;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.3);font-family:inherit;";
-    el.innerHTML = "⚠️ 새 버전이 배포되었습니다. 지금 화면은 구버전이라 정상 작동하지 않을 수 있습니다 — 지금 바로 새로고침(F5)해주세요."
-      + '<button id="wms-version-refresh-btn" style="padding:5px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.6);background:rgba(255,255,255,0.15);color:#fff;cursor:pointer;font-size:12px;font-weight:800;margin-left:8px;">지금 새로고침</button>';
+    el.id = "wms-version-block-overlay";
+    el.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#dc2626;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;padding:32px;font-family:inherit;";
+    el.innerHTML = `
+      <div style="font-size:64px;line-height:1;">⚠️</div>
+      <div style="font-size:24px;font-weight:800;">새 버전이 배포되었습니다</div>
+      <div style="font-size:16px;font-weight:500;max-width:520px;line-height:1.6;">
+        지금 보고 있는 화면은 구버전이라 정상적으로 동작하지 않을 수 있습니다.<br/>
+        아래 버튼을 눌러 지금 바로 새로고침해주세요.
+      </div>
+      <button id="wms-version-refresh-btn" style="padding:14px 32px;border-radius:10px;border:2px solid #fff;background:#fff;color:#dc2626;cursor:pointer;font-size:16px;font-weight:800;">지금 새로고침</button>
+    `;
     document.body.appendChild(el);
     const btn = document.getElementById("wms-version-refresh-btn");
     const handler = () => window.location.reload();
     if (btn) btn.addEventListener("click", handler);
+    // 다른 DOM 조작 등으로 우회되지 않도록, 새로고침 전까지 항상 최상단에 재부착한다.
+    const observer = new MutationObserver(() => {
+      if (!document.body.contains(el)) {
+        document.body.appendChild(el);
+      } else if (document.body.lastElementChild !== el) {
+        document.body.appendChild(el);
+      }
+    });
+    observer.observe(document.body, { childList: true });
     return () => {
+      observer.disconnect();
       if (btn) btn.removeEventListener("click", handler);
       if (el.parentNode) el.parentNode.removeChild(el);
+      document.body.style.overflow = prevOverflow;
     };
   }, [versionMismatch]);
 
