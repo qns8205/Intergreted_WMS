@@ -159,6 +159,9 @@ export default function App() {
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
   const baselineAppVersionRef = useRef<string | null>(null);
+  // 프론트엔드(Vercel) 배포 감지용: 지금 이 탭이 로드했을 때 번들에 박힌 빌드 ID.
+  // vite.config.ts에서 빌드마다 새로 발급되며(커밋 해시 또는 빌드 시각), dist/build-version.json에도 동일한 값이 기록된다.
+  const ownFrontendBuildIdRef = useRef<string>((import.meta as any).env?.VITE_BUILD_ID || "");
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
@@ -384,6 +387,31 @@ export default function App() {
     const interval = setInterval(check, 120000); // 2분마다
     return () => { cancelled = true; clearInterval(interval); };
   }, [connected, scriptUrl]);
+
+  // 프론트엔드(Vercel) 재배포 감지: 이 탭이 로드될 때 번들에 박힌 빌드 ID를 기준으로,
+  // 2분마다 서버의 현재 정적 파일(build-version.json)의 빌드 ID와 비교한다.
+  // 그 사이 Vercel에 새 프론트 코드가 배포됐으면 값이 달라지므로 구버전 GAS 감지와 동일하게 차단막을 띄운다.
+  // 캐시된 옛 파일을 보지 않도록 매번 캐시를 무시하고 쿼리스트링으로 캐시버스팅한다.
+  useEffect(() => {
+    const ownBuildId = ownFrontendBuildIdRef.current;
+    if (!ownBuildId) return; // 빌드 ID가 없는 환경(예: 일부 로컬 dev 서버)에서는 비교하지 않는다
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const res = await fetch(`/build-version.json?_=${Date.now()}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        const latestBuildId = String(data?.buildId || "");
+        if (cancelled || !latestBuildId) return;
+        if (latestBuildId !== ownBuildId) {
+          setVersionMismatch(true);
+        }
+      } catch (e) { /* 조회 실패는 무시 — 부가 점검용 폴링이므로 앱 동작을 막지 않는다 */ }
+    };
+    check();
+    const interval = setInterval(check, 120000); // 2분마다
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
 
   // 테스트용 트리거: 실제 재배포 없이도 구버전 화면을 재현해볼 수 있도록
   // ① URL에 ?test_version_mismatch=1 을 붙이거나
