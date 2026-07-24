@@ -7,6 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
+import { fetchBorrowAppVersion } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -153,6 +154,11 @@ function safeSetLocalStorage(key: string, value: string) {
 export default function App() {
   // 1. 상태 선언
   const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
+  // 서버(GAS)가 새 버전으로 재배포되면, 이미 열려 있던 탭은 구버전 상태로 남는다.
+  // 최초 접속 시 버전을 기억해두고, 주기적으로 서버 버전과 비교해서 달라지면
+  // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
+  const [versionMismatch, setVersionMismatch] = useState(false);
+  const baselineAppVersionRef = useRef<string | null>(null);
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
@@ -357,6 +363,48 @@ export default function App() {
     }
     return savedConnected === "true";
   });
+
+  // 구버전 감지: 처음 접속했을 때의 서버 버전을 기억해두고, 2분마다 서버의 현재 버전과 비교한다.
+  // 그 사이 관리자가 GAS를 새 버전으로 재배포했으면 값이 달라지므로, 새로고침 전까지 안 사라지는 경고를 띄운다.
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const v = await fetchBorrowAppVersion(scriptUrl);
+        if (cancelled || !v) return;
+        if (!baselineAppVersionRef.current) {
+          baselineAppVersionRef.current = v;
+        } else if (baselineAppVersionRef.current !== v) {
+          setVersionMismatch(true);
+        }
+      } catch (e) { /* 조회 실패는 무시 — 부가 점검용 폴링이므로 앱 동작을 막지 않는다 */ }
+    };
+    check();
+    const interval = setInterval(check, 120000); // 2분마다
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [connected, scriptUrl]);
+
+  // 구버전 경고 배너: JSX 트리와 무관하게 항상 최상단에 뜨도록 DOM에 직접 붙인다.
+  // (App 컴포넌트 안에 화면별 return 분기가 여러 개라, 특정 화면에서만 배너가 빠지는 걸 방지)
+  // 닫기 버튼이 없어 새로고침 전까지 사라지지 않는다.
+  useEffect(() => {
+    if (!versionMismatch) return;
+    const el = document.createElement("div");
+    el.id = "wms-version-banner";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#dc2626;color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px;font-weight:700;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.3);font-family:inherit;";
+    el.innerHTML = "⚠️ 새 버전이 배포되었습니다. 지금 화면은 구버전이라 정상 작동하지 않을 수 있습니다 — 지금 바로 새로고침(F5)해주세요."
+      + '<button id="wms-version-refresh-btn" style="padding:5px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.6);background:rgba(255,255,255,0.15);color:#fff;cursor:pointer;font-size:12px;font-weight:800;margin-left:8px;">지금 새로고침</button>';
+    document.body.appendChild(el);
+    const btn = document.getElementById("wms-version-refresh-btn");
+    const handler = () => window.location.reload();
+    if (btn) btn.addEventListener("click", handler);
+    return () => {
+      if (btn) btn.removeEventListener("click", handler);
+      if (el.parentNode) el.parentNode.removeChild(el);
+    };
+  }, [versionMismatch]);
+
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [showSetup, setShowSetup] = useState(() => {
