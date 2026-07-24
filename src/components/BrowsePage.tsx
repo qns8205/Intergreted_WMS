@@ -92,6 +92,25 @@ export default function BrowsePage({
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
   }, [step]);
+  // PC 화면(1024px 이상)에서는 "가장 적게 대여된 물품"을 좌측 사이드바(광고 배너 형태)로 옮겨서 보여준다.
+  // 모바일/좁은 화면은 별도 검토 예정이라 기존 상단 슬라이드 방식을 그대로 유지한다.
+  const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 1024px)").matches;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const handleChange = () => setIsDesktopLayout(mql.matches);
+    handleChange();
+    if (mql.addEventListener) {
+      mql.addEventListener("change", handleChange);
+      return () => mql.removeEventListener("change", handleChange);
+    } else {
+      mql.addListener(handleChange);
+      return () => mql.removeListener(handleChange);
+    }
+  }, []);
   const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
   const [whLoaded, setWhLoaded] = useState(false);
   const [sciLoading, setSciLoading] = useState(false);
@@ -536,145 +555,174 @@ export default function BrowsePage({
           </div>
         ) : null}
 
-        {step === "scenario" ? (
-          <>
-            {leastBorrowedLoading || leastBorrowed.length > 0 || leastBorrowedLoaded ? (
-              <div
-                style={{
-                  position: "sticky",
-                  top: stickyHeaderHeight,
-                  zIndex: 15,
-                  marginBottom: "16px",
-                  padding: "14px 16px",
-                  borderRadius: "14px",
-                  border: `1px solid ${C.border}`,
-                  background: C.card,
-                  boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: C.label, marginBottom: "10px" }}>
-                  <TrendingDown size={14} style={{ color: C.accentText }} />
-                  가장 적게 대여된 물품
-                </div>
-                {leastBorrowedLoading ? (
-                  <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                      <div style={{ flex: 1, height: "4px", borderRadius: "999px", background: C.cardSub, overflow: "hidden", marginRight: "8px" }}>
-                        <div style={{ width: `${Math.round(leastBorrowedProgress)}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.2s ease" }} />
-                      </div>
-                      <span style={{ fontSize: "11px", fontWeight: 700, color: C.accentText, flexShrink: 0 }}>{Math.round(leastBorrowedProgress)}%</span>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}>
-                      {Array.from({ length: 10 }).map((_, i) => (
-                        <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
-                      ))}
-                      <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
-                    </div>
-                  </div>
-                ) : leastBorrowed.length === 0 ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", fontSize: "12px", color: C.label }}>
-                    <span>불러오지 못했습니다.</span>
-                    <button
-                      onClick={() => { setLeastBorrowedLoaded(false); }}
-                      style={{ padding: "6px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "11px", fontWeight: 700 }}
-                    >
-                      다시 시도
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div
-                      onPointerDown={(e) => { swipeStartX.current = e.clientX; swipeDeltaX.current = 0; }}
-                      onPointerMove={(e) => { if (swipeStartX.current !== null) swipeDeltaX.current = e.clientX - swipeStartX.current; }}
-                      onPointerUp={() => {
-                        if (swipeStartX.current === null) return;
-                        const delta = swipeDeltaX.current;
-                        if (Math.abs(delta) > 40) {
-                          if (delta < 0) setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount);
-                          else setLeastBorrowedPage((p) => (p - 1 + leastBorrowedPageCount) % leastBorrowedPageCount);
-                        }
-                        swipeStartX.current = null;
-                        swipeDeltaX.current = 0;
-                      }}
-                      style={{ position: "relative", overflow: "hidden", touchAction: "pan-y", cursor: leastBorrowedPageCount > 1 ? "grab" : "default" }}
-                    >
-                      <div style={{ display: "flex", transform: `translateX(-${leastBorrowedPage * 100}%)`, transition: "transform 0.5s ease" }}>
-                        {Array.from({ length: leastBorrowedPageCount }).map((_, pageIdx) => (
-                          <div
-                            key={pageIdx}
-                            style={{ flex: "0 0 100%", display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}
-                          >
-                            {leastBorrowed.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
-                              <div
-                                key={name}
-                                onClick={() => {
-                                  const it = sciItems.find((o) => o.name === name);
-                                  if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
-                                }}
-                                style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px", cursor: "pointer" }}
-                              >
-                                <span style={{ color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                                <span style={{ color: C.label, flexShrink: 0 }}>{qty}개</span>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {leastBorrowedPageCount > 1 ? (
-                      <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
-                        {Array.from({ length: leastBorrowedPageCount }).map((_, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setLeastBorrowedPage(i)}
-                            aria-label={`${i + 1}번째 페이지`}
-                            style={{ width: i === leastBorrowedPage ? "14px" : "6px", height: "6px", borderRadius: "999px", border: "none", padding: 0, cursor: "pointer", background: i === leastBorrowedPage ? C.accent : C.border, transition: "all 0.3s ease" }}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            ) : null}
+        {step === "scenario" ? (() => {
+          const showLeastBorrowed = leastBorrowedLoading || leastBorrowed.length > 0 || leastBorrowedLoaded;
+          // 사이드바(PC)에서는 폭이 좁아서 2열이 아니라 1열로, 배너(모바일 상단)에서는 기존처럼 2열로 보여준다.
+          const lbCols = isDesktopLayout ? 1 : 2;
+          const lbRows = isDesktopLayout ? 10 : 5;
 
-          <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }}
-            filterRow={
-              <>
-                <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
-                  <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={sciSearch} onChange={(e) => setSciSearch(e.target.value)} placeholder="ID · 물품명 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
+          const leastBorrowedWidget = (
+            <div
+              style={{
+                position: "sticky",
+                top: isDesktopLayout ? stickyHeaderHeight + 16 : stickyHeaderHeight,
+                zIndex: 15,
+                marginBottom: isDesktopLayout ? 0 : "16px",
+                padding: "14px 16px",
+                borderRadius: "14px",
+                border: `1px solid ${C.border}`,
+                background: C.card,
+                boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: C.label, marginBottom: "10px" }}>
+                <TrendingDown size={14} style={{ color: C.accentText }} />
+                가장 적게 대여된 물품
+              </div>
+              {leastBorrowedLoading ? (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <div style={{ flex: 1, height: "4px", borderRadius: "999px", background: C.cardSub, overflow: "hidden", marginRight: "8px" }}>
+                      <div style={{ width: `${Math.round(leastBorrowedProgress)}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.2s ease" }} />
+                    </div>
+                    <span style={{ fontSize: "11px", fontWeight: 700, color: C.accentText, flexShrink: 0 }}>{Math.round(leastBorrowedProgress)}%</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${lbCols}, 1fr)`, gridAutoFlow: "column", gridTemplateRows: `repeat(${lbRows}, auto)`, gap: "8px 20px" }}>
+                    {Array.from({ length: 10 }).map((_, i) => (
+                      <div key={i} style={{ height: "13px", borderRadius: "6px", width: `${50 + (i % 3) * 12}%`, background: C.cardSub, animation: "browseLbSkeleton 1.2s ease-in-out infinite", animationDelay: `${i * 0.08}s` }} />
+                    ))}
+                    <style>{`@keyframes browseLbSkeleton { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
+                  </div>
                 </div>
-                <select value={sciCat} onChange={(e) => { setSciCat(e.target.value); setSciSub(""); }} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 150px", minWidth: 0 }}>
-                  <option value="">전체 카테고리</option>{sciCats.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={sciSub} onChange={(e) => setSciSub(e.target.value)} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 150px", minWidth: 0 }}>
-                  <option value="">전체 서브</option>{sciSubs.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </>
-            }
-          >
-            {sciFiltered.map((it) => {
-              const inCart = sciCart.find((c) => c.id === it.id);
-              const out = (it.stock || 0) < 1;
-              return (
-                <GridCard key={it.id} C={C} inCart={!!inCart} out={out} image={it.image} onImage={() => it.image && setModalUrl(getGoogleDriveImageUrl(it.image))}
-                  title={it.name} idText={`ID: ${it.id}`}
-                  badges={<>
-                    {it.rootSlot ? <Chip C={C} icon={<MapPin size={11} />} text={padSlot(it.rootSlot)} tone="warn" /> : null}
-                    {it.category ? <Chip C={C} text={it.category} tone="accent" /> : null}
-                  </>}
-                  stock={it.stock || 0} rented={it.rented || 0}
-                  qty={inCart?.quantity}
-                  onAdd={() => addSci(it)}
-                  onMinus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), -1)}
-                  onPlus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), 1)}
-                />
-              );
-            })}
-          </ItemGrid>
-          </>
-        ) : null}
+              ) : leastBorrowed.length === 0 ? (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", fontSize: "12px", color: C.label }}>
+                  <span>불러오지 못했습니다.</span>
+                  <button
+                    onClick={() => { setLeastBorrowedLoaded(false); }}
+                    style={{ padding: "6px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "11px", fontWeight: 700 }}
+                  >
+                    다시 시도
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div
+                    onPointerDown={(e) => { swipeStartX.current = e.clientX; swipeDeltaX.current = 0; }}
+                    onPointerMove={(e) => { if (swipeStartX.current !== null) swipeDeltaX.current = e.clientX - swipeStartX.current; }}
+                    onPointerUp={() => {
+                      if (swipeStartX.current === null) return;
+                      const delta = swipeDeltaX.current;
+                      if (Math.abs(delta) > 40) {
+                        if (delta < 0) setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount);
+                        else setLeastBorrowedPage((p) => (p - 1 + leastBorrowedPageCount) % leastBorrowedPageCount);
+                      }
+                      swipeStartX.current = null;
+                      swipeDeltaX.current = 0;
+                    }}
+                    style={{ position: "relative", overflow: "hidden", touchAction: "pan-y", cursor: leastBorrowedPageCount > 1 ? "grab" : "default" }}
+                  >
+                    <div style={{ display: "flex", transform: `translateX(-${leastBorrowedPage * 100}%)`, transition: "transform 0.5s ease" }}>
+                      {Array.from({ length: leastBorrowedPageCount }).map((_, pageIdx) => (
+                        <div
+                          key={pageIdx}
+                          style={{ flex: "0 0 100%", display: "grid", gridTemplateColumns: `repeat(${lbCols}, 1fr)`, gridAutoFlow: "column", gridTemplateRows: `repeat(${lbRows}, auto)`, gap: "8px 20px" }}
+                        >
+                          {leastBorrowed.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
+                            <div
+                              key={name}
+                              onClick={() => {
+                                const it = sciItems.find((o) => o.name === name);
+                                if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
+                              }}
+                              style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px", cursor: "pointer" }}
+                            >
+                              <span style={{ color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+                              <span style={{ color: C.label, flexShrink: 0 }}>{qty}개</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {leastBorrowedPageCount > 1 ? (
+                    <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
+                      {Array.from({ length: leastBorrowedPageCount }).map((_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setLeastBorrowedPage(i)}
+                          aria-label={`${i + 1}번째 페이지`}
+                          style={{ width: i === leastBorrowedPage ? "14px" : "6px", height: "6px", borderRadius: "999px", border: "none", padding: 0, cursor: "pointer", background: i === leastBorrowedPage ? C.accent : C.border, transition: "all 0.3s ease" }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              )}
+            </div>
+          );
+
+          const sciItemGrid = (
+            <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }}
+              filterRow={
+                <>
+                  <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
+                    <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+                    <input value={sciSearch} onChange={(e) => setSciSearch(e.target.value)} placeholder="ID · 물품명 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
+                  </div>
+                  <select value={sciCat} onChange={(e) => { setSciCat(e.target.value); setSciSub(""); }} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 150px", minWidth: 0 }}>
+                    <option value="">전체 카테고리</option>{sciCats.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select value={sciSub} onChange={(e) => setSciSub(e.target.value)} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 150px", minWidth: 0 }}>
+                    <option value="">전체 서브</option>{sciSubs.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </>
+              }
+            >
+              {sciFiltered.map((it) => {
+                const inCart = sciCart.find((c) => c.id === it.id);
+                const out = (it.stock || 0) < 1;
+                return (
+                  <GridCard key={it.id} C={C} inCart={!!inCart} out={out} image={it.image} onImage={() => it.image && setModalUrl(getGoogleDriveImageUrl(it.image))}
+                    title={it.name} idText={`ID: ${it.id}`}
+                    badges={<>
+                      {it.rootSlot ? <Chip C={C} icon={<MapPin size={11} />} text={padSlot(it.rootSlot)} tone="warn" /> : null}
+                      {it.category ? <Chip C={C} text={it.category} tone="accent" /> : null}
+                    </>}
+                    stock={it.stock || 0} rented={it.rented || 0}
+                    qty={inCart?.quantity}
+                    onAdd={() => addSci(it)}
+                    onMinus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), -1)}
+                    onPlus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), 1)}
+                  />
+                );
+              })}
+            </ItemGrid>
+          );
+
+          if (isDesktopLayout) {
+            // PC: 좌측에 광고 배너처럼 세로로 붙여서 스크롤을 따라오게(sticky) 하고, 우측에 전체 그리드를 배치한다.
+            return (
+              <div style={{ display: "flex", gap: "20px", alignItems: "flex-start" }}>
+                {showLeastBorrowed ? (
+                  <div style={{ flex: "0 0 250px", width: "250px" }}>
+                    {leastBorrowedWidget}
+                  </div>
+                ) : null}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {sciItemGrid}
+                </div>
+              </div>
+            );
+          }
+
+          // 모바일/좁은 화면: 기존처럼 그리드 위쪽에 배너 형태로 보여준다. (별도 검토 예정)
+          return (
+            <>
+              {showLeastBorrowed ? leastBorrowedWidget : null}
+              {sciItemGrid}
+            </>
+          );
+        })() : null}
 
         {step === "warehouse" ? (
           <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={whLoading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhErr(""); loadWarehouse(); }}
