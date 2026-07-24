@@ -159,9 +159,6 @@ export default function App() {
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
   const baselineAppVersionRef = useRef<string | null>(null);
-  // 프론트엔드(Vercel) 배포 감지용: 지금 이 탭이 로드했을 때 번들에 박힌 빌드 ID.
-  // vite.config.ts에서 빌드마다 새로 발급되며(커밋 해시 또는 빌드 시각), dist/build-version.json에도 동일한 값이 기록된다.
-  const ownFrontendBuildIdRef = useRef<string>((import.meta as any).env?.VITE_BUILD_ID || "");
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
@@ -316,17 +313,7 @@ export default function App() {
     };
   }, []);
 
-  // 새로고침하면 실제 주소(#/monitor 등)와 무관하게 항상 초기 화면으로 돌아가던 버그 수정:
-  // 마운트 직후 이 effect가 처음 실행될 때는 currentView가 아직 실제 주소를 반영하기 전(초기값)이라,
-  // 그 상태로 window.location.hash를 덮어써버리면 위쪽 해시→상태 동기화 effect가 읽어들인 진짜 주소가
-  // 그 즉시 초기 화면 주소로 다시 지워지는 문제가 있었다. 최초 1회는 건너뛰고,
-  // 그 이후 사용자가 실제로 화면을 이동했을 때만 주소를 갱신한다.
-  const isFirstViewSyncRef = useRef(true);
   useEffect(() => {
-    if (isFirstViewSyncRef.current) {
-      isFirstViewSyncRef.current = false;
-      return;
-    }
     const currentHash = window.location.hash.split("/")[1] || "";
     if (currentView && currentHash !== currentView) {
       if (currentView === "monitor" && window.location.hash.startsWith("#/register")) {
@@ -380,6 +367,12 @@ export default function App() {
   // 구버전 감지: 처음 접속했을 때의 서버 버전을 기억해두고, 2분마다 서버의 현재 버전과 비교한다.
   // 그 사이 관리자가 GAS를 새 버전으로 재배포했으면 값이 달라지므로, 새로고침 전까지 안 사라지는 경고를 띄운다.
   useEffect(() => {
+    // 테스트용: 주소 뒤에 ?test_outdated=1 을 붙이면 GAS를 새로 배포하지 않아도 바로 경고 화면을 확인할 수 있다.
+    // 예: https://내주소/?test_outdated=1
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("test_outdated") === "1") {
+      setVersionMismatch(true);
+      return;
+    }
     if (!connected || !scriptUrl) return;
     let cancelled = false;
     const check = async () => {
@@ -398,82 +391,29 @@ export default function App() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [connected, scriptUrl]);
 
-  // 프론트엔드(Vercel) 재배포 감지: 이 탭이 로드될 때 번들에 박힌 빌드 ID를 기준으로,
-  // 2분마다 서버의 현재 정적 파일(build-version.json)의 빌드 ID와 비교한다.
-  // 그 사이 Vercel에 새 프론트 코드가 배포됐으면 값이 달라지므로 구버전 GAS 감지와 동일하게 차단막을 띄운다.
-  // 캐시된 옛 파일을 보지 않도록 매번 캐시를 무시하고 쿼리스트링으로 캐시버스팅한다.
-  useEffect(() => {
-    const ownBuildId = ownFrontendBuildIdRef.current;
-    if (!ownBuildId) return; // 빌드 ID가 없는 환경(예: 일부 로컬 dev 서버)에서는 비교하지 않는다
-    let cancelled = false;
-    const check = async () => {
-      try {
-        const res = await fetch(`/build-version.json?_=${Date.now()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        const latestBuildId = String(data?.buildId || "");
-        if (cancelled || !latestBuildId) return;
-        if (latestBuildId !== ownBuildId) {
-          setVersionMismatch(true);
-        }
-      } catch (e) { /* 조회 실패는 무시 — 부가 점검용 폴링이므로 앱 동작을 막지 않는다 */ }
-    };
-    check();
-    const interval = setInterval(check, 120000); // 2분마다
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
-
-  // 테스트용 트리거: 실제 재배포 없이도 구버전 화면을 재현해볼 수 있도록
-  // ① URL에 ?test_version_mismatch=1 을 붙이거나
-  // ② 브라우저 콘솔에서 window.__testVersionMismatch() 를 호출하면
-  // 아래의 전체 화면 차단 경고를 즉시 띄운다. 서버 폴링 로직과는 무관한 순수 테스트 스위치.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("test_version_mismatch") === "1") {
-      setVersionMismatch(true);
-    }
-    (window as any).__testVersionMismatch = () => setVersionMismatch(true);
-    return () => { delete (window as any).__testVersionMismatch; };
-  }, []);
-
-  // 구버전 경고: 배너가 아니라 화면 전체를 덮는 차단막으로 띄운다.
-  // JSX 트리와 무관하게 항상 최상단(모든 화면 위)에 뜨도록 DOM에 직접 붙이고,
-  // 뒤쪽 화면과의 상호작용도 완전히 막는다. 닫기 버튼이 없어 새로고침 전까지 절대 사라지지 않는다.
+  // 구버전 경고: JSX 트리와 무관하게 화면 전체를 덮는 오버레이를 DOM에 직접 붙인다.
+  // (App 컴포넌트 안에 화면별 return 분기가 여러 개라, 특정 화면에서만 빠지는 걸 방지)
+  // 화면 전체를 반투명/블러 배경으로 덮고 클릭도 막아서, 새로고침 전에는 정상적인 조작이 불가능하게 한다.
   useEffect(() => {
     if (!versionMismatch) return;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
     const el = document.createElement("div");
-    el.id = "wms-version-block-overlay";
-    el.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#dc2626;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;text-align:center;padding:32px;font-family:inherit;";
-    el.innerHTML = `
-      <div style="font-size:64px;line-height:1;">⚠️</div>
-      <div style="font-size:24px;font-weight:800;">새 버전이 배포되었습니다</div>
-      <div style="font-size:16px;font-weight:500;max-width:520px;line-height:1.6;">
-        지금 보고 있는 화면은 구버전이라 정상적으로 동작하지 않을 수 있습니다.<br/>
-        아래 버튼을 눌러 지금 바로 새로고침해주세요.
-      </div>
-      <button id="wms-version-refresh-btn" style="padding:14px 32px;border-radius:10px;border:2px solid #fff;background:#fff;color:#dc2626;cursor:pointer;font-size:16px;font-weight:800;">지금 새로고침</button>
-    `;
+    el.id = "wms-version-banner";
+    el.style.cssText = "position:fixed;inset:0;z-index:999999;background:rgba(15,23,42,0.35);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;font-family:inherit;";
+    el.innerHTML =
+      '<div style="background:rgba(255,255,255,0.92);border-radius:20px;padding:28px 32px;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;max-width:360px;box-shadow:0 12px 40px rgba(0,0,0,0.25);">'
+      + '<div style="font-size:14px;font-weight:700;color:#111827;">새 버전이 있어요</div>'
+      + '<div style="font-size:12.5px;color:#6b7280;line-height:1.6;">지금 화면은 구버전이라 일부 기능이 정상 작동하지 않을 수 있어요.</div>'
+      + '<button id="wms-version-refresh-btn" style="margin-top:4px;padding:10px 24px;border-radius:999px;border:none;background:#2563eb;color:#fff;cursor:pointer;font-size:13px;font-weight:700;">새로고침</button>'
+      + '</div>';
     document.body.appendChild(el);
+    document.body.style.overflow = "hidden"; // 뒤 화면 스크롤도 막는다
     const btn = document.getElementById("wms-version-refresh-btn");
     const handler = () => window.location.reload();
     if (btn) btn.addEventListener("click", handler);
-    // 다른 DOM 조작 등으로 우회되지 않도록, 새로고침 전까지 항상 최상단에 재부착한다.
-    const observer = new MutationObserver(() => {
-      if (!document.body.contains(el)) {
-        document.body.appendChild(el);
-      } else if (document.body.lastElementChild !== el) {
-        document.body.appendChild(el);
-      }
-    });
-    observer.observe(document.body, { childList: true });
     return () => {
-      observer.disconnect();
       if (btn) btn.removeEventListener("click", handler);
       if (el.parentNode) el.parentNode.removeChild(el);
-      document.body.style.overflow = prevOverflow;
+      document.body.style.overflow = "";
     };
   }, [versionMismatch]);
 
