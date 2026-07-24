@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 // @ts-ignore
-import scriptCode from "../../AppsScript_Code.gs?raw";
-
+import scriptCode from "../../AppsScript_Unified.gs?raw";
 
 interface SetupModalProps {
   scriptUrl: string;
@@ -47,9 +46,6 @@ export default function SetupModal({
       console.error("Failed to copy link:", e);
     }
   };
-
-  // scriptCode is now imported dynamically from '../../AppsScript_Code.gs' at build time to prevent code drift and redundancy.
-
 
   const handleCopy = () => {
     navigator.clipboard.writeText(scriptCode);

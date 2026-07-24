@@ -2,8 +2,32 @@
 // 이 코드를 구글 스프레드시트의 [확장 프로그램] -> [Apps Script]에 붙여넣고 웹앱으로 배포하세요.
 
 const DEFECT_SHEET_NAME = "불량로그";
-const RENT_SHEET_NAME = "대여로그";
-const USERS_SHEET_NAME = "Users"; // ID와 패스워드가 저장될 시트 탭 이름입니다.
+const RENT_SHEET_NAME = "창고물품 대여로그"; // (통합 시트) 기존 "대여로그"
+const USERS_SHEET_NAME = "Admin"; // (통합 시트) 기존 "Users" — ID와 패스워드가 저장될 시트 탭 이름입니다.
+
+// ─────────────────────────────────────────────────────────────
+// 사진 업로드 폴더 ID 설정 (한 곳에서 관리)
+// 기존 사진들이 있는 폴더와 새 업로드가 같은 폴더로 가도록, 여기서 폴더 ID를 맞추세요.
+// 스크립트 속성(Script Properties)에 같은 이름의 키가 있으면 그 값이 우선 적용됩니다.
+//   - INVENTORY_IMAGE_FOLDER_ID : 창고물품 사진 폴더
+//   - DEFECT_IMAGE_FOLDER_ID    : 불량 제품 사진 폴더
+// ─────────────────────────────────────────────────────────────
+var INVENTORY_IMAGE_FOLDER_ID_DEFAULT = "1YsDpExU4ojeOJM5EiL07cveZs7Ojtasz";
+var DEFECT_IMAGE_FOLDER_ID_DEFAULT = "1gs7NcJWgFY37OZ4aEuG6Z-PNlmAfz6_R";
+
+function getFolderIdSetting_(key, fallback) {
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty(key);
+    if (v && String(v).trim()) return String(v).trim();
+  } catch (e) {}
+  return fallback;
+}
+function getInventoryImageFolderId_() {
+  return getFolderIdSetting_("INVENTORY_IMAGE_FOLDER_ID", INVENTORY_IMAGE_FOLDER_ID_DEFAULT);
+}
+function getDefectImageFolderId_() {
+  return getFolderIdSetting_("DEFECT_IMAGE_FOLDER_ID", DEFECT_IMAGE_FOLDER_ID_DEFAULT);
+}
 
 // 스마트 시트 찾기 함수: "관리시트", "시트1", "Sheet1" 순서로 시트를 시도하고,
 // 검색어가 매칭되는 시트가 없으면 첫 번째 시트를 자동으로 매칭하여 오류를 예방합니다.
@@ -13,8 +37,12 @@ function getInventorySheet(ss) {
   }
   if (!ss) return null;
   
+  // 0. (통합 시트) "창고물품" 검색
+  var sheet = ss.getSheetByName("창고물품");
+  if (sheet) return sheet;
+
   // 1. "관리시트" 검색
-  var sheet = ss.getSheetByName("관리시트");
+  sheet = ss.getSheetByName("관리시트");
   if (sheet) return sheet;
   
   // 2. "시트1" 검색
@@ -72,6 +100,18 @@ function doGet(e) {
     }
     
     if (action === "getAll") {
+      // 성능 최적화: 짧은 시간(4초) 내 반복 요청은 캐시된 응답을 그대로 반환한다.
+      // (여러 화면이 동시에 마운트되며 getAll을 중복 호출하는 경우, 매번 시트 전체를
+      //  다시 읽지 않고 캐시를 재사용해 체감 속도를 크게 높인다. 새로고침/재접속 시에는
+      //  캐시 만료 후 최신 데이터를 다시 읽으므로 데이터 정확성에 지장이 없다.)
+      try {
+        var cache = CacheService.getScriptCache();
+        var cached = cache.get("getAll_cache_v2");
+        if (cached) {
+          return ContentService.createTextOutput(cached).setMimeType(ContentService.MimeType.JSON);
+        }
+      } catch (cacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
+
       const inventory = getInventoryData(sheet);
       const sectors = getSectorLayout();
       const users = getUsersData(ss);
@@ -83,7 +123,7 @@ function doGet(e) {
       } catch (err) {
         // '로봇 오브젝트' 시트가 없거나 오류 시 빈 배열
       }
-      return responseJSON({
+      var getAllPayload = JSON.stringify({
         success: true,
         inventory: inventory,
         sectors: sectors,
@@ -92,8 +132,80 @@ function doGet(e) {
         rentLogs: rentLogs,
         robotObjects: robotObjects
       });
+      try {
+        CacheService.getScriptCache().put("getAll_cache_v2", getAllPayload, 4);
+      } catch (cachePutErr) { /* 캐시 저장 실패해도 응답은 정상 반환 */ }
+      return ContentService.createTextOutput(getAllPayload).setMimeType(ContentService.MimeType.JSON);
     }
     
+    // ─────────────── 대여 시스템(구 BorrowForm) GET 액션 ───────────────
+    if (action === "getObjectItems") {
+      return responseJSON({ success: true, items: getObjectItems() });
+    }
+    if (action === "getScenarioObjectsForAdmin") {
+      return responseJSON({ success: true, items: getScenarioObjectsForAdmin_() });
+    }
+    if (action === "getScenarioDefinition") {
+      // 이 조회는 시트를 무겁게 읽는 작업이라, 짧은 캐시로 반복 요청 부담을 크게 줄인다.
+      var rawSid = "";
+      if (e && e.parameter) {
+        rawSid = e.parameter.scenarioId || e.parameter.sid || "";
+      }
+      var sidKey = "scenarioDef_" + normalizeSid_(rawSid);
+      try {
+        var cachedScenario = CacheService.getScriptCache().get(sidKey);
+        if (cachedScenario) {
+          return ContentService.createTextOutput(cachedScenario).setMimeType(ContentService.MimeType.JSON);
+        }
+      } catch (scCacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
+
+      var scenarioPayload = JSON.stringify({ success: true, scenario: getScenarioDefinition(rawSid) });
+      try { CacheService.getScriptCache().put(sidKey, scenarioPayload, 20); } catch (scCachePutErr) { /* 무시 */ }
+      return ContentService.createTextOutput(scenarioPayload).setMimeType(ContentService.MimeType.JSON);
+    }
+    if (action === "getUnreturnedItems") {
+      return responseJSON({ success: true, items: getUnreturnedItems() });
+    }
+    if (action === "getScenarioAllLogs") {
+      return responseJSON({ success: true, items: getScenarioAllLogs_() });
+    }
+    if (action === "getMyBorrowedItems") {
+      return responseJSON({ success: true, items: getMyBorrowedItems(e.parameter.name, e.parameter.employeeId) });
+    }
+    if (action === "isConfigDsRegistered") {
+      return responseJSON({ success: true, registered: isConfigDsRegistered(e.parameter.name) });
+    }
+    if (action === "getBorrowAppInfo") {
+      return responseJSON({ success: true, version: APP_VERSION });
+    }
+    if (action === "getWarehouseBorrowedItems") {
+      return responseJSON({ success: true, items: getWarehouseBorrowedItems_(e.parameter.name || "") });
+    }
+    if (action === "getWarehouseInventoryOnly") {
+      return responseJSON({ success: true, inventory: getInventoryData(sheet) });
+    }
+    if (action === "getStockChangeHistory") {
+      return responseJSON({ success: true, items: getStockChangeHistory_(ss, e.parameter.category, e.parameter.id) });
+    }
+    if (action === "getItemSets") {
+      return responseJSON({ success: true, sets: getItemSets_(ss) });
+    }
+    if (action === "getSeatMap") {
+      return responseJSON({ success: true, map: getSeatMap_(ss) });
+    }
+    if (action === "getSeatOccupancy") {
+      return responseJSON({ success: true, items: getSeatOccupancy_(ss, e.parameter.floor, e.parameter.unit, e.parameter.shift) });
+    }
+    if (action === "getActiveItemTypeCount") {
+      return responseJSON(getActiveItemTypeCount_(e.parameter.name));
+    }
+    if (action === "getStockAuditHistory") {
+      return responseJSON({ success: true, items: getStockAuditHistory_(ss, e.parameter.itemId) });
+    }
+    if (action === "getStockFormulaStatus") {
+      return responseJSON({ success: true, status: getStockFormulaStatus_(ss, e.parameter.itemId) });
+    }
+
     return responseJSON({ success: false, error: "알 수 없는 GET 액션입니다." });
   } catch (err) {
     return responseJSON({ success: false, error: err.toString() });
@@ -105,6 +217,51 @@ function doPost(e) {
     const requestData = JSON.parse(e.postData.contents);
     const action = requestData.action;
     const payload = requestData.payload;
+
+    // ─────────────── 스크래퍼 하위 호환 (action 없이 sid+items가 오면 Scenario 시트 upsert) ───────────────
+    if (!action && requestData.sid && Array.isArray(requestData.items)) {
+      return handleScenarioUpsertPost_(requestData);
+    }
+
+    // ─────────────── 대여 시스템(구 BorrowForm) POST 액션 ───────────────
+    if (action === "recordBorrow") {
+      const recordBorrowResult = recordBorrow(payload.borrowList, payload.clientVersion);
+      invalidateGetAllCache_();
+      return responseJSON(recordBorrowResult);
+    }
+    if (action === "processReturn") {
+      const processReturnResult = processReturn(payload.returnRequests, payload.clientVersion);
+      invalidateGetAllCache_();
+      return responseJSON(processReturnResult);
+    }
+    if (action === "upsertScenario") {
+      return handleScenarioUpsertPost_(payload);
+    }
+    if (action === "updateScenarioObject") {
+      return responseJSON({ success: true, item: updateScenarioObject_(payload) });
+    }
+    if (action === "addScenarioObject") {
+      return responseJSON({ success: true, item: addScenarioObject_(payload) });
+    }
+    if (action === "deleteScenarioObject") {
+      deleteScenarioObject_(payload.rowIndex);
+      return responseJSON({ success: true });
+    }
+    if (action === "adjustStock") {
+      return responseJSON(adjustStock_(ss, payload));
+    }
+    if (action === "saveItemSet") {
+      return responseJSON(saveItemSet_(ss, payload));
+    }
+    if (action === "deleteItemSet") {
+      return responseJSON(deleteItemSet_(ss, payload));
+    }
+    if (action === "saveSeatMap") {
+      return responseJSON(saveSeatMap_(ss, payload));
+    }
+    if (action === "recordStockAudit") {
+      return responseJSON(recordStockAudit_(ss, payload));
+    }
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = getInventorySheet(ss);
     if (!sheet) {
@@ -113,11 +270,13 @@ function doPost(e) {
     
     if (action === "addInventoryItem") {
       const newRowIndex = addInventoryItem(sheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: newRowIndex });
     }
     
     if (action === "updateInventoryItem") {
       updateInventoryItem(sheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
 
@@ -128,11 +287,13 @@ function doPost(e) {
           updateInventoryItem(sheet, items[i]);
         }
       }
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
     
     if (action === "deleteInventoryItem") {
       deleteInventoryItem(sheet, payload.rowIndex);
+      invalidateGetAllCache_();
       return responseJSON({ success: true });
     }
     
@@ -153,6 +314,7 @@ function doPost(e) {
         defectSheet.getRange(1, 1, 1, 7).setValues([["제품명", "개수", "기록 시간", "불량 유형", "세부 사항", "대처 방안", "사진"]]);
       }
       const result = addDefectLog(defectSheet, payload);
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: result.rowIndex, photo: result.photo });
     }
 
@@ -181,8 +343,11 @@ function doPost(e) {
               let currentStock = Number(rawStock || 0);
               const qtyChange = Number(payload.qty || 0);
               
-              if (payload.type === "대여") {
+              if (payload.type === "대여" || payload.type === "소모") {
                 nextStock = Math.max(0, currentStock - qtyChange);
+              } else if (payload.type === "반납" && String(payload.note || "").indexOf("[소모완료]") !== -1) {
+                // 반납 화면에서 "소모로 처리"한 경우: 대여 시 이미 재고가 차감됐으므로 재고를 다시 늘리지 않는다.
+                nextStock = currentStock;
               } else if (payload.type === "반납") {
                 nextStock = currentStock + qtyChange;
               }
@@ -197,6 +362,7 @@ function doPost(e) {
           }
         }
       }
+      invalidateGetAllCache_();
       return responseJSON({ success: true, rowIndex: newRowIndex });
     }
     
@@ -244,23 +410,34 @@ function getInventoryData(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
   
-  const range = sheet.getRange(2, 1, lastRow - 1, 9);
+  // 시트에 11번째 열(한글 검색어)이 없으면 자동 생성해 안전하게 읽는다.
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  // K열 헤더가 비어 있으면 라벨을 넣어준다.
+  if (!String(sheet.getRange(1, 11).getValue() || "").trim()) {
+    sheet.getRange(1, 11).setValue("검색어(한글)");
+  }
+  const range = sheet.getRange(2, 1, lastRow - 1, 11);
   const values = range.getValues();
-  const displayValues = range.getDisplayValues();
-  const richTextValues = range.getRichTextValues();
+  // 성능 최적화: getRichTextValues()/getDisplayValues()는 셀당 비용이 커서
+  // 11개 열 전체가 아니라 실제로 필요한 열(D열=링크, F열=업데이트일자, I열=사진)만 좁혀서 읽는다.
+  const linkRichText = sheet.getRange(2, 4, lastRow - 1, 1).getRichTextValues();   // D열 (index 3)
+  const updatedAtDisplay = sheet.getRange(2, 6, lastRow - 1, 1).getDisplayValues(); // F열 (index 5)
+  const photoRichText = sheet.getRange(2, 9, lastRow - 1, 1).getRichTextValues();   // I열 (index 8)
   const inventory = [];
   
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
-    const richRow = richTextValues[i];
     const rowIndex = i + 2;
     
     // I열 (index 8, 사진 링크용)에서 이미지 주소 추출 (B열은 참고하지 않음)
     let photoUrl = "";
-    if (richRow && richRow[8] && typeof richRow[8].getLinkUrl === "function") {
-      photoUrl = richRow[8].getLinkUrl() || "";
-      if (!photoUrl && typeof richRow[8].getRuns === "function") {
-        const runs = richRow[8].getRuns();
+    const photoRich = photoRichText[i] && photoRichText[i][0];
+    if (photoRich && typeof photoRich.getLinkUrl === "function") {
+      photoUrl = photoRich.getLinkUrl() || "";
+      if (!photoUrl && typeof photoRich.getRuns === "function") {
+        const runs = photoRich.getRuns();
         for (let r = 0; r < runs.length; r++) {
           if (runs[r] && typeof runs[r].getLinkUrl === "function") {
             const runUrl = runs[r].getLinkUrl();
@@ -281,10 +458,11 @@ function getInventoryData(sheet) {
     
     // 스마트 칩 링크 주소 추출 (D열 / index 3)
     let itemLink = "";
-    if (richRow && richRow[3] && typeof richRow[3].getLinkUrl === "function") {
-      itemLink = richRow[3].getLinkUrl() || "";
-      if (!itemLink && typeof richRow[3].getRuns === "function") {
-        const runs = richRow[3].getRuns();
+    const linkRich = linkRichText[i] && linkRichText[i][0];
+    if (linkRich && typeof linkRich.getLinkUrl === "function") {
+      itemLink = linkRich.getLinkUrl() || "";
+      if (!itemLink && typeof linkRich.getRuns === "function") {
+        const runs = linkRich.getRuns();
         for (let r = 0; r < runs.length; r++) {
           if (runs[r] && typeof runs[r].getLinkUrl === "function") {
             const runUrl = runs[r].getLinkUrl();
@@ -314,10 +492,11 @@ function getInventoryData(sheet) {
       name: String(row[2] || "").trim(),
       link: itemLink,
       stock: itemStock,
-      updatedAt: displayValues[i][5] || "",
+      updatedAt: updatedAtDisplay[i][0] || "",
       manager: String(row[6] || "").trim(),
       note: String(row[7] || "").trim(),
-      spec: String(row[1] || "").trim() // Column B (서브 분류)
+      spec: String(row[1] || "").trim(), // Column B (서브 분류)
+      keywords: String(row[10] || "").trim() // Column K (한글 검색어)
     });
   }
   return inventory;
@@ -351,6 +530,54 @@ function getDefectLogs(sheet) {
     });
   }
   return logs;
+}
+
+// ── 진단용: 기존 창고물품 사진들이 실제로 어느 드라이브 폴더에 있는지 알려준다.
+// Apps Script 편집기에서 이 함수(창고사진폴더찾기)를 직접 실행하면 로그에 폴더 ID가 출력된다.
+// 그 값을 스크립트 속성 INVENTORY_IMAGE_FOLDER_ID 에 넣으면 새 업로드도 같은 폴더로 간다.
+function 창고사진폴더찾기() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getInventorySheet(ss);
+  if (!sheet) { Logger.log("창고물품 시트를 찾지 못했습니다."); return; }
+  var lastRow = sheet.getLastRow();
+  var values = sheet.getRange(2, 9, Math.max(0, lastRow - 1), 1).getValues(); // I열(사진)
+  var counts = {};
+  for (var i = 0; i < values.length; i++) {
+    var link = String(values[i][0] || "").trim();
+    if (!link) continue;
+    var id = extractDriveFileId_(link);
+    if (!id) continue;
+    try {
+      var file = DriveApp.getFileById(id);
+      var parents = file.getParents();
+      while (parents.hasNext()) {
+        var f = parents.next();
+        var key = f.getId() + " (" + f.getName() + ")";
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    } catch (e) { /* 접근 불가 파일은 건너뜀 */ }
+  }
+  Logger.log("=== 기존 창고물품 사진이 들어있는 폴더 (많은 순) ===");
+  var arr = Object.keys(counts).map(function (k) { return [k, counts[k]]; });
+  arr.sort(function (a, b) { return b[1] - a[1]; });
+  for (var j = 0; j < arr.length; j++) { Logger.log(arr[j][1] + "개 -> " + arr[j][0]); }
+  if (arr.length) {
+    var topId = arr[0][0].split(" ")[0];
+    Logger.log("\n> 가장 많은 폴더 ID: " + topId);
+    Logger.log("  이 값을 스크립트 속성 INVENTORY_IMAGE_FOLDER_ID 에 저장하면 새 업로드도 같은 폴더로 갑니다.");
+  } else {
+    Logger.log("사진 링크에서 폴더를 확인하지 못했습니다.");
+  }
+}
+
+// 드라이브 링크에서 파일 ID 추출 (open?id=, /d/ID 등 지원)
+function extractDriveFileId_(link) {
+  if (!link) return "";
+  var m = link.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  m = link.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  return "";
 }
 
 function uploadImageToDrive(photoVal, fileName, folderId, fallbackFolderName) {
@@ -430,7 +657,7 @@ function addDefectLog(sheet, log) {
 
   let photoVal = log.photo || "";
   if (photoVal.indexOf("data:image/") === 0) {
-    photoVal = uploadImageToDrive(photoVal, filename, "1gs7NcJWgFY37OZ4aEuG6Z-PNlmAfz6_R", "Image for Broken Item");
+    photoVal = uploadImageToDrive(photoVal, filename, getDefectImageFolderId_(), "Image for Broken Item");
   }
   
   const nowStr = formatDate(new Date());
@@ -454,7 +681,8 @@ function getRobotObjects(ss) {
     ss = SpreadsheetApp.getActiveSpreadsheet();
   }
   if (!ss) return [];
-  const sheet = ss.getSheetByName("로봇 오브젝트");
+  // (통합 시트) "시나리오 오브젝트"가 기존 "로봇 오브젝트"를 대체 (9열: id~대여)
+  const sheet = ss.getSheetByName("시나리오 오브젝트") || ss.getSheetByName("로봇 오브젝트");
   if (!sheet) return [];
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -547,8 +775,80 @@ function getRentLogs(sheet) {
   return logs;
 }
 
-function addRentLog(sheet, log) {
-  const lastRow = sheet.getLastRow();
+// 창고물품 대여로그에서 (위치, 품명)별 순 대여량(대여-반납)을 집계.
+// - 이 시트는 헤더 없이 1행부터 데이터이므로 1행부터 직접 읽습니다.
+// - 이름 필터는 적용하지 않고 전체 미반납 목록을 반환합니다 (WMS 대여/반납과 동일).
+// - name 인자는 하위호환용으로 받되 무시합니다.
+function getWarehouseBorrowedItems_(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(RENT_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 1) return [];
+  var lastRow = sheet.getLastRow();
+  var values = sheet.getRange(1, 1, lastRow, 7).getValues();
+  var display = sheet.getRange(1, 1, lastRow, 7).getDisplayValues();
+  var map = {}; var order = [];
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var typ = String(row[1] || "").trim();
+    var loc = String(row[2] || "").trim();
+    var nm = String(row[3] || "").trim();
+    if (!loc && !nm) continue; // 빈 줄/실수로 남은 헤더 방어
+    var q = (row[4] === "" || row[4] == null) ? 0 : Number(row[4]);
+    if (isNaN(q)) q = 0;
+    var user = String(row[5] || "").trim();
+    var note = String(row[6] || "").trim();
+    var ts = display[i][0] || "";
+    var key = loc + "||" + nm;
+    if (!map[key]) { map[key] = { location: loc, name: nm, net: 0, lastDate: "", borrowers: {} }; order.push(key); }
+
+    // 소모: 반납 대상이 아님. 재고에서 영구 차감된 것이므로 미반납 목록의 대여량에서 제외한다.
+    //  - 직접 소모(type === "소모"): 미반납으로 잡지 않음 → net에 더하지 않음
+    //  - 즉시 소모([소모완료] note가 붙은 반납 로그): 해당 대여 건을 닫는 것 → net에서 차감 (반납과 동일)
+    var isConsumeNote = note.indexOf("[소모완료]") !== -1 || note.indexOf("[즉시반납]") !== -1;
+    if (typ === "소모") {
+      // 소모는 대여도 반납도 아님: net 불변 (미반납 목록에서 완전히 배제)
+    } else if (typ === "반납" || isConsumeNote) {
+      map[key].net -= q;
+    } else {
+      // 대여
+      map[key].net += q; if (user) map[key].borrowers[user] = true;
+    }
+    if (ts) map[key].lastDate = ts;
+  }
+  var result = [];
+  order.forEach(function (k) {
+    var e = map[k];
+    if (e.net <= 0) return;
+    var borrowerList = Object.keys(e.borrowers);
+    result.push({
+      sheetType: "warehouse",
+      borrowerName: borrowerList.length === 1 ? borrowerList[0] : (borrowerList.join(", ") || ""),
+      location: e.location,
+      name: e.name,
+      quantity: e.net,
+      itemLabel: (e.location ? "[" + e.location + "] " : "") + e.name + (e.net > 1 ? " x " + e.net : ""),
+      borrowDate: e.lastDate,
+      borrowPurpose: ""
+    });
+  });
+  result.sort(function (a, b) { return compareRackSlot_(a.location, b.location); });
+  return result;
+}
+
+// 위치 "A-01" 를 랙(A~) → 슬롯 숫자 순으로 정렬 비교
+function compareRackSlot_(la, lb) {
+  var pa = String(la || "").toUpperCase().split("-");
+  var pb = String(lb || "").toUpperCase().split("-");
+  var ra = pa[0] || "", rb = pb[0] || "";
+  if (ra !== rb) return ra < rb ? -1 : 1;
+  var sa = parseInt(String(pa[1] || "").replace(/\D/g, ""), 10);
+  var sb = parseInt(String(pb[1] || "").replace(/\D/g, ""), 10);
+  if (isNaN(sa)) sa = 999999;
+  if (isNaN(sb)) sb = 999999;
+  return sa - sb;
+}
+
+function addRentLog(sheet, log) {  const lastRow = sheet.getLastRow();
   const nextRow = lastRow + 1;
   
   const nowStr = formatDate(new Date());
@@ -580,7 +880,7 @@ function addInventoryItem(sheet, item) {
   let photoVal = item.photo || "";
   if (photoVal.indexOf("data:image/") === 0) {
     const fileName = String(item.name || "물품이미지").trim();
-    photoVal = uploadImageToDrive(photoVal, fileName, "1B8VRL7T9cuQIuiSU08ToZnJis576z_wY", "Inventory Images");
+    photoVal = uploadImageToDrive(photoVal, fileName, getInventoryImageFolderId_(), "Inventory Images");
   }
 
   const rowValues = [
@@ -592,10 +892,15 @@ function addInventoryItem(sheet, item) {
     nowStr,
     item.manager || "",
     item.note || "",
-    photoVal // Column I (사진 링크용)
+    photoVal, // Column I (사진 링크용)
+    item.manager2 || "", // Column J (담당자 2) — 보존
+    item.keywords || "" // Column K (한글 검색어)
   ];
   
-  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  sheet.getRange(nextRow, 1, 1, 11).setValues([rowValues]);
   return nextRow;
 }
 
@@ -604,7 +909,10 @@ function updateInventoryItem(sheet, item) {
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
   
   const nowStr = formatDate(new Date());
-  const range = sheet.getRange(rowIndex, 1, 1, 9);
+  if (sheet.getMaxColumns() < 11) {
+    sheet.insertColumnsAfter(sheet.getMaxColumns(), 11 - sheet.getMaxColumns());
+  }
+  const range = sheet.getRange(rowIndex, 1, 1, 11);
   const currentValues = range.getValues()[0];
   
   if (item.location !== undefined) currentValues[0] = item.location;
@@ -614,7 +922,7 @@ function updateInventoryItem(sheet, item) {
     let photoVal = item.photo || "";
     if (photoVal.indexOf("data:image/") === 0) {
       const fileName = String(item.name || currentValues[2] || "물품이미지").trim();
-      photoVal = uploadImageToDrive(photoVal, fileName, "1B8VRL7T9cuQIuiSU08ToZnJis576z_wY", "Inventory Images");
+      photoVal = uploadImageToDrive(photoVal, fileName, getInventoryImageFolderId_(), "Inventory Images");
     }
     currentValues[8] = photoVal; // Column I (사진 링크용)만 업데이트합니다.
   }
@@ -628,6 +936,7 @@ function updateInventoryItem(sheet, item) {
   currentValues[5] = nowStr;
   if (item.manager !== undefined) currentValues[6] = item.manager;
   if (item.note !== undefined) currentValues[7] = item.note;
+  if (item.keywords !== undefined) currentValues[10] = item.keywords; // Column K (한글 검색어)
   
   range.setValues([currentValues]);
 }
@@ -673,6 +982,12 @@ function formatDate(date) {
 function responseJSON(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// getAll 캐시를 강제로 비운다. 물품/로그 등 데이터가 바뀌는 모든 쓰기 작업 뒤에 호출해,
+// 사용자가 방금 한 변경이 캐시 만료(최대 4초)를 기다리지 않고 바로 반영되게 한다.
+function invalidateGetAllCache_() {
+  try { CacheService.getScriptCache().remove("getAll_cache_v2"); } catch (e) { /* 무시 */ }
 }
 
 function testDrivePermission() {
@@ -1063,4 +1378,1595 @@ function getFormHtml(inventory) {
   </script>
 </body>
 </html>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 대여 시스템 모듈 (구 BorrowForm/Code.gs 통합본)
+// - 시트명: 통합 스프레드시트 기준 (일반대여 / SID대여 / 시나리오 오브젝트 / ConfigDS계정 / Scenario)
+// - 기타계정 시트 제거: 기타 소속은 저장 없이 이름 그대로 Slack에 표기
+// - SID별 필요물품 시트 제거: 스크래퍼 upsert는 Scenario 시트로 직접 수행
+// - doGet/doPost 없음: 상단 통합 라우팅(doGet/doPost)에서 액션으로 호출됨
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─── Slack 봇 설정 (Incoming Webhook 미사용: 봇 토큰 하나로 일원화) ───
+// [새 앱 전환 방법]
+//  1) api.slack.com/apps 에서 새 앱 생성 → Bot Token Scopes: chat:write, users:read, users:read.email
+//  2) Install to Workspace → 발급된 xoxb- 토큰을 아래 SLACK_BOT_TOKEN 에 붙여넣기
+//  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
+//  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
+//  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
+var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-aWtHNheXdvHpTjggHL8RD1R0";
+var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
+var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
+
+var APP_VERSION = "2026-07-20-sid-cache-06";
+var PROP_LATEST_VERSION_ = "LATEST_APP_VERSION";
+var PROP_LATEST_URL_ = "LATEST_APP_URL";
+
+var GENERAL_SHEET_NAME = "일반대여";
+var SCENARIO_SHEET_NAME = "SID대여";
+var OBJECT_SHEET_NAME = "시나리오 오브젝트";
+var CONFIGDS_SHEET_NAME = "ConfigDS계정";
+var SCENARIO_DEFINITION_SHEET_NAME = "Scenario";
+var OVERDUE_HOURS = 24;
+var GENERAL_COL_COUNT = 13;
+var SCENARIO_COL_COUNT = 11;
+var GENERAL_OPTION_COL = 13;
+var SCENARIO_LOG_ITEM_KIND_COL = 12;
+
+function isOutdatedVersion_() {
+  try {
+    var latest = String(PropertiesService.getScriptProperties().getProperty(PROP_LATEST_VERSION_) || "");
+    return !!latest && latest !== APP_VERSION;
+  } catch (e) { return false; }
+}
+
+function getAppVersionInfo() {
+  var info = { current: APP_VERSION, latest: "", url: "", outdated: false };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    info.latest = String(props.getProperty(PROP_LATEST_VERSION_) || "");
+    info.url = String(props.getProperty(PROP_LATEST_URL_) || "");
+    info.outdated = !!info.latest && info.latest !== APP_VERSION;
+  } catch (e) {
+    info.outdated = false;
+  }
+  return info;
+}
+
+function publishCurrentVersion() {
+  var props = PropertiesService.getScriptProperties();
+  var url = "";
+  try { url = ScriptApp.getService().getUrl() || ""; } catch (e) {}
+  props.setProperty(PROP_LATEST_VERSION_, APP_VERSION);
+  if (url) props.setProperty(PROP_LATEST_URL_, url);
+  var msg = "최신 버전으로 등록했습니다.\n\n버전: " + APP_VERSION + (url ? "\n최신 주소: " + url : "");
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { Logger.log(msg); }
+}
+
+function buildObjectLink_(id, name) {
+  var label = name || "";
+  var cleanId = padObjectId_(id);
+  if (cleanId) return "<" + OBJECT_DETAIL_BASE_URL + cleanId + "|" + label + ">";
+  return label;
+}
+
+function padObjectId_(id) {
+  var digits = String(id == null ? "" : id).replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length < 6 ? digits.padStart(6, "0") : digits;
+}
+
+function buildReqLinkFromLabel_(label) {
+  label = String(label || "").trim();
+  if (!label) return "";
+  var m = label.match(/^\[(\d+)\]\s*(.*)$/);
+  if (!m) return label;
+  var id = padObjectId_(m[1]);
+  var rest = m[2];
+  var qm = rest.match(/\s*[x×]\s*\d+\s*$/i);
+  var namePart = qm ? rest.substring(0, qm.index) : rest;
+  var qtyPart = qm ? qm[0] : "";
+  return buildObjectLink_(id, namePart) + qtyPart;
+}
+
+var LOCATION_SORT_BANDS_ = [
+  { start: 186, end: 251, dir: "asc" },
+  { start: 120, end: 185, dir: "desc" },
+  { start: 60, end: 119, dir: "asc" },
+  { start: 0, end: 59, dir: "desc" },
+  { start: 100000, end: 100025, dir: "asc" }
+];
+
+function computeLocationSortIndex_(rootSlot) {
+  var n = parseInt(String(rootSlot == null ? "" : rootSlot).replace(/\D/g, ""), 10);
+  if (isNaN(n)) return Number.MAX_SAFE_INTEGER;
+  var offset = 0;
+  for (var i = 0; i < LOCATION_SORT_BANDS_.length; i++) {
+    var b = LOCATION_SORT_BANDS_[i];
+    var size = b.end - b.start + 1;
+    if (n >= b.start && n <= b.end) return offset + (b.dir === "asc" ? (n - b.start) : (b.end - n));
+    offset += size;
+  }
+  return offset + n;
+}
+
+function getObjectItems() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  var lastCol = sheet.getLastColumn();
+  var colsToRead = Math.min(lastCol, 9);
+  if (colsToRead < 1) return [];
+
+  var data = sheet.getRange(2, 1, lastRow - 1, colsToRead).getValues();
+  var result = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    if (colsToRead > 0 && !row[0] && (colsToRead <= 1 || !row[1])) continue;
+
+    var id = colsToRead > 0 ? padSlot_(String(row[0]).trim()) : "";
+    var name = colsToRead > 1 ? String(row[1]).trim() : "";
+    var sector = colsToRead > 2 ? String(row[2]).trim() : "";
+    var rootSlot = colsToRead > 3 ? padSlot_(String(row[3]).trim()) : "";
+    var category = colsToRead > 4 ? String(row[4] || "").trim() : "";
+    var subcategory = colsToRead > 5 ? String(row[5] || "").trim() : "";
+    var image = colsToRead > 6 ? String(row[6] || "").trim() : "";
+    var stock = 0;
+    if (colsToRead > 7) {
+      stock = (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0;
+    }
+    var rented = 0;
+    if (colsToRead > 8) {
+      rented = (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0;
+    }
+
+    result.push({
+      id: id,
+      name: name,
+      sector: sector,
+      rootSlot: rootSlot,
+      category: category,
+      subcategory: subcategory,
+      image: image,
+      stock: stock,
+      rented: rented
+    });
+  }
+  result.sort(function (a, b) {
+    var na = parseInt(String(a.rootSlot || "").replace(/\D/g, ""), 10);
+    var nb = parseInt(String(b.rootSlot || "").replace(/\D/g, ""), 10);
+    if (isNaN(na)) na = Number.MAX_SAFE_INTEGER;
+    if (isNaN(nb)) nb = Number.MAX_SAFE_INTEGER;
+    return na - nb;
+  });
+  return result;
+}
+
+// ─────────────────────────────────────────────
+// 시나리오 오브젝트 관리 (WMS 관리자 모드용)
+// 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9)
+// 사진: 창고물품과 동일하게 data:image/... 가 오면 드라이브 업로드 후 링크 저장
+// ─────────────────────────────────────────────
+function getScenarioImageFolderId_() {
+  return getFolderIdSetting_("SCENARIO_IMAGE_FOLDER_ID", "1QfkmNvsj0zooH5duof1QeqkK2dTjS9Zx");
+}
+
+function getScenarioObjectsForAdmin_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var data = sheet.getRange(2, 1, lastRow - 1, 9).getValues();
+  var result = [];
+  for (var i = 0; i < data.length; i++) {
+    var row = data[i];
+    if (!row[0] && !row[1]) continue;
+    result.push({
+      rowIndex: i + 2,
+      id: padSlot_(String(row[0]).trim()),
+      name: String(row[1]).trim(),
+      sector: String(row[2] || "").trim(),
+      rootSlot: padSlot_(String(row[3]).trim()),
+      category: String(row[4] || "").trim(),
+      subcategory: String(row[5] || "").trim(),
+      image: String(row[6] || "").trim(),
+      stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0,
+      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0
+    });
+  }
+  return result;
+}
+
+function resolveScenarioImage_(photoVal, name) {
+  photoVal = photoVal || "";
+  if (photoVal.indexOf("data:image/") === 0) {
+    var fileName = String(name || "시나리오물품").trim();
+    return uploadImageToDrive(photoVal, fileName, getScenarioImageFolderId_(), "Scenario Object Images");
+  }
+  return photoVal;
+}
+
+function updateScenarioObject_(item) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var rowIndex = Number(item.rowIndex);
+  if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
+  var range = sheet.getRange(rowIndex, 1, 1, 9);
+  var cur = range.getValues()[0];
+
+  if (item.id !== undefined) cur[0] = padSlot_(String(item.id).trim());
+  if (item.name !== undefined) cur[1] = item.name;
+  if (item.sector !== undefined) cur[2] = item.sector;
+  if (item.rootSlot !== undefined) cur[3] = padSlot_(String(item.rootSlot).trim());
+  if (item.category !== undefined) cur[4] = item.category;
+  if (item.subcategory !== undefined) cur[5] = item.subcategory;
+  if (item.image !== undefined) cur[6] = resolveScenarioImage_(item.image, item.name || cur[1]);
+  // 재고 열은 수식이 있을 수 있으므로 수식이 없을 때만 값 설정
+  if (item.stock !== undefined) {
+    var stockCell = sheet.getRange(rowIndex, 8);
+    if (!stockCell.getFormula()) {
+      cur[7] = (item.stock === "" || item.stock == null) ? "" : Number(item.stock);
+    }
+  }
+  range.setValues([cur]);
+  return {
+    rowIndex: rowIndex, id: padSlot_(String(cur[0]).trim()), name: String(cur[1]).trim(),
+    sector: String(cur[2] || "").trim(), rootSlot: padSlot_(String(cur[3]).trim()),
+    category: String(cur[4] || "").trim(), subcategory: String(cur[5] || "").trim(),
+    image: String(cur[6] || "").trim(),
+    stock: (cur[7] !== "" && cur[7] !== undefined) ? Number(cur[7]) : 0,
+    rented: (cur[8] !== "" && cur[8] !== undefined) ? Number(cur[8]) : 0
+  };
+}
+
+function addScenarioObject_(item) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var nextRow = sheet.getLastRow() + 1;
+  var img = resolveScenarioImage_(item.image || "", item.name);
+  var rowValues = [
+    padSlot_(String(item.id || "").trim()),
+    item.name || "",
+    item.sector || "",
+    padSlot_(String(item.rootSlot || "").trim()),
+    item.category || "",
+    item.subcategory || "",
+    img,
+    (item.stock === "" || item.stock == null) ? 0 : Number(item.stock),
+    0
+  ];
+  sheet.getRange(nextRow, 1, 1, 9).setValues([rowValues]);
+  return { rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3], category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0 };
+}
+
+function deleteScenarioObject_(rowIndex) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+  if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
+  var idx = Number(rowIndex);
+  if (!idx || idx < 2) throw new Error("올바르지 않은 행 인덱스: " + idx);
+  sheet.deleteRow(idx);
+}
+
+function padSlot_(raw) {
+  var s = String(raw).trim().replace(/\D/g, "");
+  if (!s) return raw;
+  return s.length < 6 ? s.padStart(6, "0") : s;
+}
+
+function normalizeSid_(sid) { return String(sid || "").trim().toUpperCase().replace(/\s+/g, ""); }
+
+// ─────────────────────────────────────────────
+// Scenario 시트 upsert (구 SID별 필요물품 대체)
+// 스크래퍼가 보내는 {sid, high_level_en, high_level_ko, items:[{id,name,quantity}]}를
+// Scenario 시트(6열)에 직접 upsert합니다.
+// ─────────────────────────────────────────────
+var SCENARIO_HEADERS = ["SID", "High Level Instruction (EN)", "High Level Instruction (KO)", "Object ID", "Object Name", "Quantity"];
+
+function upsertScenarioRows_(normalizedSid, highLevelEn, highLevelKo, items) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getOrCreateSheet_(ss, SCENARIO_DEFINITION_SHEET_NAME, SCENARIO_HEADERS);
+  var lastRow = sheet.getLastRow();
+  var existing = {};
+  if (lastRow >= 2) {
+    var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var key = normalizeSid_(data[i][0]) + "||" + padSlot_(String(data[i][3] || "").trim());
+      existing[key] = i + 2;
+    }
+  }
+  var added = 0, updated = 0;
+  items.forEach(function (it) {
+    var itemId = padSlot_(String(it.id || "").trim());
+    if (!itemId) return;
+    var qty = it.quantity || 1;
+    var name = it.name || "";
+    var key = normalizedSid + "||" + itemId;
+    if (existing[key]) {
+      sheet.getRange(existing[key], 1, 1, 6).setValues([[normalizedSid, highLevelEn || "", highLevelKo || "", itemId, name, qty]]);
+      updated++;
+    } else {
+      sheet.appendRow([normalizedSid, highLevelEn || "", highLevelKo || "", itemId, name, qty]);
+      existing[key] = sheet.getLastRow();
+      added++;
+    }
+  });
+  return { added: added, updated: updated };
+}
+
+// 통합 doPost에서 호출: 스크래퍼 하위 호환 + upsertScenario 액션
+function handleScenarioUpsertPost_(payload) {
+  var result = { success: false, message: "" };
+  try {
+    var sid = normalizeSid_(payload.sid);
+    var items = Array.isArray(payload.items) ? payload.items : [];
+    if (!sid || items.length === 0) {
+      result.message = "sid 또는 items가 비어 있습니다.";
+      return responseJSON(result);
+    }
+    var counts = upsertScenarioRows_(sid, payload.high_level_en, payload.high_level_ko, items);
+    result.success = true;
+    result.message = sid + ": " + counts.added + "건 추가, " + counts.updated + "건 갱신";
+  } catch (err) { result.message = "오류: " + err.message; }
+  return responseJSON(result);
+}
+
+function resolveBorrowerContact_(borrowInfo) {
+  var affiliation = borrowInfo.affiliation || "";
+  var email = null;
+  if (affiliation === "cfgw") {
+    var empId = String(borrowInfo.employeeId || "").trim();
+    if (/^\d+$/.test(empId)) email = empId + "@cfgw-kr.com";
+  } else if (affiliation === "configds") {
+    var found = lookupConfigDsContact_(borrowInfo.borrowerName);
+    if (found) email = found.email;
+  }
+  return { affiliation: affiliation, email: email };
+}
+
+function isConfigDsRegistered(name) {
+  return !!lookupConfigDsContact_(name);
+}
+
+function lookupConfigDsContact_(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = getOrCreateSheet_(ss, CONFIGDS_SHEET_NAME, ["이름", "이메일", "Slack User ID"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var target = String(name || "").trim().toLowerCase();
+  if (!target) return null;
+  for (var i = 0; i < data.length; i++) {
+    var rowName = String(data[i][0] || "").trim().toLowerCase();
+    if (rowName === target) return { email: String(data[i][1] || "").trim() || null, slackId: String(data[i][2] || "").trim() || null };
+  }
+  return null;
+}
+
+function lookupConfigDsSlackIdByEmail_(email) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CONFIGDS_SHEET_NAME);
+  if (!sheet) return null;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  var target = String(email || "").trim().toLowerCase();
+  if (!target) return null;
+  for (var i = 0; i < data.length; i++) {
+    var rowEmail = String(data[i][1] || "").trim().toLowerCase();
+    if (rowEmail === target) return String(data[i][2] || "").trim() || null;
+  }
+  return null;
+}
+
+function buildApplicantLine_(borrowerName, contact) {
+  var extra = "";
+  if (contact.affiliation === "cfgw") extra = " (Cfgw-kr)";
+  else if (contact.affiliation === "configds") extra = " (ConfigDS)";
+  else if (contact.affiliation === "other") extra = " (기타)";
+  if (contact.email) {
+    var slackUserId = lookupSlackIdByEmail_(contact.email);
+    if (slackUserId) return "• 대여자: <@" + slackUserId + ">" + extra;
+    return "• 대여자: " + borrowerName + extra + " (" + contact.email + ")";
+  }
+  // 기타 소속: 저장 없이 이름 그대로 표기
+  return "• 대여자: " + borrowerName + extra;
+}
+
+function buildMentionText_(borrowerName, email, prefix) {
+  prefix = (prefix === undefined) ? "반납자: " : prefix;
+  if (email) {
+    var slackUserId = lookupSlackIdByEmail_(email);
+    if (slackUserId) return prefix + "<@" + slackUserId + ">";
+    return prefix + borrowerName + " (" + email + ")";
+  }
+  return prefix + borrowerName;
+}
+
+function lookupSlackIdByEmail_(email) {
+  if (!email) return null;
+  var fromSheet = lookupConfigDsSlackIdByEmail_(email);
+  if (fromSheet) return fromSheet;
+  return lookupSlackUserId_(email);
+}
+
+function lookupSlackUserId_(email) {
+  if (!SLACK_BOT_TOKEN) return null;
+  var cache = CacheService.getScriptCache();
+  var cacheKey = "slackUid_" + email.toLowerCase();
+  var cached = cache.get(cacheKey);
+  if (cached) return cached === "null" ? null : cached;
+  try {
+    var response = UrlFetchApp.fetch("https://slack.com/api/users.lookupByEmail?email=" + encodeURIComponent(email), { method: "get", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, muteHttpExceptions: true });
+    var data = JSON.parse(response.getContentText());
+    if (data.ok && data.user && data.user.id) { cache.put(cacheKey, data.user.id, 21600); return data.user.id; }
+    cache.put(cacheKey, "null", 1800);
+    return null;
+  } catch (e) { return null; }
+}
+
+function getOrCreateSheet_(ss, sheetName, headers) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    sheet.appendRow(headers);
+    var protection = sheet.protect().setDescription(sheetName + " 수정 방지");
+    protection.removeEditors(protection.getEditors());
+    var owner = ss.getOwner();
+    if (owner) protection.addEditor(owner);
+  }
+  return sheet;
+}
+
+function migrateGeneralSheetColumns() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(GENERAL_SHEET_NAME);
+  if (sheet) {
+    if (sheet.getLastColumn() < 9 || String(sheet.getRange(1, 9).getValue()).trim() !== "이메일") sheet.getRange(1, 9).setValue("이메일");
+    if (sheet.getLastColumn() < 10 || String(sheet.getRange(1, 10).getValue()).trim() !== "Slack Thread TS") sheet.getRange(1, 10).setValue("Slack Thread TS");
+    if (sheet.getLastColumn() < 11 || String(sheet.getRange(1, 11).getValue()).trim() !== "배치ID") sheet.getRange(1, 11).setValue("배치ID");
+    if (sheet.getLastColumn() < 12 || String(sheet.getRange(1, 12).getValue()).trim() !== "신청시각") sheet.getRange(1, 12).setValue("신청시각");
+    if (sheet.getLastColumn() < 13 || String(sheet.getRange(1, 13).getValue()).trim() !== "대여구분") sheet.getRange(1, 13).setValue("대여구분");
+  }
+  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
+  if (scenarioSheet) {
+    if (scenarioSheet.getLastColumn() < 8 || String(scenarioSheet.getRange(1, 8).getValue()).trim() !== "이메일") scenarioSheet.getRange(1, 8).setValue("이메일");
+    if (scenarioSheet.getLastColumn() < 9 || String(scenarioSheet.getRange(1, 9).getValue()).trim() !== "Slack Thread TS") scenarioSheet.getRange(1, 9).setValue("Slack Thread TS");
+    if (scenarioSheet.getLastColumn() < 10 || String(scenarioSheet.getRange(1, 10).getValue()).trim() !== "배치ID") scenarioSheet.getRange(1, 10).setValue("배치ID");
+    if (scenarioSheet.getLastColumn() < 11 || String(scenarioSheet.getRange(1, 11).getValue()).trim() !== "신청시각") scenarioSheet.getRange(1, 11).setValue("신청시각");
+    if (scenarioSheet.getLastColumn() < 12 || String(scenarioSheet.getRange(1, 12).getValue()).trim() !== "물품 구분") scenarioSheet.getRange(1, 12).setValue("물품 구분");
+  }
+  try { SpreadsheetApp.getUi().alert("로그 시트 헤더를 보강했습니다."); } catch (e) {}
+}
+
+// 봇 토큰으로 채널에 단일 메시지 발송 (구 웹훅 sendSlackNotification 대체)
+// 성공 시 메시지 ts를 반환, 실패 시 null (lastSlackError_에 사유 기록)
+function sendSlackNotification(message) {
+  return postSlackMessage_(message);
+}
+
+var lastSlackError_ = "";
+
+function boxWrap_(text) {
+  var bar = "━━━━━━━━━━━━━━━━━━━━";
+  return bar + "\n" + text + "\n" + bar;
+}
+
+function postSlackMessage_(text) {
+  lastSlackError_ = "";
+  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID) { lastSlackError_ = "봇 토큰/채널ID 미설정"; return null; }
+  try {
+    var response = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: text }), muteHttpExceptions: true });
+    var data = JSON.parse(response.getContentText());
+    if (data.ok && data.ts) return data.ts;
+    lastSlackError_ = data.error || "unknown";
+    return null;
+  } catch (e) { lastSlackError_ = e.message; return null; }
+}
+
+function postThreadReply_(text, threadTs) {
+  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID || !threadTs) return false;
+  try {
+    var response = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: text, thread_ts: threadTs }), muteHttpExceptions: true });
+    var data = JSON.parse(response.getContentText());
+    return !!data.ok;
+  } catch (e) { return false; }
+}
+
+function testSlackThread() {
+  var ui = SpreadsheetApp.getUi();
+  if (!SLACK_BOT_TOKEN || !SLACK_CHANNEL_ID) { ui.alert("SLACK_BOT_TOKEN 또는 SLACK_CHANNEL_ID가 비어 있습니다."); return; }
+  var mainResp = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: "🔧 스레드 테스트 (메인 메시지)" }), muteHttpExceptions: true });
+  var mainData = JSON.parse(mainResp.getContentText());
+  if (!mainData.ok) { ui.alert("메인 메시지 실패\nSlack 오류: " + (mainData.error || "unknown") + "\n\nnot_in_channel 이면 해당 채널에서 '/invite @봇이름' 으로 봇을 초대하세요."); return; }
+  var replyResp = UrlFetchApp.fetch("https://slack.com/api/chat.postMessage", { method: "post", contentType: "application/json; charset=utf-8", headers: { "Authorization": "Bearer " + SLACK_BOT_TOKEN }, payload: JSON.stringify({ channel: SLACK_CHANNEL_ID, text: "🔧 스레드 테스트 (댓글) — 이게 보이면 정상입니다.", thread_ts: mainData.ts }), muteHttpExceptions: true });
+  var replyData = JSON.parse(replyResp.getContentText());
+  if (!replyData.ok) { ui.alert("메인 메시지는 성공했지만 댓글 실패\nSlack 오류: " + (replyData.error || "unknown")); return; }
+  ui.alert("성공! 채널에 메인 메시지와 스레드 댓글이 정상적으로 올라갔습니다. 실제 대여/반납도 댓글이 달립니다.");
+}
+
+function sendOverdueReminders() {
+  var items = getUnreturnedItems();
+  var nowMs = new Date().getTime();
+  var groups = {}; var order = [];
+  items.forEach(function (item) {
+    var borrowMs = null;
+    if (item.borrowedAtMs) borrowMs = item.borrowedAtMs;
+    else if (item.borrowDate) { var d = new Date(item.borrowDate); if (!isNaN(d.getTime())) borrowMs = d.getTime(); }
+    if (borrowMs === null) return;
+    var elapsedHours = (nowMs - borrowMs) / 3600000;
+    if (elapsedHours < OVERDUE_HOURS) return;
+    var borrower = item.borrowerName || "(이름 없음)";
+    if (!groups[borrower]) { groups[borrower] = { email: item.email || "", entries: [] }; order.push(borrower); }
+    if (!groups[borrower].email && item.email) groups[borrower].email = item.email;
+    groups[borrower].entries.push({ label: item.itemLabel, hours: Math.floor(elapsedHours) });
+  });
+  if (order.length === 0) return { success: true, message: "대여 후 " + OVERDUE_HOURS + "시간 이상 경과한 미반납 항목이 없습니다." };
+  var locations = buildLocationMap_();
+  var failed = 0;
+  order.forEach(function (borrower) {
+    var g = groups[borrower];
+    var mention = buildMentionText_(borrower, g.email, "");
+    var mainText = "⏰ " + mention + "님, 대여하신 물품을 빌리신 지 " + OVERDUE_HOURS + "시간이 지났습니다. 반납 부탁드립니다!";
+    var itemLines = g.entries.map(function (e) { return "  · " + e.label + " (" + e.hours + "시간 경과)"; }).join("\n");
+    var ts = postSlackMessage_(boxWrap_(mainText));
+    if (ts) {
+      // 위치 정렬된 물품·위치 목록을 스레드 댓글로 첨부
+      var parsedItems = g.entries.map(function (e) { return parseItemLabel_(e.label); });
+      var locLines = buildMergedLocationLines_(parsedItems, locations);
+      if (locLines.length) postThreadReply_("📍 *미반납 물품 · 위치*\n" + locLines.join("\n"), ts);
+    } else {
+      failed++;
+    }
+  });
+  var note = failed ? " (" + failed + "명은 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)" : "";
+  return { success: true, message: order.length + "명에게 미반납 알림을 보냈습니다." + note };
+}
+
+function sendOverdueRemindersManual() { var res = sendOverdueReminders(); SpreadsheetApp.getUi().alert(res.message); }
+
+function setupDailyReminderTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var exists = triggers.some(function (t) { return t.getHandlerFunction() === "sendOverdueReminders"; });
+  if (exists) { SpreadsheetApp.getUi().alert("이미 자동 발송이 설정되어 있습니다."); return; }
+  ScriptApp.newTrigger("sendOverdueReminders").timeBased().everyHours(1).create();
+  SpreadsheetApp.getUi().alert("매시간 미반납 여부를 확인해 24시간 경과 시 자동 발송되도록 설정했습니다.");
+}
+
+function removeDailyReminderTrigger() {
+  var triggers = ScriptApp.getProjectTriggers();
+  var removed = 0;
+  triggers.forEach(function (t) { if (t.getHandlerFunction() === "sendOverdueReminders") { ScriptApp.deleteTrigger(t); removed++; } });
+  SpreadsheetApp.getUi().alert(removed > 0 ? "자동 발송을 해제했습니다." : "설정된 자동 발송이 없습니다.");
+}
+
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu("물품 관리")
+    .addItem("웹 앱 URL 확인", "openWebAppTest")
+    .addSeparator()
+    .addItem("미반납 알림 지금 보내기", "sendOverdueRemindersManual")
+    .addItem("미반납 알림 자동 발송 설정(매시간)", "setupDailyReminderTrigger")
+    .addItem("미반납 알림 자동 발송 해제", "removeDailyReminderTrigger")
+    .addSeparator()
+    .addItem("Slack 스레드 댓글 테스트", "testSlackThread")
+    .addItem("현재 버전을 최신으로 등록(배포 직후 실행)", "publishCurrentVersion")
+    .addItem("로그 시트 헤더 보강(최초 1회)", "migrateGeneralSheetColumns")
+    .addToUi();
+}
+
+function openWebAppTest() {
+  var ui = SpreadsheetApp.getUi();
+  var webAppUrl = ScriptApp.getService().getUrl();
+  ui.alert("웹 앱 URL", "아래 URL을 복사하여 브라우저에서 열어보세요:\n" + webAppUrl, ui.ButtonSet.OK);
+}
+
+function parseSidParts_(sid) {
+  var m = normalizeSid_(sid).match(/^([A-Z]+)(\d+)$/);
+  if (!m) return null;
+  return { prefix: m[1], num: parseInt(m[2], 10) };
+}
+
+function readScenarioIndex_() {
+  var index = { sids: {}, maxNum: -1, maxSid: "" };
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) return index;
+  var col = sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues();
+  col.forEach(function (r) {
+    var sid = normalizeSid_(r[0]);
+    if (!sid) return;
+    index.sids[sid] = true;
+    var parts = parseSidParts_(sid);
+    if (!parts) return;
+    // 앞자리 0 유무가 다른 표기(예: "S120"과 "S0120")도 같은 SID로 인식되도록 정규화 키를 함께 등록한다.
+    index.sids[parts.prefix + parts.num] = true;
+    if (parts.num > index.maxNum) { index.maxNum = parts.num; index.maxSid = sid; }
+  });
+  return index;
+}
+
+function evaluateSidUsable_(sid, index) {
+  var target = normalizeSid_(sid);
+  var res = { blocked: false, reason: "" };
+  var parts = parseSidParts_(target);
+  var normalizedKey = parts ? (parts.prefix + parts.num) : target;
+  if (!target || index.sids[target] || index.sids[normalizedKey]) return res;
+  if (!parts) return res;
+  if (index.maxNum === undefined || index.maxNum < 0) return res;
+  if (parts.num <= index.maxNum) {
+    res.blocked = true;
+    res.reason = target + " 는 Scenario 시트에 없습니다. 시트에 등록된 마지막 SID(" + (index.maxSid || index.maxNum)
+      + ")보다 앞번호이므로 잘못된 SID이거나 삭제된 시나리오입니다. 대여할 수 없습니다.";
+  }
+  return res;
+}
+
+// ── 진단용: 특정 SID가 "Scenario" 시트에서 왜 안 찾아지는지 확인한다.
+// Apps Script 편집기에서 이 함수(시나리오SID진단)를 선택하고 ▶ 실행한 뒤,
+// "보기 → 실행 기록" 또는 "보기 → 로그"에서 결과를 확인하세요.
+// 괄호 안의 SID를 원하는 값으로 바꿔서 실행할 수도 있습니다 (기본값: S0120).
+function 시나리오SID진단(sidToCheck) {
+  var target = normalizeSid_(sidToCheck || "S0120");
+  Logger.log("=== 시나리오 SID 진단: " + target + " ===");
+  Logger.log("현재 서버 버전(APP_VERSION): " + APP_VERSION + "  ← 이 값이 화면에서 보이는 버전과 다르면 아직 재배포가 안 된 것입니다.");
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  Logger.log("연결된 스프레드시트: " + ss.getName());
+
+  var sheet = ss.getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
+  if (!sheet) {
+    Logger.log("❌ '" + SCENARIO_DEFINITION_SHEET_NAME + "' 라는 이름의 시트 탭을 찾지 못했습니다.");
+    Logger.log("   실제 시트 탭 이름들: " + ss.getSheets().map(function (s) { return s.getName(); }).join(", "));
+    return;
+  }
+  Logger.log("✅ 시트 탭을 찾았습니다: " + sheet.getName());
+
+  var lastRow = sheet.getLastRow();
+  Logger.log("마지막 행 번호(getLastRow): " + lastRow);
+  if (lastRow < 2) {
+    Logger.log("❌ 데이터가 없습니다 (헤더 행뿐).");
+    return;
+  }
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+  Logger.log("읽어온 데이터 행 수: " + data.length);
+
+  var targetParts = parseSidParts_(target);
+  var exactMatches = [];
+  var normMatches = [];
+  var sampleFirst5 = [];
+  for (var i = 0; i < data.length; i++) {
+    var rawCell = data[i][0];
+    var rowSid = normalizeSid_(rawCell);
+    if (i < 5) sampleFirst5.push("행" + (i + 2) + ": 원본='" + rawCell + "' → 정규화='" + rowSid + "'");
+    if (rowSid === target) exactMatches.push(i + 2);
+    var rp = parseSidParts_(rowSid);
+    if (targetParts && rp && rp.prefix === targetParts.prefix && rp.num === targetParts.num) normMatches.push(i + 2);
+  }
+
+  Logger.log("--- A열 처음 5개 샘플 ---");
+  sampleFirst5.forEach(function (s) { Logger.log(s); });
+
+  Logger.log("--- 결과 ---");
+  Logger.log("문자열 완전일치 행: " + (exactMatches.length ? exactMatches.join(", ") : "없음"));
+  Logger.log("접두문자+숫자값 일치 행(0 패딩 무시): " + (normMatches.length ? normMatches.join(", ") : "없음"));
+
+  if (exactMatches.length === 0 && normMatches.length === 0) {
+    Logger.log("❌ 이 SID는 '" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트 A열 어디에도 없습니다.");
+    Logger.log("   (화면에는 보이는데 이 결과가 나온다면, 탭 이름이 미세하게 다르거나(공백 등),");
+    Logger.log("    이 스크립트가 연결된 스프레드시트가 실제 보고 계신 파일과 다른 파일일 수 있습니다.)");
+  } else {
+    Logger.log("✅ 이 SID는 시트에 존재합니다. 그런데도 화면에서 '동기화가 필요한 SID'가 뜬다면,");
+    Logger.log("   Apps Script를 수정만 하고 '배포 → 배포 관리 → 새 버전'으로 재배포하지 않았을 가능성이 매우 높습니다.");
+  }
+}
+
+/**
+ * SID 하나를 받아 "Scenario" 시트(A:SID, B:안내영문, C:안내한글, D:물품ID, E:물품명, F:수량)에서
+ * 같은 SID를 가진 행들을 찾아 High Level 안내문과 필요 물품 목록으로 합쳐서 반환한다.
+ * 최대한 단순하게: 시트를 읽고, SID가 같은 행만 골라서, 결과를 만든다.
+ */
+function getScenarioDefinition(sid) {
+  var target = normalizeSid_(sid);
+  var result = { sid: target, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [], errorMessage: "" };
+  if (!target) return result;
+
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SCENARIO_DEFINITION_SHEET_NAME);
+    if (!sheet) {
+      result.errorMessage = "'" + SCENARIO_DEFINITION_SHEET_NAME + "' 시트를 찾지 못했습니다.";
+      return result;
+    }
+
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return result;
+
+    var lastCol = sheet.getLastColumn();
+    var colsToRead = Math.min(lastCol, 6);
+    if (colsToRead < 1) return result;
+
+    var data = sheet.getRange(2, 1, lastRow - 1, colsToRead).getValues();
+
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i];
+      var rowSid = normalizeSid_(row[0]);
+      if (rowSid !== target) continue;
+
+      result.found = true;
+      result.syncNeeded = false;
+      if (colsToRead > 1 && !result.highLevelEn) result.highLevelEn = String(row[1] || "").trim();
+      if (colsToRead > 2 && !result.highLevelKo) result.highLevelKo = String(row[2] || "").trim();
+      
+      var id = "";
+      if (colsToRead > 3) id = padSlot_(String(row[3] || "").trim());
+      
+      var name = "";
+      if (colsToRead > 4) name = String(row[4] || "").trim();
+      
+      var quantity = 1;
+      if (colsToRead > 5) quantity = row[5] || 1;
+
+      if (id) result.items.push({ id: id, name: name, quantity: quantity });
+    }
+
+    // 물품 마스터와 대조해 위치/재고/이미지 등 부가 정보를 채운다.
+    if (result.found) {
+      var objectMap = {};
+      getObjectItems().forEach(function (object) { objectMap[object.id] = object; });
+      result.items.forEach(function (item) {
+        var obj = objectMap[item.id];
+        if (!obj) return;
+        if (!item.name) item.name = obj.name;
+        item.rootSlot = obj.rootSlot || "";
+        item.category = obj.category || "";
+        item.subcategory = obj.subcategory || "";
+        item.image = obj.image || "";
+        item.stock = obj.stock || 0;
+        item.rented = obj.rented || 0;
+      });
+    }
+  } catch (err) {
+    result.errorMessage = "getScenarioDefinition 내 오류: " + err.toString();
+  }
+
+  return result;
+}
+
+function ensureScenarioLogSchema_(sheet) {
+  if (sheet.getLastColumn() < SCENARIO_LOG_ITEM_KIND_COL) sheet.insertColumnsAfter(sheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL - sheet.getLastColumn());
+  sheet.getRange(1, SCENARIO_LOG_ITEM_KIND_COL).setValue("물품 구분");
+}
+
+function ensureGeneralLogSchema_(sheet) {
+  if (sheet.getLastColumn() < GENERAL_OPTION_COL) sheet.insertColumnsAfter(sheet.getLastColumn(), GENERAL_OPTION_COL - sheet.getLastColumn());
+  sheet.getRange(1, GENERAL_OPTION_COL).setValue("대여구분");
+}
+
+function scenarioItemLabel_(item) {
+  var id = item && item.id ? padSlot_(String(item.id).trim()) : "";
+  var qty = (item && item.quantity) || 1;
+  return (id ? "[" + id + "] " : "") + ((item && item.name) || "") + (qty > 1 ? " x " + qty : "");
+}
+
+function normalizeDateTimeInput_(value) {
+  var text = String(value || "").trim().replace("T", " ");
+  if (!text) return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text + " 00:00:00";
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) return text + ":00";
+  return text;
+}
+
+function objectLinks_(items) {
+  return (items || []).map(function (item) { return buildObjectLink_(item.id, item.name) + ((item.quantity || 1) > 1 ? " x " + item.quantity : ""); }).join(", ") || "없음";
+}
+
+function buildLocationMap_() {
+  var map = {};
+  getObjectItems().forEach(function (o) { map[o.id] = o.rootSlot; });
+  return map;
+}
+
+function objectLocationLine_(id, name, quantity, locations) {
+  var padded = padObjectId_(id);
+  var loc = padded ? (locations[padded] || "") : "";
+  var qtyText = (quantity || 1) > 1 ? " x " + quantity : "";
+  var idPrefix = padded ? "[" + padded + "] " : "";
+  return "• " + idPrefix + buildObjectLink_(id, name) + qtyText + (loc ? "  📍 " + loc : "  📍 위치 없음");
+}
+
+function labelLocationLine_(label, locations) {
+  label = String(label || "").trim();
+  if (!label) return "";
+  var m = label.match(/^\[(\d+)\]/);
+  var padded = m ? padObjectId_(m[1]) : "";
+  var loc = padded ? (locations[padded] || "") : "";
+  var idPrefix = padded ? "[" + padded + "] " : "";
+  return "• " + idPrefix + buildReqLinkFromLabel_(label) + (loc ? "  📍 " + loc : "  📍 위치 없음");
+}
+
+function parseItemLabel_(label) {
+  label = String(label || "").trim();
+  var m = label.match(/^\[(\d+)\]\s*(.*)$/);
+  var id = "", rest = label;
+  if (m) { id = m[1]; rest = m[2]; }
+  var qm = rest.match(/\s*[x×]\s*(\d+)\s*$/i);
+  var qty = 1, name = rest;
+  if (qm) { qty = parseInt(qm[1], 10) || 1; name = rest.substring(0, qm.index); }
+  return { id: id, name: name.trim(), quantity: qty };
+}
+
+function buildMergedLocationLines_(items, locations) {
+  var map = {}, order = [];
+  (items || []).forEach(function (it) {
+    if (!it) return;
+    var pid = padObjectId_(it.id);
+    var key = pid || ("name:" + String(it.name || "").toLowerCase());
+    if (!pid && !it.name) return;
+    if (!map[key]) { map[key] = { id: it.id, name: it.name, quantity: 0 }; order.push(key); }
+    map[key].quantity += (it.quantity || 1);
+    if (!map[key].name && it.name) map[key].name = it.name;
+  });
+  var arr = order.map(function (k) { return map[k]; });
+  arr.sort(function (a, b) {
+    return computeLocationSortIndex_(locations[padObjectId_(a.id)] || "") - computeLocationSortIndex_(locations[padObjectId_(b.id)] || "");
+  });
+  return arr.map(function (o) { return objectLocationLine_(o.id, o.name, o.quantity, locations); });
+}
+
+// 시나리오 오브젝트 시트의 재고/대여 실시간 갱신 (수식이 있으면 건드리지 않음)
+function updateInventory_(itemId, qtyChange) {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
+    if (!sheet) return;
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return;
+    var range = sheet.getRange(2, 1, lastRow - 1, 9);
+    var data = range.getValues();
+    for (var i = 0; i < data.length; i++) {
+      var rowId = padSlot_(String(data[i][0]).trim());
+      if (rowId === padSlot_(itemId)) {
+        var cellStock = sheet.getRange(i + 2, 8);
+        var cellRented = sheet.getRange(i + 2, 9);
+
+        if (!cellStock.getFormula()) {
+          var currentStock = Number(data[i][7]) || 0;
+          cellStock.setValue(currentStock - qtyChange);
+        }
+        if (!cellRented.getFormula()) {
+          var currentRented = Number(data[i][8]) || 0;
+          cellRented.setValue(currentRented + qtyChange);
+        }
+        SpreadsheetApp.flush();
+        break;
+      }
+    }
+  } catch (e) {
+    Logger.log("updateInventory_ error: " + e.message);
+  }
+}
+
+function recordBorrow(borrowList, clientVersion) {
+  if (!Array.isArray(borrowList) || !borrowList.length) return { success: false, message: "대여 요청 정보가 없습니다." };
+  if (!clientVersion || clientVersion !== APP_VERSION) {
+    return { success: false, message: "구버전 화면을 사용 중입니다. 대여 신청 기능이 작동하지 않습니다. 페이지를 새로고침(F5)하여 최신 버전으로 접속한 뒤 다시 시도해주세요. (현재 버전: " + (clientVersion || "미확인") + ", 최신 버전: " + APP_VERSION + ")" };
+  }
+  if (isOutdatedVersion_()) {
+    return { success: false, message: "구버전에서는 대여 신청을 할 수 없습니다. 최신 버전 주소로 접속한 뒤 다시 시도해주세요." };
+  }
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var scenarioSheet = getOrCreateSheet_(ss, SCENARIO_SHEET_NAME, ["대여자", "시나리오 ID", "물품", "대여일", "대여 목적", "반납 여부", "반납일", "이메일", "Slack Thread TS", "배치ID", "신청시각", "물품 구분"]);
+    ensureScenarioLogSchema_(scenarioSheet);
+    var generalSheet = getOrCreateSheet_(ss, GENERAL_SHEET_NAME, ["대여자", "대여 물품 ID", "대여 물품명", "수량", "대여일", "대여 목적", "반납 여부", "반납일", "이메일", "Slack Thread TS", "배치ID", "신청시각", "대여구분"]);
+    ensureGeneralLogSchema_(generalSheet);
+    var contact = resolveBorrowerContact_(borrowList[0]);
+    if (contact.affiliation === "configds" && !lookupConfigDsContact_(borrowList[0].borrowerName)) {
+      return { success: false, message: "'ConfigDS계정' 시트에 등록되지 않은 이름입니다. 관리자에게 계정 등록을 요청한 뒤 다시 시도해주세요." };
+    }
+    var scenarioIndex = readScenarioIndex_();
+    var blockedMsgs = [];
+    borrowList.forEach(function (info) {
+      if (info.itemType !== "scenario") return;
+      var chk = evaluateSidUsable_(info.scenarioId, scenarioIndex);
+      if (chk.blocked && blockedMsgs.indexOf(chk.reason) === -1) blockedMsgs.push(chk.reason);
+    });
+    if (blockedMsgs.length) return { success: false, message: blockedMsgs.join("\n") };
+
+    // Calculate total requested quantity per item ID to validate stock
+    var serverRequestedTotals = {};
+    var serverAdditionalRecorded = false;
+    borrowList.forEach(function (info) {
+      if (info.itemType !== "scenario") {
+        (info.borrowedItems || []).forEach(function (item) {
+          var itemId = padSlot_(String(item.id || "").trim());
+          if (!itemId) return;
+          if (!serverRequestedTotals[itemId]) {
+            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
+          }
+          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
+        });
+      } else {
+        var required = info.requiredObjects || [];
+        var additional = serverAdditionalRecorded ? [] : (info.additionalItems || []);
+        if (additional.length) serverAdditionalRecorded = true;
+
+        required.forEach(function (item) {
+          var itemId = padSlot_(String(item.id || "").trim());
+          if (!itemId) return;
+          if (!serverRequestedTotals[itemId]) {
+            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
+          }
+          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
+        });
+
+        additional.forEach(function (item) {
+          var itemId = padSlot_(String(item.id || "").trim());
+          if (!itemId) return;
+          if (!serverRequestedTotals[itemId]) {
+            serverRequestedTotals[itemId] = { name: item.name, quantity: 0 };
+          }
+          serverRequestedTotals[itemId].quantity += (item.quantity || 1);
+        });
+      }
+    });
+
+    // Validate against current stock
+    var inventoryItems = getObjectItems();
+    var inventoryMap = {};
+    inventoryItems.forEach(function (obj) {
+      inventoryMap[obj.id] = obj;
+    });
+
+    for (var reqId in serverRequestedTotals) {
+      var reqItem = serverRequestedTotals[reqId];
+      var invItem = inventoryMap[reqId];
+      var availableStock = invItem ? (invItem.stock || 0) : 0;
+      if (reqItem.quantity > availableStock) {
+        return {
+          success: false,
+          message: "재고 부족 오류: '" + reqItem.name + "' 물품의 대여 요청 수량(" + reqItem.quantity + "개)이 현재 사용 가능한 재고(" + availableStock + "개)를 초과합니다. 화면을 새로고침하여 재고를 확인하고 다시 시도해주세요."
+        };
+      }
+    }
+
+    var applicant = buildApplicantLine_(borrowList[0].borrowerName, contact);
+    var scenarioRows = [], generalRows = [], scenarioCount = 0, generalCount = 0;
+    var borrowedForThread = [];
+    var borrowedSids = [];
+    var hasGeneralBorrow = false;
+    var generalOption = "";
+    var purposeTexts = [];
+    var additionalItemsRecorded = false;
+    var scenarioRequestBatchId = Utilities.getUuid();
+    var additionalBatchId = Utilities.getUuid();
+    var scenarioRequestSubmittedAt = new Date();
+
+    borrowList.forEach(function (info) {
+      var borrowDateTime = normalizeDateTimeInput_(info.borrowDate);
+      var purposeText = String(info.borrowPurpose || "").trim();
+      if (purposeText && purposeTexts.indexOf(purposeText) === -1) purposeTexts.push(purposeText);
+
+      if (info.itemType !== "scenario") {
+        if (info.generalOption) generalOption = info.generalOption;
+        var generalPurpose = info.borrowPurpose;
+        var generalBatchId = Utilities.getUuid();
+        var generalSubmittedAt = new Date();
+        (info.borrowedItems || []).forEach(function (item) {
+          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, generalPurpose, "X", "", contact.email || "", "", generalBatchId, generalSubmittedAt, info.generalOption || ""]);
+          generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
+          borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
+          hasGeneralBorrow = true;
+
+          updateInventory_(item.id, item.quantity || 1);
+        });
+        return;
+      }
+      var batchId = scenarioRequestBatchId, now = scenarioRequestSubmittedAt;
+      var required = info.requiredObjects || [];
+      var additional = additionalItemsRecorded ? [] : (info.additionalItems || []);
+      if (additional.length) additionalItemsRecorded = true;
+
+      required.forEach(function (item) {
+        scenarioSheet.appendRow([info.borrowerName, info.scenarioId, scenarioItemLabel_(item), borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", batchId, now, "대여 물품"]);
+        scenarioRows.push(scenarioSheet.getLastRow());
+        borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
+
+        updateInventory_(item.id, item.quantity || 1);
+      });
+      if (!required.length) {
+        scenarioSheet.appendRow([info.borrowerName, info.scenarioId, "", borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", batchId, now, "대여 물품"]);
+        scenarioRows.push(scenarioSheet.getLastRow());
+      }
+      scenarioCount++;
+      if (borrowedSids.indexOf(info.scenarioId) === -1) borrowedSids.push(info.scenarioId);
+
+      if (additional.length) {
+        additional.forEach(function (item) {
+          generalSheet.appendRow([info.borrowerName, item.id || "", item.name || "", item.quantity || 1, borrowDateTime, info.borrowPurpose, "X", "", contact.email || "", "", additionalBatchId, now, "SID 추가 물품"]);
+          generalRows.push(generalSheet.getLastRow()); generalCount += (item.quantity || 1);
+          borrowedForThread.push({ id: item.id, name: item.name, quantity: item.quantity });
+          hasGeneralBorrow = true;
+
+          updateInventory_(item.id, item.quantity || 1);
+        });
+      }
+    });
+
+    var mainLines = ["📦 *물품 대여 신청*", applicant];
+    if (borrowedSids.length) mainLines.push("• 시나리오 ID: " + borrowedSids.join(", "));
+    if (hasGeneralBorrow) mainLines.push("• 일반 대여" + (generalOption ? ": " + generalOption : ""));
+    if (purposeTexts.length) mainLines.push("• 목적: " + purposeTexts.join(" / "));
+    var mainText = mainLines.join("\n");
+
+    var locations = buildLocationMap_();
+    var objLines = buildMergedLocationLines_(borrowedForThread, locations);
+    var replyText = "📍 *대여 물품 · 위치*\n" + (objLines.join("\n") || "없음");
+
+    var ts = postSlackMessage_(boxWrap_(mainText));
+    var slackNote = "";
+    if (ts) {
+      generalRows.forEach(function (r) { generalSheet.getRange(r, 10).setValue(ts); });
+      scenarioRows.forEach(function (r) { scenarioSheet.getRange(r, 9).setValue(ts); });
+      if (objLines.length) postThreadReply_(replyText, ts);
+    } else {
+      // 봇 메인 메시지 실패 시: 스레드 없이 단일 메시지로라도 재시도 (웹훅 미사용)
+      var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText));
+      slackNote = combined
+        ? " (스레드 없이 단일 메시지로 발송했습니다)"
+        : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
+    }
+    return { success: true, message: "SID " + scenarioCount + "건, 일반 물품 " + generalCount + "개를 기록했습니다." + slackNote };
+  } catch (e) { return { success: false, message: "대여 기록 중 오류: " + e.message }; }
+}
+
+function getUnreturnedItems() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
+  var locations = {};
+  var objectMap = {};
+  getObjectItems().forEach(function (o) {
+    locations[o.id] = o.rootSlot;
+    objectMap[o.id] = o;
+  });
+  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
+  if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
+    var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
+    data.forEach(function (row, i) {
+      if (String(row[5]).trim() === "O") return;
+      var label = row[2] || "(물품 미등록)";
+      var idMatch = String(label).match(/^\[(\d+)\]/);
+      var itemId = idMatch ? padSlot_(idMatch[1]) : "";
+      var parsedQty = parseItemLabel_(label).quantity || 1;
+      var obj = objectMap[itemId] || {};
+      result.push({ sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1], itemLabel: label, itemKind: row[11] || "추가 대여물품", location: itemId ? (locations[itemId] || "") : "", quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4], email: String(row[7] || "").trim(), batchId: String(row[9] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
+    });
+  }
+  var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
+  if (generalSheet && generalSheet.getLastRow() > 1) {
+    var general = generalSheet.getRange(2, 1, generalSheet.getLastRow() - 1, Math.max(generalSheet.getLastColumn(), GENERAL_COL_COUNT)).getValues();
+    general.forEach(function (row, i) {
+      if (String(row[6]).trim() === "O") return;
+      var id = String(row[1] || "").trim(), qty = row[3] || 1;
+      var pid = padSlot_(id);
+      var obj = objectMap[pid] || {};
+      var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
+      result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0 });
+    });
+  }
+  return result;
+}
+
+// 시나리오 대여 대장 전체 조회 (반납 완료 항목 포함, 최신순 정렬)
+// 반납 여부: SID대여 row[5]='O', 일반대여 row[6]='O'
+function getScenarioAllLogs_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), result = [];
+  var locations = {}, objectMap = {};
+  getObjectItems().forEach(function (o) { locations[o.id] = o.rootSlot; objectMap[o.id] = o; });
+
+  var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
+  if (scenarioSheet && scenarioSheet.getLastRow() > 1) {
+    var data = scenarioSheet.getRange(2, 1, scenarioSheet.getLastRow() - 1, Math.max(scenarioSheet.getLastColumn(), SCENARIO_LOG_ITEM_KIND_COL)).getValues();
+    data.forEach(function (row, i) {
+      if (!row[0] && !row[2]) return; // 빈 행
+      var returned = String(row[5]).trim() === "O";
+      var label = row[2] || "(물품 미등록)";
+      var idMatch = String(label).match(/^\[(\d+)\]/);
+      var itemId = idMatch ? padSlot_(idMatch[1]) : "";
+      var parsedQty = parseItemLabel_(label).quantity || 1;
+      var obj = objectMap[itemId] || {};
+      result.push({
+        sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1],
+        itemLabel: label, itemKind: row[11] || "추가 대여물품",
+        location: itemId ? (locations[itemId] || "") : "", itemId: itemId, itemName: parseItemLabel_(label).name || label,
+        quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowPurpose: row[4],
+        email: String(row[7] || "").trim(), batchId: String(row[9] || ""),
+        returned: returned, returnedMark: String(row[5] || "").trim(),
+        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
+      });
+    });
+  }
+
+  var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
+  if (generalSheet && generalSheet.getLastRow() > 1) {
+    var general = generalSheet.getRange(2, 1, generalSheet.getLastRow() - 1, Math.max(generalSheet.getLastColumn(), GENERAL_COL_COUNT)).getValues();
+    general.forEach(function (row, i) {
+      if (!row[0] && !row[2]) return;
+      var returned = String(row[6]).trim() === "O";
+      var id = String(row[1] || "").trim(), qty = row[3] || 1;
+      var pid = padSlot_(id);
+      var obj = objectMap[pid] || {};
+      var groupInfo = buildGeneralGroupInfo_(row[0], row[11], row[4]);
+      result.push({
+        sheetType: "general", rowIndex: i + 2, borrowerName: row[0],
+        itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""),
+        location: locations[pid] || "", itemId: pid, itemName: row[2],
+        quantity: qty, borrowDate: formatDateValue_(row[4]),
+        submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5],
+        email: String(row[8] || "").trim(), batchId: String(row[10] || ""), generalOption: String(row[12] || ""),
+        returned: returned, returnedMark: String(row[6] || "").trim(),
+        image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
+      });
+    });
+  }
+
+  // 최신순 정렬 (borrowDate 내림차순 → 가장 최신이 앞, 오래된 것이 뒤)
+  result.sort(function (a, b) {
+    var da = String(a.borrowDate || ""), db = String(b.borrowDate || "");
+    if (da === db) return 0;
+    return da < db ? 1 : -1;
+  });
+  return result;
+}
+
+function processReturn(returnRequests, clientVersion) {
+  if (!Array.isArray(returnRequests) || !returnRequests.length) return { success: false, message: "반납할 물품을 선택해주세요." };
+  if (!clientVersion || clientVersion !== APP_VERSION) {
+    return { success: false, message: "구버전 화면을 사용 중입니다. 반납 처리 기능이 작동하지 않습니다. 페이지를 새로고침(F5)하여 최신 버전으로 접속한 뒤 다시 시도해주세요. (현재 버전: " + (clientVersion || "미확인") + ", 최신 버전: " + APP_VERSION + ")" };
+  }
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet(), scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME), generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
+    var now = new Date(), today = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+    var locations = buildLocationMap_();
+    var groups = {};
+    var order = [];
+    var processed = 0;
+
+    returnRequests.forEach(function (request) {
+      var isScenario = request.sheetType === "scenario";
+      var sheet = isScenario ? scenarioSheet : generalSheet;
+      if (!sheet || !request.rowIndex || request.rowIndex < 2) return;
+      var colCount = isScenario ? SCENARIO_LOG_ITEM_KIND_COL : Math.max(sheet.getLastColumn(), GENERAL_COL_COUNT);
+      var data = sheet.getRange(request.rowIndex, 1, 1, colCount).getValues()[0];
+      var returnedCol = isScenario ? 6 : 7;
+      if (String(data[returnedCol - 1]).trim() === "O") return;
+
+      var borrower, email, item = null, sid = "", isGeneral = false, option = "";
+      if (isScenario) {
+        borrower = data[0]; sid = data[1]; email = String(data[7] || "").trim();
+        if (data[2]) item = parseItemLabel_(data[2]);
+      } else {
+        borrower = data[0]; email = String(data[8] || "").trim(); isGeneral = true;
+        item = { id: data[1], name: data[2], quantity: data[3] || 1 };
+        option = String(data[12] || "").trim();
+      }
+
+      var rowQty = item ? (item.quantity || 1) : 1;
+      var reqQty = parseInt(request.quantity, 10);
+      if (isNaN(reqQty) || reqQty <= 0) reqQty = rowQty;
+      if (reqQty > rowQty) reqQty = rowQty;
+
+      if (reqQty < rowQty) {
+        var remainQty = rowQty - reqQty;
+        var returnedRow = data.slice();
+        returnedRow[returnedCol - 1] = "O";
+        returnedRow[returnedCol] = today;
+        if (isScenario) {
+          sheet.getRange(request.rowIndex, 3).setValue(scenarioItemLabel_({ id: item.id, name: item.name, quantity: remainQty }));
+          returnedRow[2] = scenarioItemLabel_({ id: item.id, name: item.name, quantity: reqQty });
+        } else {
+          sheet.getRange(request.rowIndex, 4).setValue(remainQty);
+          returnedRow[3] = reqQty;
+        }
+        sheet.appendRow(returnedRow);
+      } else {
+        sheet.getRange(request.rowIndex, returnedCol).setValue("O");
+        sheet.getRange(request.rowIndex, returnedCol + 1).setValue(today);
+      }
+      processed += reqQty;
+      if (item) item = { id: item.id, name: item.name, quantity: reqQty };
+
+      // REAL-TIME INVENTORY UPDATE (on Return, qtyChange is negative!)
+      if (item && item.id) {
+        updateInventory_(item.id, -reqQty);
+      }
+
+      if (!groups[borrower]) { groups[borrower] = { borrower: borrower, email: email, sids: [], hasGeneral: false, items: [], options: [] }; order.push(borrower); }
+      if (!groups[borrower].email && email) groups[borrower].email = email;
+      if (sid && groups[borrower].sids.indexOf(sid) === -1) groups[borrower].sids.push(sid);
+      if (isGeneral) {
+        groups[borrower].hasGeneral = true;
+        if (option && groups[borrower].options.indexOf(option) === -1) groups[borrower].options.push(option);
+      }
+      if (item) groups[borrower].items.push(item);
+    });
+
+    var remainingByBorrower = {};
+    getUnreturnedItems().forEach(function (u) {
+      var b = u.borrowerName || "";
+      var parsed = parseItemLabel_(u.itemLabel);
+      if (!parsed.id && !parsed.name) return;
+      if (!remainingByBorrower[b]) remainingByBorrower[b] = [];
+      remainingByBorrower[b].push(parsed);
+    });
+
+    var slackNote = "";
+    order.forEach(function (borrower) {
+      var g = groups[borrower];
+      var mainLines = ["✅ *반납 처리*", "• 반납자: " + buildMentionText_(g.borrower, g.email, "")];
+      if (g.sids.length) mainLines.push("• 시나리오 ID: " + g.sids.join(", "));
+      if (g.hasGeneral) mainLines.push(g.sids.length ? "• 일반 반납 물품 포함" : "• 일반 반납");
+      if (g.options.length) mainLines.push("• 대여구분: " + g.options.join(", "));
+      var mainText = mainLines.join("\n");
+
+      var returnLines = buildMergedLocationLines_(g.items, locations);
+      var replyText = "📍 *반납 물품 · 위치*\n" + (returnLines.join("\n") || "없음") + "\n반납일: " + today;
+
+      var remaining = remainingByBorrower[borrower] || [];
+      var remainingLines = buildMergedLocationLines_(remaining, locations);
+      var remainingText = "📦 *현재 대여 중인 물품 · 위치*\n" + (remainingLines.join("\n") || "없음 (모두 반납 완료)");
+
+      var ts = postSlackMessage_(boxWrap_(mainText));
+      if (ts) {
+        postThreadReply_(replyText, ts);
+        postThreadReply_(remainingText, ts);
+      } else {
+        var combined = postSlackMessage_(boxWrap_(mainText + "\n───────────────\n" + replyText + "\n───────────────\n" + remainingText));
+        slackNote = combined
+          ? " (스레드 없이 단일 메시지로 발송했습니다)"
+          : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
+      }
+    });
+
+    return { success: true, message: processed + "개 물품의 반납을 처리했습니다." + slackNote };
+  } catch (e) { return { success: false, message: "반납 처리 중 오류: " + e.message }; }
+}
+
+function getMyBorrowedItems(borrowerName, employeeId) {
+  var name = String(borrowerName || "").trim();
+  if (!name) return [];
+  var expectedEmail = "";
+  var empId = String(employeeId || "").trim();
+  if (empId && /^\d+$/.test(empId)) expectedEmail = (empId + "@cfgw-kr.com").toLowerCase();
+
+  var all = getUnreturnedItems();
+  return all.filter(function (item) {
+    var sameName = String(item.borrowerName || "").trim() === name;
+    if (!sameName) return false;
+    if (!expectedEmail) return true;
+    var itemEmail = String(item.email || "").trim().toLowerCase();
+    return !itemEmail || itemEmail === expectedEmail;
+  });
+}
+
+function formatDateValue_(value) {
+  if (value instanceof Date) return value.getFullYear() + "-" + String(value.getMonth() + 1).padStart(2, "0") + "-" + String(value.getDate()).padStart(2, "0");
+  return value;
+}
+
+function formatDateTimeValue_(value) {
+  if (value instanceof Date) return (value.getMonth() + 1) + "월 " + value.getDate() + "일 " + String(value.getHours()).padStart(2, "0") + ":" + String(value.getMinutes()).padStart(2, "0") + ":" + String(value.getSeconds()).padStart(2, "0");
+  return String(value || "");
+}
+
+function buildGeneralGroupInfo_(borrower, submittedAt, borrowDate) {
+  var display = "";
+  if (submittedAt instanceof Date) {
+    display = Utilities.formatDate(submittedAt, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
+  } else if (submittedAt) {
+    display = String(submittedAt).replace("T", " ").slice(0, 16);
+  } else {
+    display = formatDateValue_(borrowDate) || "";
+  }
+  return { key: String(borrower || "") + "|" + display, display: display };
+}
+
+/* ══════════ 신규 확장 API 헬퍼 함수 ══════════ */
+
+function getStockChangeHistory_(ss, category, targetId) {
+  var sheet = ss.getSheetByName("재고변경이력");
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var range = sheet.getRange(2, 1, lastRow - 1, 9);
+  var values = range.getValues();
+  var displayValues = range.getDisplayValues();
+  var list = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    var disp = displayValues[i];
+    var rowCat = String(row[1] || "").trim();
+    var rowId = String(row[2] || "").trim();
+    if (category && rowCat && rowCat !== category && (category === "inventory" ? rowCat !== "공구 및 부품류" : rowCat !== "시나리오 물품")) {
+      continue;
+    }
+    if (targetId && rowId && rowId.toLowerCase() !== String(targetId).trim().toLowerCase()) {
+      continue;
+    }
+    list.push({
+      changedAt: disp[0] || (row[0] instanceof Date ? formatDate(row[0]) : String(row[0] || "").trim()),
+      category: rowCat,
+      id: rowId,
+      itemName: String(row[3] || "").trim(),
+      oldStock: Number(row[4] || 0),
+      newStock: Number(row[5] || 0),
+      diff: Number(row[6] || 0),
+      reason: String(row[7] || "").trim(),
+      manager: String(row[8] || "").trim()
+    });
+  }
+  return list;
+}
+
+function adjustStock_(ss, payload) {
+  var category = payload.category;
+  var rowIndex = Number(payload.rowIndex);
+  var newStock = Number(payload.newStock);
+  var reason = String(payload.reason || "").trim();
+  var manager = String(payload.manager || "").trim();
+  
+  if (isNaN(newStock) || newStock < 0) {
+    return { success: false, error: "새 재고 수량이 유효하지 않습니다." };
+  }
+  if (!reason) {
+    return { success: false, error: "변경 사유를 입력해야 합니다." };
+  }
+  
+  var targetSheet = null;
+  var itemIdOrLoc = "";
+  var itemName = "";
+  var oldStock = 0;
+  
+  if (category === "inventory" || category === "공구 및 부품류") {
+    targetSheet = getInventorySheet(ss);
+    if (!targetSheet) return { success: false, error: "창고물품 시트를 찾을 수 없습니다." };
+    if (rowIndex < 2 || rowIndex > targetSheet.getLastRow()) {
+      return { success: false, error: "올바르지 않은 행 번호입니다." };
+    }
+    itemIdOrLoc = String(targetSheet.getRange(rowIndex, 1).getValue() || "").trim();
+    itemName = String(targetSheet.getRange(rowIndex, 3).getValue() || "").trim();
+    var rawOld = targetSheet.getRange(rowIndex, 5).getValue();
+    oldStock = isNaN(Number(rawOld)) ? 0 : Number(rawOld);
+    
+    targetSheet.getRange(rowIndex, 5, 1, 2).setValues([[newStock, formatDate(new Date())]]);
+  } else {
+    targetSheet = ss.getSheetByName(OBJECT_SHEET_NAME) || ss.getSheetByName("Sheet3");
+    if (!targetSheet) return { success: false, error: "시나리오 오브젝트 시트를 찾을 수 없습니다." };
+    if (rowIndex < 2 || rowIndex > targetSheet.getLastRow()) {
+      return { success: false, error: "올바르지 않은 행 번호입니다." };
+    }
+    itemIdOrLoc = String(targetSheet.getRange(rowIndex, 1).getValue() || "").trim();
+    itemName = String(targetSheet.getRange(rowIndex, 2).getValue() || "").trim();
+    var rawOldSc = targetSheet.getRange(rowIndex, 8).getValue();
+    oldStock = isNaN(Number(rawOldSc)) ? 0 : Number(rawOldSc);
+    
+    targetSheet.getRange(rowIndex, 8).setValue(newStock);
+  }
+  
+  var diff = newStock - oldStock;
+  
+  var logSheet = getOrCreateSheet_(ss, "재고변경이력", ["변경시각", "구분", "물품ID/위치", "물품명", "기존재고", "변경재고", "증감", "사유", "담당자"]);
+  logSheet.appendRow([
+    formatDate(new Date()),
+    category === "inventory" ? "공구 및 부품류" : "시나리오 물품",
+    itemIdOrLoc,
+    itemName,
+    oldStock,
+    newStock,
+    diff,
+    reason,
+    manager
+  ]);
+  
+  invalidateGetAllCache_();
+  return { success: true, oldStock: oldStock, newStock: newStock, diff: diff };
+}
+
+function getItemSets_(ss) {
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  var sets = [];
+  for (var i = 0; i < values.length; i++) {
+    var name = String(values[i][0] || "").trim();
+    if (!name) continue;
+    var rawItems = String(values[i][1] || "").trim();
+    var items = [];
+    try { items = JSON.parse(rawItems); } catch (e) {}
+    sets.push({ name: name, items: Array.isArray(items) ? items : [] });
+  }
+  return sets;
+}
+
+function saveItemSet_(ss, payload) {
+  var name = String(payload.name || "").trim();
+  var items = payload.items || [];
+  var originalName = String(payload.originalName || name).trim();
+  if (!name) return { success: false, message: "세트 이름을 입력해주세요." };
+  
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  var foundRow = -1;
+  if (lastRow >= 2) {
+    var names = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < names.length; i++) {
+      var existingName = String(names[i][0] || "").trim();
+      if (existingName === originalName || existingName === name) {
+        foundRow = i + 2;
+        break;
+      }
+    }
+  }
+  var jsonStr = JSON.stringify(items);
+  if (foundRow > 0) {
+    sheet.getRange(foundRow, 1, 1, 2).setValues([[name, jsonStr]]);
+  } else {
+    sheet.appendRow([name, jsonStr]);
+  }
+  return { success: true };
+}
+
+function deleteItemSet_(ss, name) {
+  var targetName = String(name || "").trim();
+  if (!targetName) return { success: false };
+  var sheet = getOrCreateSheet_(ss, "물품세트", ["세트명", "구성물품(JSON)"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    var names = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < names.length; i++) {
+      if (String(names[i][0] || "").trim() === targetName) {
+        sheet.deleteRow(i + 2);
+        break;
+      }
+    }
+  }
+  return { success: true };
+}
+
+function getSeatMap_(ss) {
+  var sheet = getOrCreateSheet_(ss, "좌석배치도", ["배치도(JSON)"]);
+  var val = String(sheet.getRange(2, 1).getValue() || "").trim();
+  if (!val) {
+    try {
+      val = PropertiesService.getScriptProperties().getProperty("SEAT_MAP_JSON") || "";
+    } catch (e) {}
+  }
+  var map = { floors: [] };
+  if (val) {
+    try { map = JSON.parse(val); } catch (e) {}
+  }
+  return map;
+}
+
+function saveSeatMap_(ss, map) {
+  var sheet = getOrCreateSheet_(ss, "좌석배치도", ["배치도(JSON)"]);
+  var jsonStr = JSON.stringify(map || { floors: [] });
+  sheet.getRange(2, 1).setValue(jsonStr);
+  try {
+    PropertiesService.getScriptProperties().setProperty("SEAT_MAP_JSON", jsonStr);
+  } catch (e) {}
+  return { success: true };
+}
+
+function getSeatOccupancy_(ss, floor, unit, shift) {
+  var items = [];
+  var unreturned = getUnreturnedItems();
+  for (var i = 0; i < unreturned.length; i++) {
+    var item = unreturned[i];
+    if (String(item.floor || "").trim().toUpperCase() === String(floor || "").trim().toUpperCase() &&
+        String(item.unit || "").trim().toUpperCase() === String(unit || "").trim().toUpperCase()) {
+      items.push({
+        timestamp: item.borrowDate,
+        borrowerName: item.borrowerName,
+        batchId: item.batchId,
+        sheetType: item.sheetType,
+        shift: shift || "day",
+        items: [{ name: item.itemLabel, qty: item.quantity, returned: false }],
+        allReturned: false
+      });
+    }
+  }
+  return items;
+}
+
+function getActiveItemTypeCount_(borrowerName) {
+  var items = getUnreturnedItems();
+  var nameClean = String(borrowerName || "").trim().toLowerCase();
+  var userItems = [];
+  var uniqueIds = {};
+  for (var i = 0; i < items.length; i++) {
+    if (String(items[i].borrowerName || "").trim().toLowerCase() === nameClean) {
+      userItems.push({
+        id: items[i].itemId || items[i].location,
+        name: items[i].itemLabel,
+        quantity: items[i].quantity,
+        borrowDate: items[i].borrowDate
+      });
+      uniqueIds[items[i].itemId || items[i].itemLabel] = true;
+    }
+  }
+  return {
+    count: Object.keys(uniqueIds).length,
+    max: 10,
+    items: userItems
+  };
+}
+
+function getStockAuditHistory_(ss, itemId) {
+  var sheet = getOrCreateSheet_(ss, "재고실사기록", ["실사시각", "물품ID", "물품명", "시스템재고", "실사재고", "오차", "실사자", "비고"]);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var values = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  var displayValues = sheet.getRange(2, 1, lastRow - 1, 8).getDisplayValues();
+  var list = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    var idVal = String(row[1] || "").trim();
+    if (itemId && idVal.toLowerCase() !== String(itemId).trim().toLowerCase()) continue;
+    list.push({
+      auditedAt: displayValues[i][0] || formatDate(row[0]),
+      itemId: idVal,
+      itemName: String(row[2] || "").trim(),
+      systemStock: Number(row[3] || 0),
+      actualCount: Number(row[4] || 0),
+      diff: Number(row[5] || 0),
+      auditor: String(row[6] || "").trim(),
+      note: String(row[7] || "").trim()
+    });
+  }
+  return list;
+}
+
+function recordStockAudit_(ss, payload) {
+  var sheet = getOrCreateSheet_(ss, "재고실사기록", ["실사시각", "물품ID", "물품명", "시스템재고", "실사재고", "오차", "실사자", "비고"]);
+  var auditedAt = formatDate(new Date());
+  var diff = Number(payload.actualCount || 0) - Number(payload.systemStock || 0);
+  var rec = [
+    auditedAt,
+    String(payload.itemId || "").trim(),
+    String(payload.itemName || "").trim(),
+    Number(payload.systemStock || 0),
+    Number(payload.actualCount || 0),
+    diff,
+    String(payload.auditor || "").trim(),
+    String(payload.note || "").trim()
+  ];
+  sheet.appendRow(rec);
+  return { success: true, record: { auditedAt: auditedAt, itemId: payload.itemId, itemName: payload.itemName, systemStock: payload.systemStock, actualCount: payload.actualCount, diff: diff, auditor: payload.auditor, note: payload.note } };
+}
+
+function getStockFormulaStatus_(ss, itemId) {
+  var sheet = getInventorySheet(ss);
+  if (!sheet) return { found: false, stockIsFormula: false, rentedIsFormula: false };
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { found: false, stockIsFormula: false, rentedIsFormula: false };
+  var formulas = sheet.getRange(2, 5, lastRow - 1, 2).getFormulas();
+  var locs = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  for (var i = 0; i < locs.length; i++) {
+    if (String(locs[i][0] || "").trim().toLowerCase() === String(itemId || "").trim().toLowerCase()) {
+      return {
+        found: true,
+        stockIsFormula: !!(formulas[i][0] && String(formulas[i][0]).indexOf("=") === 0),
+        rentedIsFormula: !!(formulas[i][1] && String(formulas[i][1]).indexOf("=") === 0)
+      };
+    }
+  }
+  return { found: false, stockIsFormula: false, rentedIsFormula: false };
 }

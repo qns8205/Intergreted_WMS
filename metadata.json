@@ -1,0 +1,6 @@
+{
+  "name": "Integrated WMS",
+  "description": "Integrated Warehouse Management System with inventory tracking, rental logs, scenario admin, and Apps Script sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
