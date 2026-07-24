@@ -108,40 +108,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [seatMapLoaded, setSeatMapLoaded] = useState(false);
   const [selFloor, setSelFloor] = useState("");
   const [selUnit, setSelUnit] = useState("");
-  const [customUnit, setCustomUnit] = useState("");
-
-  const DEFAULT_SEAT_MAP = useMemo<SeatFloor[]>(() => [
-    {
-      id: "B2",
-      name: "B2층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "B1",
-      name: "B1층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "1F",
-      name: "1층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    },
-    {
-      id: "2F",
-      name: "2층",
-      rows: 3,
-      cols: 4,
-      units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` }))
-    }
-  ], []);
-
-  const displaySeatMap = useMemo(() => (seatMap && seatMap.length > 0 ? seatMap : DEFAULT_SEAT_MAP), [seatMap, DEFAULT_SEAT_MAP]);
   // 물품 종류 최대 보유 개수 제한 관련 상태
   const [activeTypeInfo, setActiveTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
   const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
@@ -434,21 +400,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return validateSeatLocation();
   }
 
-  function parseBorrowDateTs(str: string): number {
-    if (!str) return Date.now();
-    let clean = String(str).trim().replace(/\./g, "-").replace(/\s+/g, " ");
-    clean = clean.replace(/-\s*/g, "-").trim();
-    const t1 = new Date(clean.replace(" ", "T")).getTime();
-    if (!isNaN(t1)) return t1;
-    const t2 = new Date(clean).getTime();
-    if (!isNaN(t2)) return t2;
-    return Date.now();
-  }
-
-  // 층수/유닛 입력을 필수로 검증한다.
+  // 관리자가 좌석맵을 하나라도 등록해뒀다면 층수/유닛 입력을 필수로 요구한다.
+  // (좌석맵이 아예 설정 안 된 조직은 이 필드 자체를 안 보여주고 막지도 않는다.)
   function validateSeatLocation(): boolean {
+    if (seatMap.length === 0) return true;
     if (!selFloor) { showToast("층수를 선택해주세요.", "warn"); return false; }
-    if (!selUnit.trim()) { showToast("유닛을 선택해주세요.", "warn"); return false; }
+    if (!selUnit) { showToast("유닛을 선택해주세요.", "warn"); return false; }
     return true;
   }
 
@@ -479,7 +436,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         const now = Date.now();
         const overdue = info.items
           .map((it) => {
-            const t = parseBorrowDateTs(it.borrowDate);
+            const t = new Date(it.borrowDate.replace(" ", "T")).getTime();
             const hoursAgo = isNaN(t) ? 0 : (now - t) / (1000 * 60 * 60);
             return { ...it, hoursAgo };
           })
@@ -594,6 +551,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     // 조회 자체가 실패한 SID는 Scenario 시트 등록 여부를 확인할 수 없으므로, 확실해질 때까지 진행을 막는다.
     const failed = sidCart.find((e) => e.scenario?.fetchError);
     if (failed) { showToast(`${failed.sid} 조회에 실패해 Scenario 시트 등록 여부를 확인할 수 없습니다. 다시 시도해주세요.`, "error"); return; }
+    // 15종류 한도를 넘기면 확인 화면으로 넘어가지 못하게 여기서 바로 막는다.
+    if (scenarioTypeOverflow) { setTypeOverflowModal(scenarioTypeOverflow); return; }
     setMode("b4s");
   }
 
@@ -627,12 +586,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           return;
         }
       }
-      const finalUnit = (selUnit === "custom" ? customUnit.trim() : selUnit.trim()) || undefined;
       borrowList.push({
         itemType: "general", borrowerName: name, ...contact,
         borrowedItems: cart.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity })),
         generalOption, borrowDate: nowStr, borrowPurpose: purposeGeneral,
-        floor: selFloor || undefined, unit: finalUnit,
+        floor: selFloor || undefined, unit: selUnit || undefined,
       });
     } else {
       if (sidCart.some((e) => e.loading)) { showToast("Scenario 시트의 필요 물품을 불러오는 중입니다. 잠시 후 다시 시도해주세요.", "warn"); return; }
@@ -663,7 +621,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           return;
         }
       }
-      const finalUnit = (selUnit === "custom" ? customUnit.trim() : selUnit.trim()) || undefined;
       sidCart.forEach((entry) => {
         const scenario = entry.scenario || ({ items: [], syncNeeded: true } as any);
         borrowList.push({
@@ -673,7 +630,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           additionalItems,
           syncNeeded: !!scenario.syncNeeded,
           borrowDate: nowStr, borrowPurpose: purposeScenario,
-          floor: selFloor || undefined, unit: finalUnit,
+          floor: selFloor || undefined, unit: selUnit || undefined,
         });
       });
     }
@@ -1162,11 +1119,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     showToast(`'${nm}' 담았습니다.`, "ok");
   }
 
-  // 세트를 한 번에 장바구니에 담기 — 위치(location) 및 물품명(name) 기준으로 유연하게 찾는다.
-  function cleanStr(s: string) {
-    return String(s || "").replace(/\s+/g, "").toLowerCase();
-  }
-
+  // 세트를 한 번에 장바구니에 담기 — 위치(location) 기준으로 실제 재고 항목을 찾아 매칭한다.
   function addSetToCart(set: ItemSet) {
     let addedCount = 0;
     const notFound: string[] = [];
@@ -1175,31 +1128,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setWhCart((prev) => {
       let next = [...prev];
       set.items.forEach((si) => {
-        const siNameClean = cleanStr(si.name);
-        const siLocClean = cleanStr(si.location);
-
-        // 1. 위치 + 이름 일치
-        let match = whItems.find((w) => cleanStr(w.location) === siLocClean && cleanStr(w.name) === siNameClean);
-
-        // 2. 이름 일치 (위치가 약간 다르거나 변경되었을 수 있음)
-        if (!match && siNameClean) {
-          match = whItems.find((w) => cleanStr(w.name) === siNameClean);
-        }
-
-        // 3. 이름 부분 포함 일치
-        if (!match && siNameClean.length >= 2) {
-          match = whItems.find((w) => cleanStr(w.name).includes(siNameClean) || siNameClean.includes(cleanStr(w.name)));
-        }
-
-        // 4. 위치만 일치
-        if (!match && siLocClean) {
-          match = whItems.find((w) => cleanStr(w.location) === siLocClean);
-        }
-
+        const match = whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase() && w.name === si.name)
+          || whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase()); // 이름까지 일치하는 게 없으면 위치만으로 폴백
         if (!match) { notFound.push(si.name || si.location); return; }
-
         const stock = warehouseStockNum(match.stock);
-        const idx = next.findIndex((c) => c.rowIndex === match!.rowIndex);
+        const idx = next.findIndex((c) => c.rowIndex === match.rowIndex);
         const already = idx !== -1 ? next[idx].quantity : 0;
         const want = si.qty || 1;
         const room = isNaN(stock) ? want : Math.max(0, stock - already);
@@ -1216,7 +1149,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       return next;
     });
 
-    if (addedCount > 0) showToast(`'${set.name}' 세트에서 ${addedCount}개 항목을 담았습니다.${shortages.length ? " (일부 재고 부족)" : ""}`, addedCount > 0 && !notFound.length && !shortages.length ? "ok" : "warn");
+    if (addedCount > 0) showToast(`'${set.name}' 세트에서 ${addedCount}개 담았습니다.${shortages.length ? " (일부 재고 부족)" : ""}`, addedCount > 0 && !notFound.length && !shortages.length ? "ok" : "warn");
     if (notFound.length) showToast(`세트의 일부 물품을 찾을 수 없습니다: ${notFound.join(", ")}`, "warn");
     if (!addedCount && !notFound.length) showToast("담을 수 있는 재고가 없습니다.", "warn");
   }
@@ -1485,6 +1418,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
+        {progressIdx > 0 && activeTypeInfo ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderRadius: "10px", background: C.accentSoft, marginBottom: "16px" }}>
+            <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>
+              {(affiliation === "other" ? otherName.trim() : borrowerName.trim()) || "회원"}님
+            </span>
+            <span style={{ fontSize: "12px", fontWeight: 800, color: activeTypeInfo.count >= activeTypeInfo.max ? C.error : C.accentText }}>
+              현재 {activeTypeInfo.count}/{activeTypeInfo.max}종류 대여 중
+            </span>
+          </div>
+        ) : null}
+
         {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
         <div key={mode} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {mode === "pickBorrowKind" || mode === "pickReturnKind" ? (
@@ -1575,63 +1519,49 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             ) : null}
 
-            <div style={{ marginBottom: "16px" }}>
-              <label style={labelStyle}>좌석 위치 (층수 및 유닛) <span style={{ color: C.error }}>*</span></label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                <select
-                  value={selFloor}
-                  onChange={(e) => { setSelFloor(e.target.value); setSelUnit(""); setCustomUnit(""); }}
-                  style={inputStyle}
-                >
-                  <option value="">층수 선택</option>
-                  {displaySeatMap.map((f) => <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>)}
-                </select>
-                <select
-                  value={selUnit}
-                  onChange={(e) => setSelUnit(e.target.value)}
-                  disabled={!selFloor}
-                  style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
-                >
-                  <option value="">유닛 선택</option>
-                  {[...(displaySeatMap.find((f) => (f.name || f.id) === selFloor)?.units || [])]
-                    .sort((a, b) => {
-                      const isPlainA = /^unit\s*\d+$/i.test(a.label.trim());
-                      const isPlainB = /^unit\s*\d+$/i.test(b.label.trim());
-                      if (isPlainA !== isPlainB) return isPlainA ? -1 : 1; // "Unit N" 형태가 먼저
-                      const numA = parseInt((a.label.match(/\d+/) || ["Infinity"])[0], 10);
-                      const numB = parseInt((b.label.match(/\d+/) || ["Infinity"])[0], 10);
-                      if (numA !== numB) return numA - numB; // 숫자 오름차순
-                      return a.label.localeCompare(b.label);
-                    })
-                    .map((u) => (
-                      <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
-                    ))}
-                </select>
+            {seatMap.length > 0 ? (
+              <div style={{ marginBottom: "16px" }}>
+                <label style={labelStyle}>좌석 위치</label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <select
+                    value={selFloor}
+                    onChange={(e) => { setSelFloor(e.target.value); setSelUnit(""); }}
+                    style={inputStyle}
+                  >
+                    <option value="">층수 선택</option>
+                    {seatMap.map((f) => <option key={f.id} value={f.name || f.id}>{f.name || f.id}</option>)}
+                  </select>
+                  <select
+                    value={selUnit}
+                    onChange={(e) => setSelUnit(e.target.value)}
+                    disabled={!selFloor}
+                    style={{ ...inputStyle, opacity: selFloor ? 1 : 0.6 }}
+                  >
+                    <option value="">유닛 선택</option>
+                    {[...(seatMap.find((f) => (f.name || f.id) === selFloor)?.units || [])]
+                      .sort((a, b) => {
+                        const isPlainA = /^unit\s*\d+$/i.test(a.label.trim());
+                        const isPlainB = /^unit\s*\d+$/i.test(b.label.trim());
+                        if (isPlainA !== isPlainB) return isPlainA ? -1 : 1; // "Unit N" 형태가 먼저
+                        const numA = parseInt((a.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        const numB = parseInt((b.label.match(/\d+/) || ["Infinity"])[0], 10);
+                        if (numA !== numB) return numA - numB; // 숫자 오름차순
+                        return a.label.localeCompare(b.label);
+                      })
+                      .map((u) => (
+                        <option key={`${u.row}-${u.col}`} value={u.label}>{u.label}</option>
+                      ))}
+                  </select>
+                </div>
+                <div style={{ fontSize: "12px", color: C.label, marginTop: "6px" }}>지금 계신 층과 유닛(자리)을 선택해주세요.</div>
               </div>
-              <div style={{ fontSize: "12px", color: C.label, marginTop: "6px" }}>지금 계신 층과 유닛(자리)을 선택해주세요.</div>
-            </div>
+            ) : null}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
               <button onClick={() => (onBack())} style={secondaryBtn}>이전</button>
               <button onClick={step1Next} disabled={verifying} style={{ ...primaryBtn, opacity: verifying ? 0.7 : 1 }}>
                 {verifying ? <><Spinner size={16} light /> 확인 중...</> : <>다음 단계 <ChevronRight size={15} /></>}
               </button>
-            </div>
-          </div>
-        ) : null}
-
-        {/* ───────── 대여자 및 대여 위치 요약 헤더 ───────── */}
-        {["b2", "b3s", "b4s", "b3g", "b4g"].includes(mode) ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: C.cardSub, borderRadius: "12px", marginBottom: "16px", border: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, color: C.text }}>
-              <User size={14} style={{ color: C.accentText }} />
-              <span>{affiliation === "other" ? otherName : borrowerName}</span>
-              <span style={{ fontSize: "11px", color: C.label }}>({affiliation.toUpperCase()})</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 700, color: C.accentText }}>
-              <Building2 size={13} />
-              <span>{selFloor} · {selUnit}</span>
-              <button onClick={() => setMode("b1")} style={{ background: "none", border: "none", color: C.label, fontSize: "11px", textDecoration: "underline", cursor: "pointer", marginLeft: "4px" }}>변경</button>
             </div>
           </div>
         ) : null}
@@ -1659,7 +1589,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} />
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={() => setMode("b2")} style={secondaryBtn}>이전</button>
-              <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } setMode("b4g"); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
+              <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } if (generalTypeOverflow) { setTypeOverflowModal(generalTypeOverflow); return; } setMode("b4g"); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
             </div>
           </div>
         ) : null}
@@ -2932,7 +2862,7 @@ function GroupCheckbox({
 
   return (
     <div
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleToggle(); }}
+      onClick={(e) => { e.stopPropagation(); handleToggle(); }}
       style={{
         width: 22,
         height: 22,
@@ -2996,7 +2926,6 @@ function GroupSection({
   const isExp = expanded[gKey] ?? hasSearch;
 
   const toggleExp = (e: React.MouseEvent) => {
-    e.preventDefault();
     e.stopPropagation();
     setExpanded((prev) => ({ ...prev, [gKey]: !isExp }));
   };
@@ -3079,7 +3008,7 @@ function GroupSection({
           ) : null}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <button type="button" onClick={toggleExp} style={{ border: "none", background: "none", color: C.label, cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={toggleExp} style={{ border: "none", background: "none", color: C.label, cursor: "pointer", padding: "4px", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ChevronRight size={16} style={{ transform: isExp ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }} />
           </button>
         </div>
@@ -3116,9 +3045,7 @@ function ReturnItemCard({
   const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
   const selQty = selectedReturn[k];
 
-  const handleToggle = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleToggle = () => {
     // 카드 클릭 시: 체크박스와 동일하게 항상 "전체 수량"으로 선택/해제한다.
     // (수량 조절은 아래 스테퍼로 별도 처리)
     toggleReturnKeys([item], !isSel);
@@ -3167,14 +3094,12 @@ function ReturnItemCard({
           <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
             <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
             <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedReturn((p) => ({ ...p, [k]: Math.max(1, (p[k] ?? maxQty) - 1) })); }}
+              onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.max(1, (p[k] ?? maxQty) - 1) }))}
               style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
             ><Minus size={12} /></button>
             <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{selQty ?? maxQty}</span>
             <button
-              type="button"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSelectedReturn((p) => ({ ...p, [k]: Math.min(maxQty, (p[k] ?? maxQty) + 1) })); }}
+              onClick={() => setSelectedReturn((p) => ({ ...p, [k]: Math.min(maxQty, (p[k] ?? maxQty) + 1) }))}
               style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
             ><Plus size={12} /></button>
             <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
