@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import {
-  ArrowLeft, Plus, Trash2, Sun, Moon, X, Package, User, Clock,
+  ArrowLeft, Plus, Trash2, Sun, Moon, X, Package, User, Clock, FileJson, Copy, Check, RotateCcw,
 } from "lucide-react";
 import {
   SeatFloor, SeatMap, fetchSeatMap, saveSeatMap,
-  SeatOccupancyEntry, fetchSeatOccupancy,
+  SeatOccupancyEntry, fetchSeatOccupancy, DEFAULT_SEAT_MAP_DATA,
 } from "../utils/borrowApi";
 
 interface Props {
@@ -49,30 +49,26 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
   const [occEntries, setOccEntries] = useState<SeatOccupancyEntry[]>([]);
   const [occLoading, setOccLoading] = useState(false);
 
+  // JSON 직접 편집 모달 상태
+  const [jsonModalOpen, setJsonModalOpen] = useState(false);
+  const [jsonText, setJsonText] = useState("");
+  const [jsonErr, setJsonErr] = useState("");
+  const [jsonCopied, setJsonCopied] = useState(false);
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const DEFAULT_FLOORS: SeatFloor[] = [
-    { id: "B2", name: "B2층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "B1", name: "B1층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "1F", name: "1층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-    { id: "2F", name: "2층", rows: 3, cols: 4, units: Array.from({ length: 12 }, (_, i) => ({ row: Math.floor(i / 4), col: i % 4, label: `Unit ${i + 1}` })) },
-  ];
+  const DEFAULT_FLOORS: SeatFloor[] = DEFAULT_SEAT_MAP_DATA.floors;
 
   function load() {
-    if (!connected || !scriptUrl) {
-      setFloors(DEFAULT_FLOORS);
-      setActiveFloorId("B2");
-      return;
-    }
     setLoading(true);
     fetchSeatMap(scriptUrl)
       .then((m) => {
         const loadedFloors = (m.floors && m.floors.length > 0) ? m.floors : DEFAULT_FLOORS;
         setFloors(loadedFloors);
-        setActiveFloorId(loadedFloors[0].id);
+        setActiveFloorId(loadedFloors[0]?.id || "B2");
       })
       .catch((e) => {
         showToast(`좌석맵을 불러오지 못했습니다: ${e.message}`, "error");
@@ -82,21 +78,56 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
       .finally(() => setLoading(false));
   }
 
-  async function persist(next: SeatFloor[]) {
+  async function persist(next: SeatFloor[], notify = false) {
     setFloors(next);
     setSaving(true);
     try {
-      if (connected && scriptUrl) {
-        const res = await saveSeatMap(scriptUrl, { floors: next } as SeatMap);
-        if (!res.success) showToast(res.message || "저장에 실패했습니다.", "error");
+      const res = await saveSeatMap(scriptUrl, { floors: next } as SeatMap);
+      if (res.success) {
+        if (notify) showToast("좌석배치도 JSON이 정상 반영되었습니다.", "ok");
       } else {
-        showToast("데모 모드: 실제 저장은 연동 시 동작합니다.", "info");
+        showToast(res.message || "저장에 실패했습니다.", "error");
       }
     } catch (e: any) {
       showToast(`저장 실패: ${e.message}`, "error");
     } finally {
       setSaving(false);
     }
+  }
+
+  function openJsonModal() {
+    setJsonText(JSON.stringify({ floors }, null, 2));
+    setJsonErr("");
+    setJsonCopied(false);
+    setJsonModalOpen(true);
+  }
+
+  function handleApplyJson() {
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!parsed || !Array.isArray(parsed.floors) || parsed.floors.length === 0) {
+        setJsonErr("올바른 JSON 형식이 아닙니다. 'floors' 배열이 존재해야 합니다.");
+        return;
+      }
+      persist(parsed.floors, true);
+      setActiveFloorId(parsed.floors[0]?.id || "");
+      setJsonModalOpen(false);
+    } catch (e: any) {
+      setJsonErr(`JSON 파싱 오류: ${e.message}`);
+    }
+  }
+
+  function handleResetDefaultJson() {
+    if (!window.confirm("초기 기본 배치도 JSON으로 복구하시겠습니까?")) return;
+    persist(DEFAULT_SEAT_MAP_DATA.floors, true);
+    setActiveFloorId(DEFAULT_SEAT_MAP_DATA.floors[0]?.id || "");
+    setJsonModalOpen(false);
+  }
+
+  function handleCopyJson() {
+    navigator.clipboard.writeText(jsonText);
+    setJsonCopied(true);
+    setTimeout(() => setJsonCopied(false), 2000);
   }
 
   const activeFloor = floors.find((f) => f.id === activeFloorId) || null;
@@ -208,6 +239,14 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
             <Moon size={14} /> Night Shift
           </button>
         </div>
+
+        {/* JSON 편집 / 동기화 버튼 */}
+        <button
+          onClick={openJsonModal}
+          style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.accent, cursor: "pointer", fontSize: "12.5px", fontWeight: 700 }}
+        >
+          <FileJson size={15} /> JSON 편집
+        </button>
       </div>
 
       <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "24px 20px 80px" }}>
@@ -387,6 +426,60 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* JSON 직접 편집 및 동기화 모달 */}
+      {jsonModalOpen ? (
+        <div onClick={() => setJsonModalOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(640px, 100%)", maxHeight: "85vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, borderTopLeftRadius: "16px", borderTopRightRadius: "16px" }}>
+              <FileJson size={18} style={{ color: C.accent }} />
+              <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, flex: 1 }}>좌석배치도 JSON 직접 편집</h2>
+              <button onClick={() => setJsonModalOpen(false)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+            <div style={{ padding: "20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div style={{ fontSize: "12px", color: C.label, lineHeight: "1.5" }}>
+                좌석배치도 JSON 데이터입니다. 저장된 JSON을 직접 확인하거나, 새로 편집/붙여넣기한 뒤 <b>적용 및 저장</b> 버튼을 누르면 구글 시트와 앱 전체에 반영됩니다.
+              </div>
+              <textarea
+                value={jsonText}
+                onChange={(e) => setJsonText(e.target.value)}
+                rows={15}
+                style={{
+                  width: "100%", padding: "12px", borderRadius: "10px", border: `1px solid ${C.border}`,
+                  background: C.cardSub, color: C.text, fontFamily: "monospace", fontSize: "12px",
+                  outline: "none", resize: "vertical", boxSizing: "border-box"
+                }}
+              />
+              {jsonErr ? (
+                <div style={{ color: C.error, fontSize: "12px", fontWeight: 600 }}>{jsonErr}</div>
+              ) : null}
+              <div style={{ display: "flex", gap: "8px", justifyContent: "space-between", alignItems: "center", marginTop: "8px", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    onClick={handleCopyJson}
+                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
+                  >
+                    {jsonCopied ? <Check size={14} style={{ color: C.success }} /> : <Copy size={14} />}
+                    {jsonCopied ? "복사완료!" : "JSON 복사"}
+                  </button>
+                  <button
+                    onClick={handleResetDefaultJson}
+                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 14px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.warn, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
+                  >
+                    <RotateCcw size={14} /> 기본 JSON 복구
+                  </button>
+                </div>
+                <button
+                  onClick={handleApplyJson}
+                  style={{ display: "flex", alignItems: "center", gap: "6px", padding: "9px 18px", borderRadius: "9px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+                >
+                  적용 및 저장
+                </button>
+              </div>
             </div>
           </div>
         </div>
