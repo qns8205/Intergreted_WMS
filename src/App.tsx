@@ -316,7 +316,17 @@ export default function App() {
     };
   }, []);
 
+  // 새로고침하면 실제 주소(#/monitor 등)와 무관하게 항상 초기 화면으로 돌아가던 버그 수정:
+  // 마운트 직후 이 effect가 처음 실행될 때는 currentView가 아직 실제 주소를 반영하기 전(초기값)이라,
+  // 그 상태로 window.location.hash를 덮어써버리면 위쪽 해시→상태 동기화 effect가 읽어들인 진짜 주소가
+  // 그 즉시 초기 화면 주소로 다시 지워지는 문제가 있었다. 최초 1회는 건너뛰고,
+  // 그 이후 사용자가 실제로 화면을 이동했을 때만 주소를 갱신한다.
+  const isFirstViewSyncRef = useRef(true);
   useEffect(() => {
+    if (isFirstViewSyncRef.current) {
+      isFirstViewSyncRef.current = false;
+      return;
+    }
     const currentHash = window.location.hash.split("/")[1] || "";
     if (currentView && currentHash !== currentView) {
       if (currentView === "monitor" && window.location.hash.startsWith("#/register")) {
