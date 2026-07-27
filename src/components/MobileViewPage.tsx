@@ -136,6 +136,20 @@ export default function MobileViewPage({
 
   // --- 모바일 불량(불량 탭) 폼 상태 ---
   const [defectTab, setDefectTab] = useState<"list" | "register">("list");
+
+  // 서브 탭(목록 보기 / 새 물품 등록)을 스크롤해도 고정한다.
+  // <main>이 자체 스크롤 컨테이너이므로 top: 0이면 main 상단에 붙는다.
+  // 좌우 -14px 마진으로 패딩을 상쇄해 폭 전체를 덮고, boxShadow로 배경을 위쪽으로 연장해
+  // main의 상단 패딩(14px) 사이로 내용이 비쳐 보이던 빈 공간을 없앤다.
+  const subTabBarStyle: React.CSSProperties = {
+    position: "sticky",
+    top: 0,
+    zIndex: 18,
+    margin: "0 -14px",
+    padding: "0 14px 10px",
+    background: isLightMode ? "#f8fafc" : "#0b0f19",
+    boxShadow: `0 -14px 0 0 ${isLightMode ? "#f8fafc" : "#0b0f19"}`,
+  };
   // 불량 등록: 품목 검색 목록 열림 여부 (PC DefectLogsPage와 동일한 실시간 검색 방식)
   const [defListOpen, setDefListOpen] = useState(true);
   const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
@@ -1399,6 +1413,7 @@ export default function MobileViewPage({
              3. 공구 및 부품류 탭: 목록 보기 / 새 물품 등록 (Admin 모바일 전용)
              ========================================================= */
           <>
+            <div style={subTabBarStyle}>
             <div
               style={{
                 display: "grid",
@@ -1407,7 +1422,6 @@ export default function MobileViewPage({
                 background: isLightMode ? "#f1f5f9" : "#111827",
                 padding: "4px",
                 borderRadius: "12px",
-                marginBottom: "12px",
               }}
             >
               <button
@@ -1438,6 +1452,7 @@ export default function MobileViewPage({
               >
                 ➕ 새 물품 등록
               </button>
+            </div>
             </div>
 
             {warehouseTab === "list" ? (
@@ -1786,7 +1801,8 @@ export default function MobileViewPage({
              3-B. 시나리오 물품 관리 (같은 영역에서 탭으로 전환, 페이지 이동 없음)
              ========================================================= */
           <>
-            {/* 서브 탭: 공구 및 부품류 탭과 동일한 구조 */}
+            {/* 서브 탭: 공구 및 부품류 탭과 동일한 구조 (스크롤해도 고정) */}
+            <div style={subTabBarStyle}>
             <div
               style={{
                 display: "grid",
@@ -1795,7 +1811,6 @@ export default function MobileViewPage({
                 background: isLightMode ? "#f1f5f9" : "#111827",
                 padding: "4px",
                 borderRadius: "12px",
-                marginBottom: "12px",
               }}
             >
               <button
@@ -1820,6 +1835,7 @@ export default function MobileViewPage({
               >
                 ➕ 새 물품 등록
               </button>
+            </div>
             </div>
 
             {scenarioTab === "list" ? (
