@@ -85,6 +85,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [mode]);
   const [appVersion, setAppVersion] = useState<string>("");
+  // 상단 헤더 높이 (대여자 상태 바를 헤더 바로 아래에 고정하기 위해 실측한다)
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerH, setHeaderH] = useState(53);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setHeaderH(el.getBoundingClientRect().height || 53);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [objectItems, setObjectItems] = useState<ObjectItem[]>([]);
   const [itemsLoaded, setItemsLoaded] = useState(false);
   const [itemsLoading, setItemsLoading] = useState(false);
@@ -1423,7 +1435,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       `}</style>
 
       {/* 상단바 */}
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
+      <div ref={headerRef} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button
           onClick={() => (mode === rootMode ? onBack() : goPrev())}
           style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
@@ -1450,18 +1462,71 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {progressIdx > 0 && activeTypeInfo ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderRadius: "10px", background: C.accentSoft, marginBottom: "16px" }}>
-            <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>
-              {(affiliation === "other" ? otherName.trim() : borrowerName.trim()) || "회원"}님
-            </span>
-            <span style={{ fontSize: "12px", fontWeight: 800, color: seatExempt ? C.accentText : (activeTypeInfo.count >= activeTypeInfo.max ? C.error : C.accentText) }}>
-              {seatExempt
-                ? `현재 ${activeTypeInfo.count}종류 대여 중 · 예외 유닛(제한 없음)`
-                : `현재 ${activeTypeInfo.count}/${activeTypeInfo.max}종류 대여 중`}
-            </span>
-          </div>
-        ) : null}
+        {/* 대여자 상태 바: 이름 입력 이후 대여 과정 내내 상단에 고정되어 따라다닌다.
+            (내가 누구로 신청 중인지 / 어느 유닛인지 / 지금 몇 개를 빌리고 있는지를 항상 확인할 수 있게) */}
+        {progressIdx > 0 && activeTypeInfo ? (() => {
+          const heldQty = (activeTypeInfo.items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0);
+          // 지금 장바구니에 담는 중인 수량 (SID 필수물품 + SID 추가물품 + 일반 + 창고)
+          const sidQty = sidCart.reduce(
+            (sum, e: any) => sum + ((e.scenario?.items || []).reduce((s2: number, it: any) => s2 + (Number(it.quantity) || 1), 0)),
+            0
+          );
+          const addingQty =
+            sidQty
+            + reqCart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0)
+            + cart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0)
+            + whCart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0);
+          const displayName = (affiliation === "other" ? otherName.trim() : borrowerName.trim()) || "회원";
+          const seatText = [selFloor, selUnit].filter(Boolean).join(" · ");
+          const limitReached = !seatExempt && activeTypeInfo.count >= activeTypeInfo.max;
+          return (
+            <div
+              style={{
+                position: "sticky",
+                top: headerH,
+                zIndex: 19,
+                marginBottom: "16px",
+                padding: "10px 14px",
+                borderRadius: "12px",
+                background: C.accentSoft,
+                border: `1px solid ${limitReached ? C.error : "transparent"}`,
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                flexWrap: "wrap",
+              }}
+            >
+              <span style={{ fontSize: "13.5px", fontWeight: 800, color: C.text, flexShrink: 0 }}>
+                {displayName}님
+              </span>
+
+              {seatText ? (
+                <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, background: C.card, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}>
+                  📍 {seatText}
+                </span>
+              ) : null}
+
+              {seatExempt ? (
+                <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.card, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}>
+                  ∞ 예외 유닛
+                </span>
+              ) : null}
+
+              <span style={{ flex: 1 }} />
+
+              <span style={{ fontSize: "12px", fontWeight: 800, color: limitReached ? C.error : C.accentText, whiteSpace: "nowrap" }}>
+                {seatExempt
+                  ? `대여 중 ${activeTypeInfo.count}종류 · ${heldQty}개`
+                  : `대여 중 ${activeTypeInfo.count}/${activeTypeInfo.max}종류 · ${heldQty}개`}
+                {addingQty > 0 ? (
+                  <span style={{ color: C.success, marginLeft: "6px" }}>(+담는 중 {addingQty}개)</span>
+                ) : null}
+              </span>
+            </div>
+          );
+        })() : null}
 
         {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
         <div key={mode} className={slideDir === "forward" ? "step-forward" : "step-back"}>
