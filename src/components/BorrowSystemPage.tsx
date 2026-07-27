@@ -330,7 +330,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, [cart, objectItems]);
 
   // 물품 종류 최대 보유 개수(한도) 초과 여부 — 이미 보유 중인 종류 + 이번에 새로 담은(안 갖고 있던) 종류를 합산.
+  // 좌석배치도에서 ∞(예외 유닛)로 지정된 유닛을 선택한 신청은 물품 종류 한도를 적용하지 않는다.
+  const seatExempt = useMemo(() => {
+    if (!selFloor || !selUnit) return false;
+    const floor = seatMap.find((f) => (f.name || f.id) === selFloor);
+    if (!floor) return false;
+    const unit = (floor.units || []).find((u) => u.label === selUnit);
+    return !!(unit && unit.exempt);
+  }, [seatMap, selFloor, selUnit]);
+
   function computeTypeOverflow(newIds: Set<string>) {
+    if (seatExempt) return null; // 예외 유닛: 종류 제한 없음
     if (!activeTypeInfo || activeTypeInfo.max <= 0) return null;
     const heldIds = new Set(activeTypeInfo.items.map((it) => it.id));
     let addingCount = 0;
@@ -429,7 +439,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       try {
         const info = await fetchActiveItemTypeCount(scriptUrl, nameForCheck);
         setActiveTypeInfo(info);
-        if (info.max > 0 && info.count >= info.max) {
+        if (!seatExempt && info.max > 0 && info.count >= info.max) {
           setTypeLimitModal(info);
           return;
         }
@@ -1445,8 +1455,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>
               {(affiliation === "other" ? otherName.trim() : borrowerName.trim()) || "회원"}님
             </span>
-            <span style={{ fontSize: "12px", fontWeight: 800, color: activeTypeInfo.count >= activeTypeInfo.max ? C.error : C.accentText }}>
-              현재 {activeTypeInfo.count}/{activeTypeInfo.max}종류 대여 중
+            <span style={{ fontSize: "12px", fontWeight: 800, color: seatExempt ? C.accentText : (activeTypeInfo.count >= activeTypeInfo.max ? C.error : C.accentText) }}>
+              {seatExempt
+                ? `현재 ${activeTypeInfo.count}종류 대여 중 · 예외 유닛(제한 없음)`
+                : `현재 ${activeTypeInfo.count}/${activeTypeInfo.max}종류 대여 중`}
             </span>
           </div>
         ) : null}
