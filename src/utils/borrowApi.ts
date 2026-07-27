@@ -905,3 +905,10 @@ export async function isClientOutdated(): Promise<boolean> {
     return false;
   }
 }
+
+/* ══════════ 앱 버전 발급 (관리자 전용) ══════════ */
+// 배포를 마친 뒤 이 함수를 호출하면 서버 APP_VERSION이 새 값으로 바뀌고,
+// 열려 있던 구버전 화면들에 새로고침 안내가 뜬다.
+export async function publishAppVersion(scriptUrl: string): Promise<{ success: boolean; version?: string; previous?: string; message?: string }> {
+  return await apiPost(scriptUrl, "publishAppVersion", {});
+}
