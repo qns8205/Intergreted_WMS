@@ -12,6 +12,10 @@ import {
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
 
+// 관리자 대여/반납 화면은 미반납 전체 + 최근 2주 반납분만 불러온다.
+// 전체 대장을 매번 받으면 로그가 쌓일수록 로딩이 계속 느려지기 때문이다.
+const RECENT_DAYS = 14;
+
 interface Props {
   scriptUrl: string;
   connected: boolean;
@@ -82,7 +86,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     try {
       if (connected && scriptUrl) {
         const [list, ver, catalog] = await Promise.all([
-          fetchScenarioAllLogs(scriptUrl),
+          fetchScenarioAllLogs(scriptUrl, RECENT_DAYS), // 미반납 전체 + 최근 2주 반납분만
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
           fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
@@ -477,7 +481,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         </select>
         <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
       </div>
-      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${filtered.length} / ${logs.length}건 (최신순)` : ""}</div>
+      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
+        {loaded ? `${filtered.length} / ${logs.length}건 (최신순) · 미반납 전체 + 최근 ${RECENT_DAYS}일 반납분` : ""}
+      </div>
 
       {loading && !loaded ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
