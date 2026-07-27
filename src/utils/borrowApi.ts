@@ -727,8 +727,9 @@ export async function fetchActiveItemTypeCount(scriptUrl: string, name: string):
     const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
     return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
   } catch (err: any) {
+    // 서버가 이 액션을 모르는 구버전이면 제한 없음으로 취급해 대여를 막지 않는다.
     if (err?.message && String(err.message).includes("알 수 없는")) {
-      return { count: 0, max: 10, items: [] };
+      return { count: 0, max: 15, items: [] };
     }
     throw err;
   }
