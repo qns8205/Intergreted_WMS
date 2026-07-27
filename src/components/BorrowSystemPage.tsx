@@ -1188,36 +1188,70 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   // 세트를 한 번에 장바구니에 담기 — 위치(location) 기준으로 실제 재고 항목을 찾아 매칭한다.
   function addSetToCart(set: ItemSet) {
+    // 이름 비교용 정규화: 앞뒤 공백 제거 + 연속 공백 하나로 + 대소문자 무시
+    const norm = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    const normLoc = (v: string | null | undefined) => String(v ?? "").trim().toUpperCase();
+
     let addedCount = 0;
     const notFound: string[] = [];
     const shortages: string[] = [];
+    // 한 세트 안에서 서로 다른 물품이 같은 재고 행에 잘못 매칭돼 합쳐지는 것을 막는다.
+    const usedRows = new Set<number>();
 
-    setWhCart((prev) => {
-      let next = [...prev];
-      set.items.forEach((si) => {
-        const match = whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase() && w.name === si.name)
-          || whItems.find((w) => w.location.trim().toUpperCase() === si.location.trim().toUpperCase()); // 이름까지 일치하는 게 없으면 위치만으로 폴백
-        if (!match) { notFound.push(si.name || si.location); return; }
-        const stock = warehouseStockNum(match.stock);
-        const idx = next.findIndex((c) => c.rowIndex === match.rowIndex);
-        const already = idx !== -1 ? next[idx].quantity : 0;
-        const want = si.qty || 1;
-        const room = isNaN(stock) ? want : Math.max(0, stock - already);
-        const toAdd = Math.min(want, room);
-        if (toAdd <= 0) { shortages.push(match.name); return; }
-        if (toAdd < want) shortages.push(match.name);
-        if (idx !== -1) {
-          next = next.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + toAdd } : c));
-        } else {
-          next = [...next, { rowIndex: match.rowIndex, location: match.location, name: match.name, quantity: toAdd }];
-        }
-        addedCount += toAdd;
-      });
-      return next;
+    // 계산은 setState 밖에서 끝낸다 (updater 안에서 외부 변수를 건드리면
+    // StrictMode의 이중 호출로 카운트가 두 배가 된다).
+    const next = [...whCart];
+
+    set.items.forEach((si) => {
+      const wantName = norm(si.name);
+      const wantLoc = normLoc(si.location);
+
+      // 1순위: 위치 + 이름 모두 일치
+      let match = whItems.find(
+        (w) => !usedRows.has(w.rowIndex) && normLoc(w.location) === wantLoc && norm(w.name) === wantName
+      );
+      // 2순위: 이름만 일치 (위치를 옮겼거나 시트의 위치 표기가 다른 경우)
+      if (!match) {
+        match = whItems.find((w) => !usedRows.has(w.rowIndex) && norm(w.name) === wantName);
+      }
+      // 3순위: 이름이 서로 포함 관계 (예: "LAN 선" ↔ "LAN 선(카테5)")
+      if (!match && wantName) {
+        match = whItems.find(
+          (w) => !usedRows.has(w.rowIndex) && (norm(w.name).includes(wantName) || wantName.includes(norm(w.name)))
+        );
+      }
+      // 위치만 같은 아무 물품을 집어오는 폴백은 쓰지 않는다 — 엉뚱한 물품이 담긴다.
+
+      if (!match) { notFound.push(si.name || si.location); return; }
+      usedRows.add(match.rowIndex);
+
+      const stock = warehouseStockNum(match.stock);
+      const idx = next.findIndex((c) => c.rowIndex === match!.rowIndex);
+      const already = idx !== -1 ? next[idx].quantity : 0;
+      const want = si.qty || 1;
+      const room = isNaN(stock) ? want : Math.max(0, stock - already);
+      const toAdd = Math.min(want, room);
+
+      if (toAdd <= 0) { shortages.push(match.name); return; }
+      if (toAdd < want) shortages.push(match.name);
+
+      if (idx !== -1) next[idx] = { ...next[idx], quantity: next[idx].quantity + toAdd };
+      else next.push({ rowIndex: match.rowIndex, location: match.location, name: match.name, quantity: toAdd });
+      addedCount += toAdd;
     });
 
-    if (addedCount > 0) showToast(`'${set.name}' 세트에서 ${addedCount}개 담았습니다.${shortages.length ? " (일부 재고 부족)" : ""}`, addedCount > 0 && !notFound.length && !shortages.length ? "ok" : "warn");
-    if (notFound.length) showToast(`세트의 일부 물품을 찾을 수 없습니다: ${notFound.join(", ")}`, "warn");
+    setWhCart(next);
+
+    if (addedCount > 0) {
+      const clean = !notFound.length && !shortages.length;
+      showToast(
+        `'${set.name}' 세트에서 ${addedCount}개 담았습니다.${shortages.length ? ` (재고 부족: ${shortages.join(", ")})` : ""}`,
+        clean ? "ok" : "warn"
+      );
+    }
+    if (notFound.length) {
+      showToast(`창고 목록에서 찾지 못한 물품: ${notFound.join(", ")} — 물품세트 시트의 이름이 창고물품 시트와 일치하는지 확인해주세요.`, "warn");
+    }
     if (!addedCount && !notFound.length) showToast("담을 수 있는 재고가 없습니다.", "warn");
   }
 
