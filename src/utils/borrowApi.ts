@@ -831,6 +831,13 @@ export function isVersionMismatchMessage(message?: string): boolean {
 // 폴링(주기적 확인) 사이의 빈틈에 제출이 들어가는 것을 막기 위한 최종 방어선.
 // 조회 실패(네트워크 등)는 "구버전 아님"으로 취급해 정상 흐름을 막지 않는다.
 export async function ensureUpToDate(scriptUrl: string, clientVersion: string): Promise<boolean> {
+  // 프론트엔드가 재배포됐는지 먼저 확인한다 (GAS 버전이 그대로여도 화면이 낡았을 수 있다).
+  try {
+    if (await isClientOutdated()) {
+      signalVersionOutdated();
+      return false;
+    }
+  } catch (e) { /* 판단 불가 시 무시 */ }
   if (!scriptUrl || !clientVersion) return true;
   try {
     const latest = await fetchBorrowAppVersion(scriptUrl);
@@ -857,4 +864,44 @@ export async function postSwapBorrowItem(
   clientVersion: string
 ): Promise<BorrowResult> {
   return (await apiPost(scriptUrl, "swapBorrowItem", { ...payload, clientVersion })) as BorrowResult;
+}
+
+/* ══════════ 프론트엔드(Vercel) 재배포 감지 ══════════ */
+// GAS의 APP_VERSION은 서버 코드 버전만 알려주므로, 프론트만 재배포한 경우는 잡히지 않는다.
+// Vite 빌드는 매 배포마다 해시가 붙은 새 파일명(assets/index-XXXX.js)을 만들기 때문에,
+// index.html이 가리키는 스크립트 파일명이 지금 실행 중인 파일명과 다르면 새 배포가 있었다는 뜻이다.
+// 별도 버전 파일이나 배포 절차 없이 동작하는 것이 장점이다.
+
+// 지금 실행 중인 번들 파일 경로 (빌드 시 Vite가 실제 파일명으로 치환한다)
+function currentBundlePath(): string {
+  try {
+    return new URL(import.meta.url).pathname;
+  } catch (e) {
+    return "";
+  }
+}
+
+// 배포된 index.html이 참조하는 module 스크립트 경로를 읽어온다.
+async function deployedBundlePath(): Promise<string> {
+  const res = await fetch(`/index.html?t=${Date.now()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`index.html 조회 실패 (${res.status})`);
+  const html = await res.text();
+  const match = html.match(/<script[^>]+type="module"[^>]+src="([^"]+)"/i)
+    || html.match(/<script[^>]+src="([^"]+)"[^>]+type="module"/i);
+  if (!match) throw new Error("index.html에서 스크립트 경로를 찾지 못했습니다.");
+  return new URL(match[1], window.location.origin).pathname;
+}
+
+// 프론트엔드가 재배포되어 지금 열려 있는 화면이 낡았는지 확인한다.
+// 판단이 불가능하면(네트워크 오류 등) false를 반환해 정상 동작을 막지 않는다.
+export async function isClientOutdated(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const current = currentBundlePath();
+  if (!current) return false;
+  try {
+    const deployed = await deployedBundlePath();
+    return !!deployed && deployed !== current;
+  } catch (e) {
+    return false;
+  }
 }
