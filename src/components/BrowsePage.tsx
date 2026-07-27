@@ -8,7 +8,7 @@ import {
   ObjectItem, WarehouseItem, BrowseCartItem, WarehouseCartItem,
   padSlot, isKoreanName, parseRackSlot, warehouseStockNum, compareRackSlot,
   fetchObjectItems, fetchWarehouseInventory, checkConfigDsRegistered,
-  fetchMyBorrowedItems, fetchWarehouseBorrowedItems, fetchScenarioAllLogs,
+  fetchMyBorrowedItems, fetchWarehouseBorrowedItems, fetchLeastBorrowedItems,
   saveIdentity, loadIdentity,
   saveBrowseCart, loadBrowseCart, saveWarehouseCart, loadWarehouseCart,
   DEMO_OBJECT_ITEMS,
@@ -180,23 +180,10 @@ export default function BrowsePage({
       setLeastBorrowedProgress((p) => (p >= 95 ? 95 : p + Math.max(1, (95 - p) * 0.08)));
     }, 200);
 
-    fetchScenarioAllLogs(scriptUrl)
-      .then((logs) => {
-        const byItem: Record<string, number> = {};
-        sciItems.forEach((it) => {
-          const nm = String(it.name || "").trim();
-          if (nm) byItem[nm] = 0;
-        });
-        logs.forEach((l) => {
-          const nm = String(l.itemName || "").trim();
-          if (!nm || nm === "(물품 미등록)") return;
-          byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
-        });
-        // "가장 적게 대여된 물품" 랭킹에서 제외하도록 표시된 물품은 걸러낸다.
-        const excludedNames = new Set(sciItems.filter((it) => it.excludeFromRanking).map((it) => String(it.name || "").trim()));
-        const bottom = Object.entries(byItem).filter(([name]) => !excludedNames.has(name)).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
-        setLeastBorrowed(bottom);
-      })
+    // 서버가 필요한 열만 읽어 집계한 결과(상위 20개)만 받아온다.
+    // 카탈로그 0 채우기와 랭킹 제외 처리도 서버에서 끝내므로 여기서는 그대로 쓰면 된다.
+    fetchLeastBorrowedItems(scriptUrl, 20)
+      .then((bottom) => setLeastBorrowed(bottom))
       .catch(() => { /* 조용히 무시 — 열람 화면의 부가 정보일 뿐 */ })
       .finally(() => {
         clearInterval(progressTimer);
