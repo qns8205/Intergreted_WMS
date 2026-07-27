@@ -123,7 +123,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [selUnit, setSelUnit] = useState("");
   // 물품 종류 최대 보유 개수 제한 관련 상태
   const [activeTypeInfo, setActiveTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
-  const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
+  const [typeLimitModal, setTypeLimitModal] = useState<ActiveItemTypeInfo | null>(null);
+  // 이름 입력을 마치고 대여를 시작할 때 한 번 띄우는 안내 팝업
+  const [qtyNoticeOpen, setQtyNoticeOpen] = useState(false);
+  const qtyNoticeShownRef = useRef(false); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
   const [typeOverflowModal, setTypeOverflowModal] = useState<{ current: number; adding: number; max: number } | null>(null); // 장바구니 담다가 한도 초과 시 (제출 직전 차단)
   const [overdueReminderModal, setOverdueReminderModal] = useState<{ id: string; name: string; quantity: number; borrowDate: string; hoursAgo: number }[] | null>(null); // 48시간 넘게 미반납 중인 물품 확인창
   const [verifying, setVerifying] = useState(false);
@@ -164,6 +167,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whLoaded, setWhLoaded] = useState(false);
   const [whLoading, setWhLoading] = useState(false);
   const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
+
+  // 대여자 상태 바에 쓸 보유 현황을 이름이 정해지는 즉시 조회한다.
+  // step1Next에서만 채우면, 열람 화면에서 장바구니를 들고 바로 넘어오는 등
+  // 이름 입력 단계를 건너뛴 경로에서 상태 바가 뜨지 않는다.
+  const effectiveBorrowerName = (affiliation === "other" ? otherName.trim() : borrowerName.trim());
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    if (!effectiveBorrowerName) return;
+    let cancelled = false;
+    fetchActiveItemTypeCount(scriptUrl, effectiveBorrowerName)
+      .then((info) => { if (!cancelled) setActiveTypeInfo(info); })
+      .catch(() => { /* 상태 표시용이므로 실패는 무시 */ });
+    return () => { cancelled = true; };
+  }, [connected, scriptUrl, effectiveBorrowerName]);
+
   const [itemSets, setItemSets] = useState<ItemSet[]>([]);
   const [itemSetsLoaded, setItemSetsLoaded] = useState(false);
   const [whSearch, setWhSearch] = useState("");
@@ -515,6 +533,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       }
     }
     setMode("b2");
+    // 물품 선택 전에 수량 안내를 한 번 띄운다 (세션당 1회)
+    if (!qtyNoticeShownRef.current) {
+      qtyNoticeShownRef.current = true;
+      setQtyNoticeOpen(true);
+    }
   }
 
   const loadSidScenario = (val: string) => {
@@ -2518,6 +2541,34 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       ) : null}
 
       {/* 이미 물품 종류 한도 이상 보유 중일 때 (이름 입력 직후 차단) */}
+      {/* 대여 시작 안내 팝업 */}
+      {qtyNoticeOpen ? (
+        <div
+          onClick={() => setQtyNoticeOpen(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 3200, background: "rgba(15,23,42,0.45)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(400px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "26px 24px", textAlign: "center", boxShadow: "0 18px 50px rgba(0,0,0,0.28)" }}
+          >
+            <div style={{ fontSize: "34px", lineHeight: 1, marginBottom: "14px" }}>📦</div>
+            <div style={{ fontSize: "15.5px", fontWeight: 800, color: C.text, marginBottom: "10px" }}>
+              신청 전 확인해주세요
+            </div>
+            <div style={{ fontSize: "13.5px", color: C.label, lineHeight: 1.7, marginBottom: "20px" }}>
+              반드시 <b style={{ color: C.text }}>가져가시는 물건의 개수</b>도<br />
+              고려해서 신청해주세요.
+            </div>
+            <button
+              onClick={() => setQtyNoticeOpen(false)}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 800 }}
+            >
+              확인했습니다
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {typeLimitModal ? (
         <div
           onClick={() => setTypeLimitModal(null)}
