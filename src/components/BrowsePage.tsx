@@ -78,6 +78,8 @@ export default function BrowsePage({
   const [leastBorrowedLoading, setLeastBorrowedLoading] = useState(false);
   const [leastBorrowedProgress, setLeastBorrowedProgress] = useState(0);
   const [leastBorrowedLoaded, setLeastBorrowedLoaded] = useState(false);
+  // 랭킹 스코어보드: 0 = 1~10위, 1 = 11~20위. 10초마다 넘어간다.
+  const [lbBoard, setLbBoard] = useState(0);
   const [leastBorrowedDetail, setLeastBorrowedDetail] = useState<{ item: ObjectItem; borrowCount: number } | null>(null);
   const stickyHeaderRef = useRef<HTMLDivElement>(null);
   const [stickyHeaderHeight, setStickyHeaderHeight] = useState(64);
@@ -203,6 +205,13 @@ export default function BrowsePage({
         setLeastBorrowedLoaded(true);
       });
   }, [step, sciLoaded, sciItems, connected, scriptUrl, leastBorrowedLoaded, leastBorrowedLoading]);
+
+  // 10초마다 1~10위 ↔ 11~20위를 번갈아 보여준다 (야구장 점수판처럼 한 줄씩 넘어가는 효과)
+  useEffect(() => {
+    if (leastBorrowed.length <= 10) return;
+    const timer = setInterval(() => setLbBoard((b) => (b === 0 ? 1 : 0)), 10000);
+    return () => clearInterval(timer);
+  }, [leastBorrowed.length]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -450,8 +459,23 @@ export default function BrowsePage({
             align-items: start;
           }
           /* DOM 순서는 그대로 두고(모바일에서 랭킹이 위로 오도록) 데스크톱에서만 좌우를 바꾼다 */
-          .bsp-least-col { order: 2; }
+          .bsp-least-col {
+            order: 2;
+            position: sticky;
+            align-self: start;
+          }
           .bsp-scenario-main { order: 1; min-width: 0; }
+        }
+        /* 야구장 점수판처럼 한 줄씩 뒤집히며 나타난다 */
+        @keyframes bsp-flip-in {
+          0%   { transform: rotateX(-90deg); opacity: 0; }
+          60%  { transform: rotateX(12deg);  opacity: 1; }
+          100% { transform: rotateX(0deg);   opacity: 1; }
+        }
+        .bsp-flip-row {
+          transform-origin: top center;
+          backface-visibility: hidden;
+          animation: bsp-flip-in 0.42s ease-out both;
         }
         /* 랭킹 목록 스크롤바를 얇게 */
         .bsp-least-list::-webkit-scrollbar { width: 6px; }
@@ -549,7 +573,7 @@ export default function BrowsePage({
 
         {step === "scenario" ? (
           <div className="bsp-scenario-layout">
-            <div className="bsp-least-col">
+            <div className="bsp-least-col" style={{ top: stickyHeaderHeight + 12 }}>
             {leastBorrowedLoading || leastBorrowed.length > 0 || leastBorrowedLoaded ? (
               <div
                 style={{
@@ -596,19 +620,23 @@ export default function BrowsePage({
                 ) : (
                   <div
                     className="bsp-least-list"
-                    style={{ maxHeight: "min(58vh, 520px)", overflowY: "auto", margin: "0 -4px", paddingRight: "4px" }}
+                    style={{ perspective: "600px", margin: "0 -4px", paddingRight: "4px" }}
                   >
-                    {leastBorrowed.slice(0, 20).map(([name, qty], idx) => {
-                      const rank = idx + 1;
+                    {leastBorrowed.slice(lbBoard * 10, lbBoard * 10 + 10).map(([name, qty], idx) => {
+                      const rank = lbBoard * 10 + idx + 1;
                       const isTop3 = rank <= 3;
                       return (
                         <div
-                          key={name}
+                          // key에 보드 번호를 넣어 페이지가 바뀔 때마다 요소가 새로 마운트되며 플립 애니메이션이 다시 실행된다
+                          key={`${lbBoard}-${name}`}
+                          className="bsp-flip-row"
                           onClick={() => {
                             const it = sciItems.find((o) => o.name === name);
                             if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
                           }}
                           style={{
+                            // 위에서부터 차례대로 넘어가도록 한 줄씩 지연
+                            animationDelay: `${idx * 55}ms`,
                             display: "flex",
                             alignItems: "center",
                             gap: "10px",
@@ -905,7 +933,8 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, childr
   }, [loaded, loading, error]);
   return (
     <div>
-      <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap", position: "sticky", top: stickyTop ?? 0, zIndex: 16, background: C.bg, padding: "8px 0" }}>{filterRow}</div>
+      {/* boxShadow로 배경을 위쪽으로 연장해, 헤더와 검색행 사이로 카드가 비쳐 보이던 틈을 덮는다 */}
+      <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap", position: "sticky", top: stickyTop ?? 0, zIndex: 16, background: C.bg, padding: "8px 0", boxShadow: `0 -16px 0 0 ${C.bg}` }}>{filterRow}</div>
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded && !error ? `${count} / ${total}개 물품` : ""}</div>
       {loading ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
