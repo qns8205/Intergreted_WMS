@@ -24,8 +24,10 @@ import {
 import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
-import { compareRackSlot } from "../utils/borrowApi";
-import ScenarioAdminPage from "./ScenarioAdminPage";
+import {
+  compareRackSlot, ScenarioObjectAdmin, fetchScenarioObjectsForAdmin,
+  addScenarioObject, updateScenarioObject, deleteScenarioObject, padSlot,
+} from "../utils/borrowApi";
 
 interface MobileViewPageProps {
   inventory: InventoryItem[];
@@ -134,7 +136,113 @@ export default function MobileViewPage({
 
   // --- 모바일 불량(불량 탭) 폼 상태 ---
   const [defectTab, setDefectTab] = useState<"list" | "register">("list");
+  // 불량 등록: 품목 검색 목록 열림 여부 (PC DefectLogsPage와 동일한 실시간 검색 방식)
+  const [defListOpen, setDefListOpen] = useState(true);
   const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
+
+  /* ---------- 시나리오 물품 탭 (공구 및 부품류 탭과 동일한 구조) ---------- */
+  const [scenarioTab, setScenarioTab] = useState<"list" | "register">("list");
+  const [sciItems, setSciItems] = useState<ScenarioObjectAdmin[]>([]);
+  const [sciLoading, setSciLoading] = useState(false);
+  const [sciLoaded, setSciLoaded] = useState(false);
+  // 등록/수정 폼 (editing이 있으면 수정, 없으면 신규)
+  const emptySciForm = { rowIndex: 0, id: "", name: "", sector: "", rootSlot: "", category: "", subcategory: "", image: "", stock: 0, rented: 0, excludeFromRanking: false };
+  const [sciForm, setSciForm] = useState<ScenarioObjectAdmin>(emptySciForm as ScenarioObjectAdmin);
+  const [sciEditing, setSciEditing] = useState(false);
+  const [sciSaving, setSciSaving] = useState(false);
+  const [sciUploading, setSciUploading] = useState(false);
+
+  const loadScenarioItems = React.useCallback(async () => {
+    if (!connected || !scriptUrl) { setSciLoaded(true); return; }
+    setSciLoading(true);
+    try {
+      setSciItems(await fetchScenarioObjectsForAdmin(scriptUrl));
+      setSciLoaded(true);
+    } catch (e: any) {
+      notify(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      setSciLoading(false);
+    }
+  }, [connected, scriptUrl]);
+
+  useEffect(() => {
+    if (mode === "시나리오" && !sciLoaded && !sciLoading) loadScenarioItems();
+  }, [mode, sciLoaded, sciLoading, loadScenarioItems]);
+
+  const filteredScenarioItems = useMemo(() => {
+    const base = !searchQuery.trim()
+      ? sciItems
+      : sciItems.filter((it) => smartMatch([it.name, it.id, it.rootSlot, it.category, it.subcategory], searchQuery));
+    return [...base].sort((a, b) => {
+      const na = parseInt(String(a.rootSlot || "").replace(/\D/g, ""), 10);
+      const nb = parseInt(String(b.rootSlot || "").replace(/\D/g, ""), 10);
+      return (isNaN(na) ? Number.MAX_SAFE_INTEGER : na) - (isNaN(nb) ? Number.MAX_SAFE_INTEGER : nb);
+    });
+  }, [sciItems, searchQuery]);
+
+  function openSciNew() {
+    setSciForm({ ...(emptySciForm as ScenarioObjectAdmin) });
+    setSciEditing(false);
+    setScenarioTab("register");
+  }
+  function openSciEdit(item: ScenarioObjectAdmin) {
+    setSciForm({ ...item });
+    setSciEditing(true);
+    setScenarioTab("register");
+  }
+
+  async function handleSciPhoto(file: File) {
+    try {
+      setSciUploading(true);
+      const dataUrl = await resizeAndCompressImage(file);
+      setSciForm((f) => ({ ...f, image: dataUrl }));
+    } catch (e: any) {
+      notify(`사진 처리 실패: ${e.message}`, "error");
+    } finally {
+      setSciUploading(false);
+    }
+  }
+
+  async function handleSciSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!sciForm.name.trim()) { notify("물품명을 입력해주세요.", "error"); return; }
+    if (!connected || !scriptUrl) { notify("연동이 필요합니다.", "error"); return; }
+    setSciSaving(true);
+    try {
+      if (sciEditing) {
+        await updateScenarioObject(scriptUrl, { ...sciForm, rowIndex: sciForm.rowIndex });
+        notify("수정했습니다.", "ok");
+      } else {
+        await addScenarioObject(scriptUrl, sciForm);
+        notify("등록했습니다.", "ok");
+      }
+      setSciLoaded(false);
+      setScenarioTab("list");
+      setSciForm({ ...(emptySciForm as ScenarioObjectAdmin) });
+      setSciEditing(false);
+    } catch (e: any) {
+      notify(`저장 실패: ${e.message}`, "error");
+    } finally {
+      setSciSaving(false);
+    }
+  }
+
+  async function handleSciDelete() {
+    if (!sciEditing || !sciForm.rowIndex) return;
+    if (!window.confirm(`'${sciForm.name}'을(를) 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    setSciSaving(true);
+    try {
+      await deleteScenarioObject(scriptUrl, sciForm.rowIndex);
+      notify("삭제했습니다.", "ok");
+      setSciLoaded(false);
+      setScenarioTab("list");
+      setSciEditing(false);
+    } catch (e: any) {
+      notify(`삭제 실패: ${e.message}`, "error");
+    } finally {
+      setSciSaving(false);
+    }
+  }
   const [defSelectedInvIndex, setDefSelectedInvIndex] = useState<number>(-1); // -1: 직접 입력
   const [defItemCategory, setDefItemCategory] = useState<"rack" | "robot">("rack"); // 공구 및 부품류 vs 로봇 오브젝트
   const [defCustomName, setDefCustomName] = useState("");
@@ -635,7 +743,7 @@ export default function MobileViewPage({
         setDefNote("");
         setDefPhoto(""); // Reset photo state
         setDefSelectedInvIndex(-1);
-        setDefItemCategory("rack");
+        setDefItemCategory("rack"); setDefSearch(""); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefListOpen(true);
         setDefSearch("");
         setDefectTab("list"); // Go back to list!
       } else {
@@ -1677,14 +1785,200 @@ export default function MobileViewPage({
           /* =========================================================
              3-B. 시나리오 물품 관리 (같은 영역에서 탭으로 전환, 페이지 이동 없음)
              ========================================================= */
-          <div style={{ margin: "-14px -14px 0" }}>
-            <ScenarioAdminPage
-              scriptUrl={scriptUrl}
-              connected={connected}
-              isLightMode={isLightMode}
-              showToast={(msg, type) => notify(msg, type === "info" ? "ok" : type)}
-            />
-          </div>
+          <>
+            {/* 서브 탭: 공구 및 부품류 탭과 동일한 구조 */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "4px",
+                background: isLightMode ? "#f1f5f9" : "#111827",
+                padding: "4px",
+                borderRadius: "12px",
+                marginBottom: "12px",
+              }}
+            >
+              <button
+                className="mvp-btn"
+                onClick={() => { setScenarioTab("list"); setSciEditing(false); }}
+                style={{
+                  padding: "9px", borderRadius: "9px", fontSize: "12.5px", fontWeight: 700,
+                  background: scenarioTab === "list" ? TEXT_MAIN : "transparent",
+                  color: scenarioTab === "list" ? BG : TEXT_DIM,
+                }}
+              >
+                📋 목록 보기 ({filteredScenarioItems.length})
+              </button>
+              <button
+                className="mvp-btn"
+                onClick={openSciNew}
+                style={{
+                  padding: "9px", borderRadius: "9px", fontSize: "12.5px", fontWeight: 700,
+                  background: scenarioTab === "register" ? TEXT_MAIN : "transparent",
+                  color: scenarioTab === "register" ? BG : TEXT_DIM,
+                }}
+              >
+                ➕ 새 물품 등록
+              </button>
+            </div>
+
+            {scenarioTab === "list" ? (
+              sciLoading && !sciLoaded ? (
+                <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
+                  불러오는 중...
+                </div>
+              ) : filteredScenarioItems.length === 0 ? (
+                <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
+                  <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
+                  등록된 시나리오 물품이 없습니다.
+                </div>
+              ) : (
+                filteredScenarioItems.map((item, idx) => {
+                  const hasImage = !!item.image;
+                  const imageUrl = hasImage ? getGoogleDriveImageUrl(item.image) : "";
+                  return (
+                    <div
+                      key={`sci-${item.rowIndex}-${idx}`}
+                      className="mvp-card"
+                      onClick={() => openSciEdit(item)}
+                      style={{
+                        background: CARD_BG,
+                        border: `1px solid ${BORDER}`,
+                        borderRadius: "16px",
+                        padding: "10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        cursor: "pointer",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "48px", height: "48px", borderRadius: "10px", overflow: "hidden", flexShrink: 0,
+                          background: isLightMode ? "#f1f5f9" : "#0f172a", display: "flex", alignItems: "center", justifyContent: "center",
+                        }}
+                      >
+                        {hasImage ? (
+                          <img src={imageUrl} alt={item.name} referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        ) : (
+                          <Package size={20} style={{ opacity: 0.3 }} />
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "14px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                        <div style={{ fontSize: "12px", color: TEXT_DIM, marginTop: "2px" }}>
+                          ID {item.id} · {item.rootSlot || "위치 없음"} · 재고 {item.stock ?? 0} · 대여 중 {item.rented ?? 0}
+                        </div>
+                      </div>
+                      <ChevronRight size={16} color={TEXT_DIM} />
+                    </div>
+                  );
+                })
+              )
+            ) : (
+              <form onSubmit={handleSciSubmit} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                  <Package size={20} color="#2563eb" />
+                  <div style={{ fontSize: "16px", fontWeight: 800, color: TEXT_MAIN }}>
+                    {sciEditing ? "✏️ 시나리오 물품 수정" : "📦 신규 시나리오 물품 등록"}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>물품명 *</label>
+                  <input className="mvp-input" type="text" required placeholder="물품 이름을 입력하세요"
+                    value={sciForm.name} onChange={(e) => setSciForm((f) => ({ ...f, name: e.target.value }))} style={inputBaseStyle} />
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>물품 ID</label>
+                    <input className="mvp-input" type="text" inputMode="numeric" placeholder="예: 000123"
+                      value={sciForm.id} onChange={(e) => setSciForm((f) => ({ ...f, id: e.target.value }))}
+                      onBlur={(e) => setSciForm((f) => ({ ...f, id: e.target.value.trim() ? padSlot(e.target.value.trim()) : "" }))}
+                      style={inputBaseStyle} />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>위치(root slot)</label>
+                    <input className="mvp-input" type="text" inputMode="numeric" placeholder="예: 000060"
+                      value={sciForm.rootSlot} onChange={(e) => setSciForm((f) => ({ ...f, rootSlot: e.target.value }))}
+                      onBlur={(e) => setSciForm((f) => ({ ...f, rootSlot: e.target.value.trim() ? padSlot(e.target.value.trim()) : "" }))}
+                      style={inputBaseStyle} />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>카테고리</label>
+                    <input className="mvp-input" type="text" placeholder="예: 식음료"
+                      value={sciForm.category} onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))} style={inputBaseStyle} />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>서브 카테고리</label>
+                    <input className="mvp-input" type="text" placeholder="예: 음료"
+                      value={sciForm.subcategory} onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))} style={inputBaseStyle} />
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>재고</label>
+                    <input className="mvp-input" type="number" min={0}
+                      value={sciForm.stock} onChange={(e) => setSciForm((f) => ({ ...f, stock: Math.max(0, Number(e.target.value)) }))} style={inputBaseStyle} />
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>구역(sector)</label>
+                    <input className="mvp-input" type="text" placeholder="예: Seoul-Root"
+                      value={sciForm.sector} onChange={(e) => setSciForm((f) => ({ ...f, sector: e.target.value }))} style={inputBaseStyle} />
+                  </div>
+                </div>
+
+                {/* 사진 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>사진</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <div style={{ width: "60px", height: "60px", borderRadius: "12px", overflow: "hidden", flexShrink: 0, background: isLightMode ? "#f1f5f9" : "#0f172a", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {sciForm.image ? (
+                        <img src={getGoogleDriveImageUrl(sciForm.image)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      ) : (
+                        <Package size={22} style={{ opacity: 0.3 }} />
+                      )}
+                    </div>
+                    <label
+                      style={{ flex: 1, padding: "11px", borderRadius: "12px", border: `1px dashed ${BORDER}`, textAlign: "center", fontSize: "12.5px", fontWeight: 700, color: TEXT_DIM, cursor: "pointer" }}
+                    >
+                      {sciUploading ? "처리 중..." : sciForm.image ? "사진 변경" : "사진 선택 / 촬영"}
+                      <input type="file" accept="image/*" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleSciPhoto(f); e.currentTarget.value = ""; }} />
+                    </label>
+                  </div>
+                </div>
+
+                {/* 랭킹 제외 */}
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderRadius: "12px", border: `1px solid ${BORDER}`, background: CARD_BG }}>
+                  <input type="checkbox" checked={!!sciForm.excludeFromRanking}
+                    onChange={(e) => setSciForm((f) => ({ ...f, excludeFromRanking: e.target.checked }))} />
+                  <span style={{ fontSize: "12.5px", fontWeight: 600, color: TEXT_MAIN }}>
+                    "가장 적게 대여된 물품" 랭킹에서 제외
+                  </span>
+                </label>
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  {sciEditing ? (
+                    <button type="button" onClick={handleSciDelete} disabled={sciSaving}
+                      style={{ flex: 1, padding: "15px", borderRadius: "14px", background: "transparent", border: `1px solid ${DANGER}`, color: DANGER, fontSize: "14px", fontWeight: 800 }}>
+                      삭제
+                    </button>
+                  ) : null}
+                  <button type="submit" disabled={sciSaving || sciUploading}
+                    style={{ flex: 2, padding: "15px", borderRadius: "14px", background: "#2563eb", color: "#ffffff", fontSize: "15px", fontWeight: 800, boxShadow: "0 6px 20px rgba(37, 99, 235,0.25)" }}>
+                    {sciSaving ? "저장 중..." : sciEditing ? "수정 저장하기" : "물품 등록하기"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
         ) : (
           /* =========================================================
              4. 불량 제품 관리 및 등록 (Admin 모바일 전용)
@@ -1719,7 +2013,7 @@ export default function MobileViewPage({
               <button
                 type="button"
                 className="mvp-btn"
-                onClick={() => setDefectTab("register")}
+                onClick={() => { setDefectTab("register"); setDefListOpen(true); }}
                 style={{
                   padding: "8px",
                   borderRadius: "8px",
@@ -1890,7 +2184,7 @@ export default function MobileViewPage({
                   <button
                     type="button"
                     className="mvp-btn"
-                    onClick={() => { setDefItemCategory("robot"); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefSearch(""); }}
+                    onClick={() => { setDefItemCategory("robot"); setDefSearch(""); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefListOpen(true); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefSearch(""); }}
                     style={{
                       padding: "9px",
                       borderRadius: "9px",
@@ -1904,60 +2198,120 @@ export default function MobileViewPage({
                   </button>
                 </div>
 
-                {/* 품목 선택 */}
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {/* 품목 선택: 검색하면 실시간으로 후보가 뜨고, 없으면 그 자리에서 직접 입력으로 넘어간다 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                   <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>품목 고르기</label>
-                  <div style={{ position: "relative", marginBottom: "2px" }}>
+                  <div style={{ position: "relative" }}>
                     <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       className="mvp-input"
                       type="text"
                       placeholder={defItemCategory === "rack" ? "물품명·위치로 검색" : "로봇 오브젝트 검색 (이름, 규격 등)"}
                       value={defSearch}
-                      onChange={(e) => setDefSearch(e.target.value)}
-                      style={{ ...inputBaseStyle, paddingLeft: "36px" }}
+                      onChange={(e) => {
+                        setDefSearch(e.target.value);
+                        setDefListOpen(true);
+                        // 검색어를 바꾸면 기존 선택은 해제 (선택했다고 착각하는 것 방지)
+                        if (defSelectedInvIndex !== -1) { setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); }
+                      }}
+                      onFocus={() => setDefListOpen(true)}
+                      style={{ ...inputBaseStyle, paddingLeft: "36px", border: `1px solid ${defSelectedInvIndex !== -1 ? ACCENT : BORDER}` }}
                     />
                   </div>
-                  <select
-                    className="mvp-input"
-                    value={defSelectedInvIndex}
-                    onChange={(e) => {
-                      const idx = Number(e.target.value);
-                      setDefSelectedInvIndex(idx);
-                      const source = defItemCategory === "rack" ? inventory : robotObjects;
-                      if (idx !== -1 && source[idx]) {
-                        setDefCustomName(source[idx].name);
-                        setDefCustomLoc(source[idx].location || "");
-                      } else {
-                        setDefCustomName("");
-                        setDefCustomLoc("");
-                      }
-                    }}
-                    style={{
-                      ...inputBaseStyle,
-                      background: INPUT_BG,
-                      color: TEXT_MAIN,
-                      border: `1px solid ${BORDER}`,
-                      borderRadius: "12px",
-                    }}
-                  >
-                    <option value={-1}>직접 품목 입력하기</option>
-                    {(defItemCategory === "rack" ? inventory : robotObjects)
-                      .map((item, idx) => ({ item, idx }))
-                      .filter(({ item }) => !defSearch.trim() || smartMatch([item.name, item.location, item.spec, item.keywords], defSearch))
-                      .map(({ item, idx }) => (
-                        <option key={idx} value={idx}>
-                          {item.name} {item.spec ? `[${item.spec}]` : ""} {item.location ? `(${item.location})` : ""}
-                        </option>
-                      ))}
-                  </select>
-                  {defSearch.trim() && (defItemCategory === "rack" ? inventory : robotObjects).filter((item) => smartMatch([item.name, item.location, item.spec, item.keywords], defSearch)).length === 0 ? (
-                    <div style={{ fontSize: "11px", color: AMBER, fontWeight: 600 }}>검색 결과가 없습니다. "직접 품목 입력하기"로 등록하세요.</div>
+
+                  {/* 선택 완료 표시 */}
+                  {defSelectedInvIndex !== -1 && !defListOpen ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "11px 12px", borderRadius: "12px", background: `${ACCENT}14`, border: `1px solid ${ACCENT}44` }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "13.5px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{defCustomName}</div>
+                        <div style={{ fontSize: "11.5px", color: TEXT_DIM, marginTop: "2px" }}>📍 {defCustomLoc || "위치 지정되지 않음"}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefSearch(""); setDefListOpen(true); }}
+                        style={{ background: "transparent", border: "none", color: ACCENT, fontSize: "12px", fontWeight: 800, flexShrink: 0 }}
+                      >
+                        변경
+                      </button>
+                    </div>
                   ) : null}
+
+                  {/* 실시간 후보 목록 */}
+                  {defListOpen ? (() => {
+                    const source: any[] = defItemCategory === "rack" ? inventory : robotObjects;
+                    const matched = source
+                      .map((item, idx) => ({ item, idx }))
+                      .filter(({ item }) => !defSearch.trim() || smartMatch([item.name, item.location, item.spec, item.keywords], defSearch));
+                    const shown = matched.slice(0, 40);
+                    return (
+                      <div style={{ border: `1px solid ${BORDER}`, borderRadius: "12px", overflow: "hidden", background: CARD_BG }}>
+                        {shown.length > 0 ? (
+                          <div style={{ maxHeight: "230px", overflowY: "auto" }}>
+                            {shown.map(({ item, idx }) => (
+                              <div
+                                key={idx}
+                                onClick={() => {
+                                  setDefSelectedInvIndex(idx);
+                                  setDefCustomName(item.name);
+                                  setDefCustomLoc(item.location || "");
+                                  setDefSearch(item.name);
+                                  setDefListOpen(false);
+                                }}
+                                style={{
+                                  padding: "11px 12px",
+                                  borderBottom: `1px solid ${BORDER}`,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  cursor: "pointer",
+                                  background: defSelectedInvIndex === idx ? `${ACCENT}14` : "transparent",
+                                }}
+                              >
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: "13px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                    {item.name}{item.spec ? <span style={{ color: TEXT_DIM, fontWeight: 500 }}> [{item.spec}]</span> : null}
+                                  </div>
+                                  {item.location ? <div style={{ fontSize: "11.5px", color: TEXT_DIM, marginTop: "2px" }}>{item.location}</div> : null}
+                                </div>
+                                <ChevronRight size={15} color={TEXT_DIM} />
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div style={{ padding: "18px 14px", textAlign: "center" }}>
+                            <div style={{ fontSize: "12.5px", color: TEXT_DIM, marginBottom: "12px" }}>일치하는 품목이 없습니다.</div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDefSelectedInvIndex(-1);
+                                setDefCustomName(defSearch.trim());
+                                setDefCustomLoc("");
+                                setDefListOpen(false);
+                              }}
+                              disabled={!defSearch.trim()}
+                              style={{
+                                padding: "10px 16px", borderRadius: "12px",
+                                border: `1px solid ${AMBER}`, background: "rgba(245,158,11,0.12)",
+                                color: AMBER, fontSize: "12.5px", fontWeight: 800,
+                                opacity: defSearch.trim() ? 1 : 0.5,
+                              }}
+                            >
+                              {defSearch.trim() ? `"${defSearch.trim()}"(으)로 직접 입력` : "이름을 먼저 입력하세요"}
+                            </button>
+                          </div>
+                        )}
+                        {shown.length > 0 && matched.length > shown.length ? (
+                          <div style={{ padding: "8px 12px", fontSize: "11px", color: TEXT_DIM, textAlign: "center", borderTop: `1px solid ${BORDER}` }}>
+                            상위 {shown.length}개 표시 · 총 {matched.length}개 — 검색어를 더 입력해 좁혀보세요
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })() : null}
                 </div>
 
-                {/* 직접 입력 시 물품명/위치 노출 */}
-                {defSelectedInvIndex === -1 ? (
+                {/* 직접 입력을 택했을 때만 물품명/위치 입력을 노출한다 (검색 중에는 숨김) */}
+                {defSelectedInvIndex === -1 && !defListOpen ? (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                       <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>물품명 *</label>
@@ -1984,21 +2338,7 @@ export default function MobileViewPage({
                       />
                     </div>
                   </div>
-                ) : (
-                  <div
-                    style={{
-                      fontSize: "12px",
-                      color: AMBER,
-                      background: "rgba(245,158,11,0.08)",
-                      border: "1px dashed rgba(245,158,11,0.2)",
-                      borderRadius: "10px",
-                      padding: "10px 12px",
-                      fontWeight: 700,
-                    }}
-                  >
-                    📍 선택 물품 보관 위치: {defCustomLoc || "지정되지 않음"}
-                  </div>
-                )}
+                ) : null}
 
                 {/* 수량 */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
