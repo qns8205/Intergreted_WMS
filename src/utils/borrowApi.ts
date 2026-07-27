@@ -761,6 +761,7 @@ export interface ScenarioLogEntry {
   itemName: string;
   quantity: number;
   borrowDate: string;
+  borrowDateTime?: string; // 시간까지 포함한 대여 시각 (정렬 전용, 표시는 borrowDate 사용)
   submitGroupKey?: string;
   submitDisplay?: string;
   borrowPurpose: string;
