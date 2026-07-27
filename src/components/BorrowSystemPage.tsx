@@ -1069,6 +1069,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   async function handleWarehouseReturn() {
+    try {
+      await handleWarehouseReturnInner();
+    } catch (e: any) {
+      // 예외가 나면 지금까지는 아무 반응 없이 조용히 죽었다. 원인이 보이게 한다.
+      console.error("[반납 처리 실패]", e);
+      showToast(`반납 처리 중 오류: ${e?.message || e}`, "error");
+      setReturnSubmitting(false);
+    }
+  }
+
+  async function handleWarehouseReturnInner() {
     const keys = Object.keys(whReturnSel);
     if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
 
@@ -2515,7 +2526,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 })()}
                 {Object.keys(whReturnSel).length === 0 ? (
                   <div style={{ marginTop: "12px", fontSize: "12px", color: C.label, textAlign: "center" }}>
-                    반납할 물품을 선택하면 버튼이 활성화됩니다.
+                    반납할 물품을 선택하면 버튼이 활성화됩니다. (대여자 카드를 눌러 펼친 뒤 물품을 선택하세요)
+                  </div>
+                ) : returnSubmitting ? (
+                  <div style={{ marginTop: "12px", fontSize: "12px", color: C.warn, textAlign: "center" }}>
+                    이전 요청이 처리 중입니다. 계속 이 상태면 페이지를 새로고침해주세요.
                   </div>
                 ) : null}
                 <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
