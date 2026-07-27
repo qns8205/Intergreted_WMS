@@ -780,8 +780,22 @@ export interface ScenarioLogEntry {
 
 // recentDays를 주면 "미반납 전체 + 최근 N일 내 반납분"만 받아온다 (관리자 화면 로딩 단축).
 // 생략하면 기존처럼 전체를 받아온다 (통계 화면 등).
-export async function fetchScenarioAllLogs(scriptUrl: string, recentDays?: number): Promise<ScenarioLogEntry[]> {
-  const params = recentDays && recentDays > 0 ? { recentDays: String(recentDays) } : {};
+export interface ScenarioLogQuery {
+  recentDays?: number;                             // 반납분을 최근 N일로 제한
+  scope?: "all" | "unreturned" | "returned";      // 미반납만 / 반납분만 / 전체
+  slim?: boolean;                                  // 화면에서 안 쓰는 필드 제외 (전송량 절감)
+}
+
+export async function fetchScenarioAllLogs(
+  scriptUrl: string,
+  recentDaysOrQuery?: number | ScenarioLogQuery
+): Promise<ScenarioLogEntry[]> {
+  const q: ScenarioLogQuery =
+    typeof recentDaysOrQuery === "number" ? { recentDays: recentDaysOrQuery } : (recentDaysOrQuery || {});
+  const params: Record<string, string> = {};
+  if (q.recentDays && q.recentDays > 0) params.recentDays = String(q.recentDays);
+  if (q.scope && q.scope !== "all") params.scope = q.scope;
+  if (q.slim) params.slim = "1";
   const data = await apiGet(scriptUrl, "getScenarioAllLogs", params, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ScenarioLogEntry[];
 }
