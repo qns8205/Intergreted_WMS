@@ -184,6 +184,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   const [itemSets, setItemSets] = useState<ItemSet[]>([]);
   const [itemSetsLoaded, setItemSetsLoaded] = useState(false);
+  // 세트 담기 결과 (토스트는 연달아 뜨면 덮이므로 화면에 남겨 원인을 확인할 수 있게 한다)
+  const [setAddResult, setSetAddResult] = useState<{ setName: string; added: number; notFound: string[]; shortages: string[] } | null>(null);
   const [whSearch, setWhSearch] = useState("");
   const [whCustomLoc, setWhCustomLoc] = useState("");
   const [whRack, setWhRack] = useState("");
@@ -1069,13 +1071,30 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   async function handleWarehouseReturn() {
     const keys = Object.keys(whReturnSel);
     if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
-    if (!whName.trim()) { showToast("반납자 성함을 입력해주세요.", "warn"); return; }
-    setReturnSubmitting(true);
+
     const returnSnapshot = keys.map((k) => {
       const idx = parseInt(k, 10);
       const item = whReturnItems[idx];
       return { item, qty: whReturnSel[k] };
     }).filter(x => x.item !== undefined);
+    if (!returnSnapshot.length) { showToast("선택한 항목을 찾지 못했습니다. 목록을 새로고침해주세요.", "warn"); return; }
+
+    // 반납자 성함을 따로 입력하지 않았으면, 선택한 항목의 대여자에서 가져온다.
+    // (목록이 대여자별로 묶여 있으므로 대부분 자동으로 채워진다)
+    const borrowersInSel = Array.from(new Set(
+      returnSnapshot.map((c) => String(c.item.borrowerName || "").trim()).filter((n) => n && n !== "(이름 없음)")
+    ));
+    const returnerName = whName.trim() || (borrowersInSel.length === 1 ? borrowersInSel[0] : "");
+    if (!returnerName) {
+      showToast(
+        borrowersInSel.length > 1
+          ? "여러 대여자의 물품을 함께 선택하셨습니다. 반납자 성함을 입력해주세요."
+          : "반납자 성함을 입력해주세요.",
+        "warn"
+      );
+      return;
+    }
+    setReturnSubmitting(true);
 
     const total = returnSnapshot.reduce((n, c) => n + c.qty, 0);
 
@@ -1086,7 +1105,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       title: "공구 및 부품류 반납 진행 중...",
       sub: `${total}개 물품의 반납을 기록하고 있습니다. 화면을 닫으셔도 구글 시트에 안전하게 완료됩니다.`,
       receipt: {
-        borrower: whName.trim(),
+        borrower: returnerName,
         date: nowString(),
         action: "창고 반납",
         items: returnSnapshot.map((c) => ({ name: c.item.name, qty: c.qty, location: c.item.location })),
@@ -1102,7 +1121,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           await Promise.all(returnSnapshot.map(async (c) => {
             // 반납 로그의 user는 반드시 '원래 대여자'와 일치해야 서버에서 해당 건의 재고를 정확히 상계한다.
             // (대여자별로 분리 집계되므로, 반납자 이름을 넣으면 다른 사람의 항목으로 잘못 매칭될 수 있다)
-            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: c.item.borrowerName || whName.trim() || "", note: `반납 접수 (반납자: ${whName.trim()})` });
+            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: c.item.borrowerName || returnerName, note: `반납 접수 (반납자: ${returnerName})` });
           }));
           
           setResultInfo((prev: any) => ({
@@ -1190,6 +1209,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   function addSetToCart(set: ItemSet) {
     // 이름 비교용 정규화: 앞뒤 공백 제거 + 연속 공백 하나로 + 대소문자 무시
     const norm = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    // 더 느슨한 비교용: 공백을 전부 없애고 괄호/하이픈 등 기호도 제거
+    // ("LAN 선" ↔ "LAN선", "M3 x 30" ↔ "M3x30", "LAN 선(카테5)" ↔ "LAN선 카테5")
+    const tight = (v: string | null | undefined) =>
+      String(v ?? "").toLowerCase().replace(/[\s()[\]{}_\-.,/]/g, "");
     const normLoc = (v: string | null | undefined) => String(v ?? "").trim().toUpperCase();
 
     let addedCount = 0;
@@ -1214,10 +1237,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       if (!match) {
         match = whItems.find((w) => !usedRows.has(w.rowIndex) && norm(w.name) === wantName);
       }
-      // 3순위: 이름이 서로 포함 관계 (예: "LAN 선" ↔ "LAN 선(카테5)")
-      if (!match && wantName) {
+      // 3순위: 공백·기호를 무시하고 완전 일치 ("LAN 선" ↔ "LAN선")
+      const wantTight = tight(si.name);
+      if (!match && wantTight) {
+        match = whItems.find((w) => !usedRows.has(w.rowIndex) && tight(w.name) === wantTight);
+      }
+      // 4순위: 공백·기호를 무시한 포함 관계 ("LAN선" ↔ "LAN선 카테5")
+      if (!match && wantTight.length >= 2) {
         match = whItems.find(
-          (w) => !usedRows.has(w.rowIndex) && (norm(w.name).includes(wantName) || wantName.includes(norm(w.name)))
+          (w) => !usedRows.has(w.rowIndex) && (tight(w.name).includes(wantTight) || wantTight.includes(tight(w.name)))
         );
       }
       // 위치만 같은 아무 물품을 집어오는 폴백은 쓰지 않는다 — 엉뚱한 물품이 담긴다.
@@ -1241,18 +1269,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     });
 
     setWhCart(next);
+    setSetAddResult({ setName: set.name, added: addedCount, notFound, shortages });
 
-    if (addedCount > 0) {
-      const clean = !notFound.length && !shortages.length;
-      showToast(
-        `'${set.name}' 세트에서 ${addedCount}개 담았습니다.${shortages.length ? ` (재고 부족: ${shortages.join(", ")})` : ""}`,
-        clean ? "ok" : "warn"
-      );
+    if (addedCount > 0 && !notFound.length && !shortages.length) {
+      showToast(`'${set.name}' 세트 ${addedCount}개를 담았습니다.`, "ok");
     }
-    if (notFound.length) {
-      showToast(`창고 목록에서 찾지 못한 물품: ${notFound.join(", ")} — 물품세트 시트의 이름이 창고물품 시트와 일치하는지 확인해주세요.`, "warn");
-    }
-    if (!addedCount && !notFound.length) showToast("담을 수 있는 재고가 없습니다.", "warn");
   }
 
   function chgWhCart(idx: number, d: number) {
@@ -2191,6 +2212,33 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             ) : null}
 
+            {/* 세트 담기 결과 — 못 찾은 물품이 있으면 사유가 화면에 남는다 */}
+            {setAddResult && (setAddResult.notFound.length > 0 || setAddResult.shortages.length > 0) ? (
+              <div style={{ marginBottom: "10px", padding: "12px 14px", borderRadius: "12px", background: C.warnSoft, border: `1px solid ${C.warn}55` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "12.5px", fontWeight: 800, color: C.warn, flex: 1 }}>
+                    '{setAddResult.setName}' 세트 — {setAddResult.added}개 담김
+                  </span>
+                  <button onClick={() => setSetAddResult(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", padding: 0 }}>
+                    <X size={15} />
+                  </button>
+                </div>
+                {setAddResult.notFound.length > 0 ? (
+                  <div style={{ fontSize: "12px", color: C.text, lineHeight: 1.6, marginBottom: setAddResult.shortages.length ? "6px" : 0 }}>
+                    <b>창고 목록에 없음:</b> {setAddResult.notFound.join(", ")}
+                    <div style={{ fontSize: "11.5px", color: C.label, marginTop: "3px" }}>
+                      '물품세트' 시트의 물품명이 '창고물품' 시트의 이름과 정확히 같은지 확인해주세요.
+                    </div>
+                  </div>
+                ) : null}
+                {setAddResult.shortages.length > 0 ? (
+                  <div style={{ fontSize: "12px", color: C.text, lineHeight: 1.6 }}>
+                    <b>재고 부족:</b> {setAddResult.shortages.join(", ")}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {/* 검색 + 랙/슬롯 필터 — 한 줄로 묶어 목록에 쓸 세로 공간을 확보한다 */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
               <div style={{ position: "relative", flex: "2 1 220px", minWidth: 0 }}>
@@ -2465,6 +2513,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     );
                   });
                 })()}
+                {Object.keys(whReturnSel).length === 0 ? (
+                  <div style={{ marginTop: "12px", fontSize: "12px", color: C.label, textAlign: "center" }}>
+                    반납할 물품을 선택하면 버튼이 활성화됩니다.
+                  </div>
+                ) : null}
                 <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
                   <button onClick={goPrev} style={secondaryBtn}>이전</button>
                   <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
