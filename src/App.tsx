@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -387,9 +387,27 @@ export default function App() {
       } catch (e) { /* 조회 실패는 무시 — 부가 점검용 폴링이므로 앱 동작을 막지 않는다 */ }
     };
     check();
-    const interval = setInterval(check, 120000); // 2분마다
-    return () => { cancelled = true; clearInterval(interval); };
+    // 재배포 직후 구버전 상태로 대여/반납을 진행하는 시간을 줄이기 위해 40초 주기로 확인한다.
+    const interval = setInterval(check, 40000);
+    // 화면을 다시 볼 때(탭 전환 복귀 등)에도 즉시 한 번 확인한다.
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, [connected, scriptUrl]);
+
+  // 하위 화면(대여 제출, 반납 제출 등)에서 구버전을 감지하면 window 이벤트로 알려온다.
+  // 폴링 주기와 무관하게, 어느 단계에 있든 즉시 오버레이를 띄운다.
+  useEffect(() => {
+    const onOutdated = () => setVersionMismatch(true);
+    window.addEventListener(VERSION_OUTDATED_EVENT, onOutdated);
+    return () => window.removeEventListener(VERSION_OUTDATED_EVENT, onOutdated);
+  }, []);
 
   // 구버전 경고: JSX 트리와 무관하게 화면 전체를 덮는 오버레이를 DOM에 직접 붙인다.
   // (App 컴포넌트 안에 화면별 return 분기가 여러 개라, 특정 화면에서만 빠지는 걸 방지)
