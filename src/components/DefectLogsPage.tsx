@@ -225,6 +225,29 @@ export default function DefectLogsPage({
     );
   }, [uniqueRobotObjects, itemSearchQuery]);
 
+  // 검색 결과 목록 열림 여부
+  const [itemListOpen, setItemListOpen] = useState(false);
+
+  // 분류에 따라 후보를 같은 모양으로 정규화한다 (name / sub / right).
+  const itemOptions = useMemo(() => {
+    if (itemCategory === "rack") {
+      return filteredUniqueItems.map((item: any) => ({
+        name: item.name,
+        sub: item.location ? `(${item.location})` : "",
+        right: item.stock != null ? `재고 ${item.stock}개` : "",
+      }));
+    }
+    return filteredRobotObjects.map((item: any) => ({
+      name: item.name,
+      sub: item.spec ? `[${item.spec}]` : "",
+      right: item.location || "",
+    }));
+  }, [itemCategory, filteredUniqueItems, filteredRobotObjects]);
+
+  const itemOptionCount = itemOptions.length;
+  // 목록이 길면 렌더링 비용이 커지므로 상위 50개만 그린다 (더 좁히려면 검색어를 추가 입력)
+  const visibleItemOptions = useMemo(() => itemOptions.slice(0, 50), [itemOptions]);
+
   const handleItemSelectChange = (name: string) => {
     setNameInput(name);
     if (itemCategory === "rack") {
@@ -483,6 +506,8 @@ export default function DefectLogsPage({
                     setManualItemName(!manualItemName);
                     setNameInput("");
                     setLocationInput("");
+                    setItemSearchQuery("");
+                    setItemListOpen(false);
                   }}
                   style={{
                     background: "transparent",
@@ -527,6 +552,7 @@ export default function DefectLogsPage({
                         setNameInput("");
                         setLocationInput("");
                         setItemSearchQuery("");
+                        setItemListOpen(true);
                       }}
                       style={{
                         flex: 1,
@@ -550,6 +576,7 @@ export default function DefectLogsPage({
                         setNameInput("");
                         setLocationInput("");
                         setItemSearchQuery("");
+                        setItemListOpen(true);
                       }}
                       style={{
                         flex: 1,
@@ -568,77 +595,117 @@ export default function DefectLogsPage({
                     </button>
                   </div>
 
+                  {/* 검색어를 치면 아래에 실시간으로 후보가 뜨고, 없으면 그 자리에서 직접 입력으로 넘어간다 */}
                   <div style={{ position: "relative" }}>
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={itemCategory === "rack" ? "랙 공구 및 부품류 목록 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
+                      placeholder={itemCategory === "rack" ? "랙 공구 및 부품류 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
                       value={itemSearchQuery}
-                      onChange={(e) => setItemSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setItemSearchQuery(e.target.value);
+                        setItemListOpen(true);
+                        // 검색어를 바꾸면 기존 선택은 해제한다 (선택했다고 착각하는 것을 방지)
+                        if (nameInput) { setNameInput(""); setLocationInput(""); }
+                      }}
+                      onFocus={() => setItemListOpen(true)}
                       style={{
                         width: "100%",
                         background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
+                        border: `1px solid ${nameInput ? ACCENT : PANEL_BORDER}`,
                         color: TEXT_MAIN,
-                        padding: "8px 10px 8px 32px",
+                        padding: "10px 12px 10px 32px",
                         borderRadius: "6px",
-                        fontSize: "12px",
+                        fontSize: "13px",
                         outline: "none",
                       }}
                     />
                   </div>
 
-                  {itemCategory === "rack" ? (
-                    <select
-                      required
-                      value={nameInput}
-                      onChange={(e) => handleItemSelectChange(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
-                        color: TEXT_MAIN,
-                        padding: "10px 12px",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                      }}
-                    >
-                      <option value="">랙 공구 및 부품류 선택... ({filteredUniqueItems.length}개 검색됨)</option>
-                      {filteredUniqueItems.map((item, idx) => (
-                        <option key={idx} value={item.name}>
-                          {item.name} {item.location ? `(${item.location})` : ""} {item.stock != null ? ` - 재고: ${item.stock}개` : ""}
-                        </option>
-                      ))}
-                      {filteredUniqueItems.length === 0 && (
-                        <option disabled>일치하는 공구 및 부품류 품목이 없습니다.</option>
+                  {/* 선택 완료 표시 */}
+                  {nameInput && !itemListOpen ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", borderRadius: "6px", background: `${ACCENT}12`, border: `1px solid ${ACCENT}40` }}>
+                      <span style={{ fontSize: "12.5px", fontWeight: 700, color: TEXT_MAIN, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {nameInput}
+                      </span>
+                      {locationInput ? <span style={{ fontSize: "11px", color: TEXT_DIM, flexShrink: 0 }}>{locationInput}</span> : null}
+                      <button
+                        type="button"
+                        onClick={() => { setNameInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
+                        style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "11.5px", fontWeight: 700, flexShrink: 0 }}
+                      >
+                        변경
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {/* 실시간 후보 목록 */}
+                  {itemListOpen ? (
+                    <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: "6px", maxHeight: "220px", overflowY: "auto", background: "var(--input-bg, #0f172a)" }}>
+                      {visibleItemOptions.length > 0 ? (
+                        visibleItemOptions.map((opt, idx) => (
+                          <div
+                            key={`${opt.name}-${idx}`}
+                            onClick={() => {
+                              handleItemSelectChange(opt.name);
+                              setItemSearchQuery(opt.name);
+                              setItemListOpen(false);
+                            }}
+                            style={{
+                              padding: "8px 10px",
+                              cursor: "pointer",
+                              borderBottom: `1px solid ${PANEL_BORDER}`,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              background: nameInput === opt.name ? `${ACCENT}15` : "transparent",
+                            }}
+                          >
+                            <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 600, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {opt.name}
+                              {opt.sub ? <span style={{ color: TEXT_DIM, fontWeight: 500 }}> {opt.sub}</span> : null}
+                            </span>
+                            {opt.right ? <span style={{ flexShrink: 0, fontSize: "11px", color: TEXT_DIM }}>{opt.right}</span> : null}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: "14px 12px", textAlign: "center" }}>
+                          <div style={{ fontSize: "12px", color: TEXT_DIM, marginBottom: "10px" }}>
+                            일치하는 품목이 없습니다.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // 검색어를 그대로 품목명으로 삼아 직접 입력 모드로 전환
+                              setManualItemName(true);
+                              setNameInput(itemSearchQuery.trim());
+                              setLocationInput("");
+                              setItemListOpen(false);
+                            }}
+                            disabled={!itemSearchQuery.trim()}
+                            style={{
+                              padding: "7px 14px",
+                              borderRadius: "6px",
+                              border: `1px solid ${ACCENT}`,
+                              background: `${ACCENT}18`,
+                              color: "#a5b4fc",
+                              cursor: itemSearchQuery.trim() ? "pointer" : "not-allowed",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              opacity: itemSearchQuery.trim() ? 1 : 0.5,
+                            }}
+                          >
+                            {itemSearchQuery.trim() ? `"${itemSearchQuery.trim()}"(으)로 직접 입력` : "직접 입력하려면 이름을 먼저 입력하세요"}
+                          </button>
+                        </div>
                       )}
-                    </select>
-                  ) : (
-                    <select
-                      required
-                      value={nameInput}
-                      onChange={(e) => handleItemSelectChange(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
-                        color: TEXT_MAIN,
-                        padding: "10px 12px",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                      }}
-                    >
-                      <option value="">로봇 오브젝트 선택... ({filteredRobotObjects.length}개 검색됨)</option>
-                      {filteredRobotObjects.map((item, idx) => (
-                        <option key={idx} value={item.name}>
-                          {item.name} {item.spec ? `[${item.spec}]` : ""} ({item.location})
-                        </option>
-                      ))}
-                      {filteredRobotObjects.length === 0 && (
-                        <option disabled>일치하는 로봇 오브젝트가 없습니다.</option>
-                      )}
-                    </select>
-                  )}
+                      {visibleItemOptions.length > 0 && itemOptionCount > visibleItemOptions.length ? (
+                        <div style={{ padding: "7px 10px", fontSize: "11px", color: TEXT_DIM, textAlign: "center" }}>
+                          상위 {visibleItemOptions.length}개 표시 중 · 총 {itemOptionCount}개 — 검색어를 더 입력해 좁혀보세요
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
