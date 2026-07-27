@@ -15,7 +15,7 @@ import {
   ItemSet, fetchItemSets,
   SeatFloor, fetchSeatMap,
   ActiveItemTypeInfo, fetchActiveItemTypeCount,
-  fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
+  fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent, postWarehouseRentBulk,
   loadWarehouseCart, clearWarehouseCart,
   ensureUpToDate, isVersionMismatchMessage, signalVersionOutdated,
 } from "../utils/borrowApi";
@@ -1027,12 +1027,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     (async () => {
       try {
         if (connected && scriptUrl) {
-          await Promise.all(cartSnapshot.map(async (c) => {
-            const type = effectiveType(c);
-            const dueTag = type === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
-            const baseNote = whPurpose || (type === "소모" ? "소모 처리" : "대여 신청");
-            return postWarehouseRent(scriptUrl, { type, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag });
-          }));
+          // 대여도 한 번의 요청으로 묶어 보낸다 (동시 요청 시 시트 잠금 충돌 발생).
+          const bulkBorrowRes = await postWarehouseRentBulk(
+            scriptUrl,
+            cartSnapshot.map((c) => {
+              const type = effectiveType(c);
+              const dueTag = type === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
+              const baseNote = whPurpose || (type === "소모" ? "소모 처리" : "대여 신청");
+              return { type, location: c.location, name: c.name, qty: c.quantity, user, note: baseNote + dueTag };
+            })
+          );
+          if (!bulkBorrowRes.success) throw new Error(bulkBorrowRes.error || "일부 물품의 기록에 실패했습니다.");
 
           setResultInfo((prev: any) => ({
             ...prev,
@@ -1129,11 +1134,20 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     (async () => {
       try {
         if (connected && scriptUrl) {
-          await Promise.all(returnSnapshot.map(async (c) => {
-            // 반납 로그의 user는 반드시 '원래 대여자'와 일치해야 서버에서 해당 건의 재고를 정확히 상계한다.
-            // (대여자별로 분리 집계되므로, 반납자 이름을 넣으면 다른 사람의 항목으로 잘못 매칭될 수 있다)
-            return postWarehouseRent(scriptUrl, { type: "반납", location: c.item.location, name: c.item.name, qty: c.qty, user: c.item.borrowerName || returnerName, note: `반납 접수 (반납자: ${returnerName})` });
-          }));
+          // 한 번의 요청으로 전부 처리한다 (동시 요청 시 시트 잠금 충돌이 발생한다).
+          // 반납 로그의 user는 '원래 대여자'로 남겨야 서버 집계에서 정확히 상계된다.
+          const bulkRes = await postWarehouseRentBulk(
+            scriptUrl,
+            returnSnapshot.map((c) => ({
+              type: "반납" as const,
+              location: c.item.location,
+              name: c.item.name,
+              qty: c.qty,
+              user: c.item.borrowerName || returnerName,
+              note: `반납 접수 (반납자: ${returnerName})`,
+            }))
+          );
+          if (!bulkRes.success) throw new Error(bulkRes.error || "일부 물품의 반납 기록에 실패했습니다.");
           
           setResultInfo((prev: any) => ({
             ...prev,
