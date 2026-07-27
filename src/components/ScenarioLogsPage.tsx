@@ -7,7 +7,7 @@ import {
   ScenarioLogEntry, ReturnRequest, padSlot,
   fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
-  isVersionMismatchMessage, signalVersionOutdated,
+  isVersionMismatchMessage, signalVersionOutdated, postSwapBorrowItem,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -50,6 +50,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [borrowerFilter, setBorrowerFilter] = useState("");
   const [sel, setSel] = useState<Record<string, number>>({});
+  // 대여 중인 한 건을 다른 물품으로 교체 (기존 반납 + 새 물품 대여를 한 번에)
+  const [swapTarget, setSwapTarget] = useState<ScenarioLogEntry | null>(null);
+  const [swapItemId, setSwapItemId] = useState("");
+  const [swapQty, setSwapQty] = useState(1);
+  const [swapSearch, setSwapSearch] = useState("");
+  const [swapReason, setSwapReason] = useState("");
+  const [swapping, setSwapping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [reborrowing, setReborrowing] = useState(false);
   const [reborrowModalOpen, setReborrowModalOpen] = useState(false);
@@ -88,6 +95,16 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           return isNaN(t) ? 0 : t;
         };
         const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDateTime || l.borrowDate), parseTs(l.returnDate));
+        // 서버가 구버전이라 borrowDateTime을 안 내려주면, 대여일은 날짜만 있어(자정 취급)
+        // 반납 건이 항상 위로 올라간다. 그 경우엔 서버가 보낸 순서를 그대로 신뢰한다.
+        const hasBorrowDateTime = list.some((l) => !!l.borrowDateTime);
+        if (!hasBorrowDateTime) {
+          setLogs(list);
+          setAppVersion(ver);
+          setAllItems(catalog);
+          hasDataRef.current = list.length > 0;
+          return;
+        }
         list.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         setLogs(list);
         setAppVersion(ver);
@@ -239,6 +256,43 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       await load();
     } catch (e: any) { showToast(`반납 처리 실패: ${e.message}`, "error"); }
     finally { setSubmitting(false); }
+  }
+
+  function openSwapModal() {
+    if (!isAdmin) { showToast("물품 교체는 관리자만 가능합니다.", "warn"); return; }
+    const targets = selEntries.filter((e) => !e.returned);
+    if (targets.length !== 1) { showToast("교체할 대여 건 1개만 선택해주세요.", "warn"); return; }
+    const t = targets[0];
+    setSwapTarget(t);
+    setSwapItemId("");
+    setSwapQty(t.quantity || 1);
+    setSwapSearch("");
+    setSwapReason("");
+  }
+
+  async function doSwap() {
+    if (!swapTarget) return;
+    if (!swapItemId) { showToast("교체할 물품을 선택해주세요.", "warn"); return; }
+    if (!swapQty || swapQty <= 0) { showToast("수량을 1개 이상으로 입력해주세요.", "warn"); return; }
+    setSwapping(true);
+    try {
+      if (connected && scriptUrl) {
+        const res = await postSwapBorrowItem(scriptUrl, {
+          sheetType: swapTarget.sheetType,
+          rowIndex: swapTarget.rowIndex,
+          newItemId: swapItemId,
+          newQuantity: swapQty,
+          reason: swapReason.trim(),
+        }, appVersion);
+        if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+        if (!res.success) { showToast(res.message || "물품 교체 실패", "error"); return; }
+        showToast(res.message || "물품을 교체했습니다.", "ok");
+      } else { showToast("데모 모드: 실제 교체는 연동 시 동작합니다.", "info"); }
+      setSwapTarget(null);
+      setSel({});
+      await load();
+    } catch (e: any) { showToast(`물품 교체 실패: ${e.message}`, "error"); }
+    finally { setSwapping(false); }
   }
 
   function openReBorrowModal() {
@@ -482,11 +536,100 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여</>}
             </button>
           ) : null}
+          {selHasUnreturned && selEntries.filter((e) => !e.returned).length === 1 ? (
+            <button onClick={openSwapModal} title="이 대여 건을 다른 물품으로 교체 (기존 반납 + 새 물품 대여)" style={{ padding: "10px 16px", borderRadius: "10px", border: `1px solid ${C.accent}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px" }}>
+              <Repeat size={15} /> 물품 교체
+            </button>
+          ) : null}
           {selHasUnreturned ? (
             <button onClick={doReturn} disabled={submitting} style={{ padding: "10px 18px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: submitting ? 0.7 : 1 }}>
               {submitting ? <><Spinner size={14} /> 처리 중...</> : <><Undo2 size={15} /> 반납 처리</>}
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* 물품 교체 모달 */}
+      {swapTarget ? (
+        <div onClick={() => !swapping && setSwapTarget(null)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(460px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "22px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+              <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, flex: 1, display: "flex", alignItems: "center", gap: "6px" }}><Repeat size={17} style={{ color: C.accentText }} /> 물품 교체</h2>
+              <button onClick={() => setSwapTarget(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+
+            <div style={{ padding: "12px 14px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}`, marginBottom: "14px" }}>
+              <div style={{ fontSize: "11px", color: C.label, marginBottom: "4px" }}>기존 대여 (반납 처리됩니다)</div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>{swapTarget.itemLabel}</div>
+              <div style={{ fontSize: "11.5px", color: C.label, marginTop: "3px" }}>
+                {swapTarget.borrowerName} · {swapTarget.borrowDate}
+                {swapTarget.floor || swapTarget.unit ? ` · ${[swapTarget.floor, swapTarget.unit].filter(Boolean).join(" · ")}` : ""}
+              </div>
+            </div>
+
+            <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>교체할 물품</div>
+            <input
+              value={swapSearch}
+              onChange={(e) => setSwapSearch(e.target.value)}
+              placeholder="물품명 또는 ID로 검색"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", outline: "none", marginBottom: "8px", boxSizing: "border-box" }}
+            />
+            <div style={{ maxHeight: "180px", overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: "10px", marginBottom: "14px" }}>
+              {allItems
+                .filter((it) => {
+                  if (!swapSearch.trim()) return true;
+                  return smartMatch(swapSearch, `${it.name} ${it.id}`);
+                })
+                .slice(0, 60)
+                .map((it) => (
+                  <div
+                    key={it.id}
+                    onClick={() => setSwapItemId(it.id)}
+                    style={{ padding: "9px 12px", cursor: "pointer", background: swapItemId === it.id ? C.accentSoft : "transparent", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: "8px" }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "12.5px", fontWeight: 700, color: swapItemId === it.id ? C.accentText : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                      <div style={{ fontSize: "11px", color: C.label }}>[{it.id}] · {it.rootSlot || "위치 없음"}</div>
+                    </div>
+                    <span style={{ fontSize: "11px", fontWeight: 800, color: (it.stock || 0) > 0 ? C.accentText : C.error, flexShrink: 0 }}>재고 {it.stock ?? 0}</span>
+                  </div>
+                ))}
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginBottom: "14px" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>수량</div>
+                <input
+                  type="number"
+                  min={1}
+                  value={swapQty}
+                  onChange={(e) => setSwapQty(parseInt(e.target.value, 10) || 1)}
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+              <div style={{ flex: 2 }}>
+                <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>사유 (선택)</div>
+                <input
+                  value={swapReason}
+                  onChange={(e) => setSwapReason(e.target.value)}
+                  placeholder="예: 파손으로 대체"
+                  style={{ width: "100%", padding: "10px 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", outline: "none", boxSizing: "border-box" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ fontSize: "11.5px", color: C.label, lineHeight: 1.6, marginBottom: "14px" }}>
+              기존 물품은 반납 처리되어 재고가 복구되고, 새 물품이 같은 대여자·위치로 새로 대여됩니다. Slack에도 교체 알림이 전송됩니다.
+            </div>
+
+            <button
+              onClick={doSwap}
+              disabled={swapping || !swapItemId}
+              style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: swapItemId ? C.accent : C.border, color: "#fff", cursor: swapItemId ? "pointer" : "not-allowed", fontSize: "14px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", opacity: swapping ? 0.7 : 1 }}
+            >
+              {swapping ? <><Spinner size={15} /> 교체 중...</> : <><Repeat size={16} /> 교체하기</>}
+            </button>
+          </div>
         </div>
       ) : null}
 
