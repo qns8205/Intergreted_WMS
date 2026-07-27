@@ -17,6 +17,7 @@ import {
   ActiveItemTypeInfo, fetchActiveItemTypeCount,
   fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent,
   loadWarehouseCart, clearWarehouseCart,
+  ensureUpToDate, isVersionMismatchMessage, signalVersionOutdated,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -691,7 +692,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     (async () => {
       try {
         if (connected && scriptUrl) {
+          // 제출 직전 최종 버전 확인 — 구버전이면 전송하지 않고 오버레이만 띄운다.
+          if (!(await ensureUpToDate(scriptUrl, appVersion))) {
+            setResultInfo((prev) => ({ ...prev, ok: false, isSyncing: false, title: "새 버전이 있어요", sub: "새로고침 후 다시 신청해주세요." }));
+            return;
+          }
           const res = await postRecordBorrow(scriptUrl, borrowList, appVersion);
+          if (!res.success && isVersionMismatchMessage(res.message)) {
+            // 서버가 구버전이라 거절한 경우: 빨간 실패 화면 대신 부드러운 오버레이로 안내한다.
+            signalVersionOutdated();
+            setResultInfo((prev) => ({ ...prev, ok: false, isSyncing: false, title: "새 버전이 있어요", sub: "새로고침 후 다시 신청해주세요." }));
+            return;
+          }
           setResultInfo((prev) => ({
             ...prev,
             ok: res.success,
@@ -865,7 +877,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     (async () => {
       try {
         if (connected && scriptUrl) {
+          // 제출 직전 최종 버전 확인 — 구버전이면 전송하지 않고 오버레이만 띄운다.
+          if (!(await ensureUpToDate(scriptUrl, appVersion))) {
+            setResultInfo({ ok: false, isSyncing: false, title: "새 버전이 있어요", sub: "새로고침 후 다시 반납해주세요." });
+            return;
+          }
           const res = await postProcessReturn(scriptUrl, requests, appVersion);
+          if (!res.success && isVersionMismatchMessage(res.message)) {
+            signalVersionOutdated();
+            setResultInfo({ ok: false, isSyncing: false, title: "새 버전이 있어요", sub: "새로고침 후 다시 반납해주세요." });
+            return;
+          }
           setResultInfo({
             ok: res.success,
             isSyncing: false,
