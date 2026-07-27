@@ -87,7 +87,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           const t = Date.parse(s.replace(" ", "T"));
           return isNaN(t) ? 0 : t;
         };
-        const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDate), parseTs((l as any).returnDate));
+        const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDateTime || l.borrowDate), parseTs(l.returnDate));
         list.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         setLogs(list);
         setAppVersion(ver);
