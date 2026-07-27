@@ -430,7 +430,7 @@ export default function RentLogsPage({
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        background: "var(--canvas-bg, #020617)",
+        background: isLightMode ? "#f8fafc" : "#0b0f19",
         height: "100%",
         overflow: "hidden",
       }}
