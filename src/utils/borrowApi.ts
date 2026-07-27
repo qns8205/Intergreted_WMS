@@ -890,3 +890,23 @@ export async function fetchLeastBorrowedItems(scriptUrl: string, limit = 20): Pr
   const data = await apiGet(scriptUrl, "getLeastBorrowedItems", { limit: String(limit) }, { timeoutMs: 30000, retries: 1 });
   return (data.items || []) as [string, number][];
 }
+
+/* ══════════ 창고물품 대여/반납 묶음 처리 ══════════ */
+// 여러 건을 한 번의 요청으로 처리한다.
+// (건수만큼 동시에 요청을 보내면 Apps Script에서 같은 시트 동시 쓰기가 발생해
+//  잠금 충돌로 실패하거나 재고 갱신이 서로를 덮어쓴다)
+export interface WarehouseRentRow {
+  type: "대여" | "반납" | "소모";
+  location: string;
+  name: string;
+  qty: number;
+  user: string;
+  note: string;
+}
+
+export async function postWarehouseRentBulk(
+  scriptUrl: string,
+  items: WarehouseRentRow[]
+): Promise<{ success: boolean; processed?: number; failed?: string[]; error?: string }> {
+  return apiPost(scriptUrl, "rentInventoryItemsBulk", { items });
+}
