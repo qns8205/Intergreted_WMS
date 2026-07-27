@@ -12,8 +12,8 @@ import {
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
 
-// 관리자 대여/반납 화면은 미반납 전체 + 최근 2주 반납분만 불러온다.
-// 전체 대장을 매번 받으면 로그가 쌓일수록 로딩이 계속 느려지기 때문이다.
+// 관리자 대여/반납 화면은 "미반납 → 최근 반납분 → 나머지 전체" 순으로 나눠 받는다.
+// 첫 화면은 빨리 뜨면서도, 백그라운드 로딩이 끝나면 전체 기간이 검색 대상이 된다.
 const RECENT_DAYS = 14;
 
 interface Props {
@@ -79,19 +79,19 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   // 화면에 데이터가 떠 있는지 여부는 ref로 추적한다.
   // (state를 load의 의존성에 넣으면 로드 완료 → load 재생성 → useEffect 재실행의 무한 재조회 루프가 생긴다)
   const hasDataRef = useRef(false);
+  // 반납 이력(2단계)이 백그라운드로 들어오는 중인지
+  const [historyLoading, setHistoryLoading] = useState(false);
+  // 전체 기간 이력까지 다 받아왔는지 (검색 범위 안내용)
+  const [historyComplete, setHistoryComplete] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setSel({});
+    setHistoryComplete(false);
     try {
       if (connected && scriptUrl) {
-        const [list, ver, catalog] = await Promise.all([
-          fetchScenarioAllLogs(scriptUrl, RECENT_DAYS), // 미반납 전체 + 최근 2주 반납분만
-          fetchBorrowAppVersion(scriptUrl).catch(() => ""),
-          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
-        ]);
-        // 서버 정렬을 신뢰하되, 날짜 형식이 섞인 과거 데이터를 대비해 클라이언트에서도 재정렬.
-        // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순 → 반납 처리된 건도 위로 올라온다.
+        // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순.
+        // 서버가 구버전이라 borrowDateTime을 안 내려주면 서버 순서를 그대로 신뢰한다.
         const parseTs = (v?: string) => {
           const s = String(v || "").trim();
           if (!s) return 0;
@@ -99,21 +99,45 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           return isNaN(t) ? 0 : t;
         };
         const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDateTime || l.borrowDate), parseTs(l.returnDate));
-        // 서버가 구버전이라 borrowDateTime을 안 내려주면, 대여일은 날짜만 있어(자정 취급)
-        // 반납 건이 항상 위로 올라간다. 그 경우엔 서버가 보낸 순서를 그대로 신뢰한다.
-        const hasBorrowDateTime = list.some((l) => !!l.borrowDateTime);
-        if (!hasBorrowDateTime) {
-          setLogs(list);
-          setAppVersion(ver);
-          setAllItems(catalog);
-          hasDataRef.current = list.length > 0;
-          return;
-        }
-        list.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
-        setLogs(list);
+        const sortLogs = (arr: ScenarioLogEntry[]) => {
+          if (!arr.some((l) => !!l.borrowDateTime)) return arr;
+          return arr.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
+        };
+
+        // 1단계: 미반납 건만 먼저 받아 즉시 화면에 그린다. 실제로 처리해야 할 항목들이라 가장 급하다.
+        const [unreturned, ver, catalog] = await Promise.all([
+          fetchScenarioAllLogs(scriptUrl, { scope: "unreturned", slim: true }),
+          fetchBorrowAppVersion(scriptUrl).catch(() => ""),
+          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
+        ]);
+        setLogs(sortLogs([...unreturned]));
         setAppVersion(ver);
         setAllItems(catalog);
-        hasDataRef.current = list.length > 0;
+        hasDataRef.current = unreturned.length > 0;
+        setLoading(false);
+
+        // 2·3단계: 반납 이력을 백그라운드로 받아 합친다. 목록은 이미 조작 가능한 상태다.
+        // 먼저 최근 2주분을 붙여 흔히 찾는 기록이 빨리 검색되게 하고,
+        // 이어서 전체 기간을 받아 합쳐 최종적으로 모든 기록이 검색 대상이 되게 한다.
+        const mergeInto = (incoming: ScenarioLogEntry[]) => {
+          setLogs((prev) => {
+            const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
+            const merged = prev.concat(incoming.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`)));
+            return sortLogs(merged);
+          });
+        };
+
+        setHistoryLoading(true);
+        try {
+          mergeInto(await fetchScenarioAllLogs(scriptUrl, { scope: "returned", recentDays: RECENT_DAYS, slim: true }));
+          mergeInto(await fetchScenarioAllLogs(scriptUrl, { scope: "returned", slim: true }));
+          setHistoryComplete(true);
+        } catch (e: any) {
+          showToast(`반납 이력을 불러오지 못했습니다: ${e.message}`, "warn");
+        } finally {
+          setHistoryLoading(false);
+        }
+        return;
       } else {
         setLogs([
           { sheetType: "scenario", rowIndex: 2, borrowerName: "홍길동", scenarioId: "S00001", itemLabel: "[000060] 소화기 x 2", itemKind: "필수 물품", location: "000060", itemId: "000060", itemName: "소화기", quantity: 2, borrowDate: "2026-07-15 09:00", borrowPurpose: "훈련", email: "", batchId: "b1", returned: false, image: "", stock: 5, rented: 2 },
@@ -482,7 +506,18 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
       </div>
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
-        {loaded ? `${filtered.length} / ${logs.length}건 (최신순) · 미반납 전체 + 최근 ${RECENT_DAYS}일 반납분` : ""}
+        {loaded ? (
+          <>
+            {`${filtered.length} / ${logs.length}건 (최신순)`}
+            {historyLoading ? (
+              <span style={{ marginLeft: "8px", color: C.accentText, fontWeight: 700 }}>
+                전체 이력 불러오는 중... (지금은 최근 기록만 검색됩니다)
+              </span>
+            ) : historyComplete ? (
+              <span style={{ marginLeft: "8px", color: C.label }}>· 전체 기간 검색 가능</span>
+            ) : null}
+          </>
+        ) : ""}
       </div>
 
       {loading && !loaded ? (
