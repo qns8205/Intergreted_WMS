@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, isClientOutdated } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, isClientOutdated, publishAppVersion } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -158,6 +158,7 @@ export default function App() {
   // 최초 접속 시 버전을 기억해두고, 주기적으로 서버 버전과 비교해서 달라지면
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
+  const [publishingVersion, setPublishingVersion] = useState(false);
   const baselineAppVersionRef = useRef<string | null>(null);
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
@@ -2230,6 +2231,43 @@ export default function App() {
           >
             {isAdmin ? "🛠️ 관리자 모드" : "👀 열람용 모드"}
           </span>
+          {isAdmin && connected && scriptUrl && (
+            <button
+              onClick={async () => {
+                if (!window.confirm("배포를 모두 마치셨나요?\n\n새 버전을 발급하면 지금 열려 있는 다른 사용자들의 구버전 화면이 즉시 차단되고 새로고침 안내가 표시됩니다.")) return;
+                setPublishingVersion(true);
+                try {
+                  const res = await publishAppVersion(scriptUrl);
+                  if (res.success) {
+                    showToast(`새 버전 발급 완료: ${res.version}`, "ok");
+                    // 이 화면도 방금 발급된 버전 기준으로 다시 맞춘다.
+                    baselineAppVersionRef.current = res.version || null;
+                  } else {
+                    showToast(res.message || "버전 발급에 실패했습니다.", "error");
+                  }
+                } catch (e: any) {
+                  showToast(`버전 발급 실패: ${e.message}`, "error");
+                } finally {
+                  setPublishingVersion(false);
+                }
+              }}
+              disabled={publishingVersion}
+              title="배포 후 실행: 새 버전을 발급해 구버전 화면을 차단합니다"
+              style={{
+                background: "rgba(245, 158, 11, 0.10)",
+                border: "1px solid rgba(245, 158, 11, 0.30)",
+                borderRadius: "6px",
+                padding: "3px 10px",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "#f59e0b",
+                cursor: publishingVersion ? "not-allowed" : "pointer",
+                opacity: publishingVersion ? 0.6 : 1,
+              }}
+            >
+              {publishingVersion ? "발급 중..." : "🚀 새 버전 발급"}
+            </button>
+          )}
           {!isAdmin && (
             <button
               onClick={() => {
