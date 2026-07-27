@@ -2157,20 +2157,32 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             ) : null}
 
-            {/* 랙/슬롯 필터 + 검색 */}
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <select value={whRack} onChange={(e) => { setWhRack(e.target.value); setWhSlot(""); }} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
+            {/* 검색 + 랙/슬롯 필터 — 한 줄로 묶어 목록에 쓸 세로 공간을 확보한다 */}
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "2 1 220px", minWidth: 0 }}>
+                <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+                <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "10px 12px 10px 36px", fontSize: "13.5px" }} />
+              </div>
+              <select value={whRack} onChange={(e) => { setWhRack(e.target.value); setWhSlot(""); }} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "1 1 110px", minWidth: 0 }}>
                 <option value="">전체 랙</option>{whRacks.map((r) => <option key={r} value={r}>{r}랙</option>)}
               </select>
-              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 12px", fontSize: "13px", flex: 1, minWidth: 0 }}>
+              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "1 1 110px", minWidth: 0 }}>
                 <option value="">전체 슬롯</option>{whSlots.map((sl) => <option key={sl} value={sl}>{sl}번</option>)}
               </select>
             </div>
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-            </div>
-            <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "280px", overflowY: "auto" }}>
+
+            {/* 결과 수 + 선택 개수 */}
+            {whLoaded && whItems.length > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", fontSize: "11.5px", color: C.label }}>
+                <span>{whFiltered.length} / {whItems.length}개 물품</span>
+                {whCart.length > 0 ? (
+                  <span style={{ fontWeight: 800, color: C.accentText }}>{whCart.length}종 선택됨</span>
+                ) : (
+                  <span>탭하면 담깁니다</span>
+                )}
+              </div>
+            ) : null}
+            <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "min(58vh, 620px)", overflowY: "auto" }}>
               {whLoading ? (
                 <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 공구 및 부품류를 불러오는 중...</div>
               ) : !whLoaded || whItems.length === 0 ? (
@@ -2186,15 +2198,43 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const stockN = warehouseStockNum(it.stock);
                   const { rack, slot } = parseRackSlot(it.location);
                   return (
-                    <div key={it.rowIndex} onClick={() => addWhCart(it)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: inCart ? C.accentSoft : "transparent" }}>
-                      <input type="checkbox" readOnly checked={inCart} style={{ width: 20, height: 20, accentColor: C.accent, flexShrink: 0 }} />
-                      <Thumb url={it.photo} size={44} C={C} setImageModalUrl={setImageModalUrl} />
+                    <div
+                      key={it.rowIndex}
+                      onClick={() => addWhCart(it)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 12px",
+                        borderBottom: `1px solid ${C.border}`,
+                        borderLeft: `3px solid ${inCart ? C.accent : "transparent"}`,
+                        cursor: "pointer",
+                        background: inCart ? C.accentSoft : "transparent",
+                      }}
+                    >
+                      <Thumb url={it.photo} size={38} C={C} setImageModalUrl={setImageModalUrl} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.3, wordBreak: "break-word" }}>{it.name}</div>
-                        <div style={{ marginTop: "3px", display: "flex", gap: "5px", flexWrap: "wrap" }}>
-                          {it.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
-                          <span style={{ fontSize: "11px", color: C.success, background: C.successSoft, padding: "2px 8px", borderRadius: "6px", fontWeight: 600 }}>재고 {isNaN(stockN) ? "N/A" : stockN}</span>
+                        <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                        <div style={{ marginTop: "2px", fontSize: "11px", color: C.label, display: "flex", alignItems: "center", gap: "6px" }}>
+                          {it.location ? (
+                            <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>{rack}랙 {slot}</span>
+                          ) : null}
+                          <span style={{ color: isNaN(stockN) ? C.label : (stockN > 0 ? C.success : C.error), fontWeight: 700 }}>
+                            재고 {isNaN(stockN) ? "N/A" : stockN}
+                          </span>
                         </div>
+                      </div>
+                      {/* 담김 여부는 오른쪽 체크 아이콘 하나로만 표시 (체크박스보다 시선이 덜 분산된다) */}
+                      <div
+                        style={{
+                          width: 22, height: 22, borderRadius: "999px", flexShrink: 0,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          background: inCart ? C.accent : "transparent",
+                          border: `1.5px solid ${inCart ? C.accent : C.border}`,
+                          color: "#fff",
+                        }}
+                      >
+                        {inCart ? <Check size={13} strokeWidth={3} /> : null}
                       </div>
                     </div>
                   );
