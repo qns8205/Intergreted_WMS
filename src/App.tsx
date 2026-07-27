@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, isClientOutdated, publishAppVersion } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -374,19 +374,12 @@ export default function App() {
       setVersionMismatch(true);
       return;
     }
+    if (!connected || !scriptUrl) return;
     let cancelled = false;
+    // 구버전 판정 기준은 오직 하나: 관리자가 발급한 APP_VERSION.
+    // (배포 자체를 자동 감지하지 않는다. GAS·Vercel 배포를 모두 마친 뒤 관리자가
+    //  "새 버전 발급"을 눌러야 비로소 구버전 화면들이 차단된다 — 차단 시점을 관리자가 통제한다.)
     const check = async () => {
-      // 1) 프론트엔드(Vercel) 재배포 감지 — GAS 연동 여부와 무관하게 항상 확인한다.
-      //    GAS를 안 건드리고 프론트만 배포한 경우는 APP_VERSION으로는 절대 잡히지 않는다.
-      try {
-        if (await isClientOutdated()) {
-          if (!cancelled) setVersionMismatch(true);
-          return;
-        }
-      } catch (e) { /* 판단 불가 시 무시 */ }
-
-      // 2) GAS 서버 버전 확인
-      if (!connected || !scriptUrl) return;
       try {
         const v = await fetchBorrowAppVersion(scriptUrl);
         if (cancelled || !v) return;
