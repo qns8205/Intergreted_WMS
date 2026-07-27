@@ -841,3 +841,20 @@ export async function ensureUpToDate(scriptUrl: string, clientVersion: string): 
   } catch (e) { /* 조회 실패는 무시 */ }
   return true;
 }
+
+/* ══════════ 대여 물품 교체 (기존 반납 + 새 물품 대여를 한 번에) ══════════ */
+export interface SwapBorrowPayload {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  newItemId: string;
+  newQuantity: number;
+  reason?: string;
+}
+
+export async function postSwapBorrowItem(
+  scriptUrl: string,
+  payload: SwapBorrowPayload,
+  clientVersion: string
+): Promise<BorrowResult> {
+  return (await apiPost(scriptUrl, "swapBorrowItem", { ...payload, clientVersion })) as BorrowResult;
+}
