@@ -7,6 +7,7 @@ import {
   ScenarioLogEntry, ReturnRequest, padSlot,
   fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
+  isVersionMismatchMessage, signalVersionOutdated,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -230,6 +231,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       const reqs: ReturnRequest[] = targets.map((e) => ({ sheetType: e.sheetType, rowIndex: e.rowIndex, quantity: sel[selKey(e)] }));
       if (connected && scriptUrl) {
         const res = await postProcessReturn(scriptUrl, reqs, appVersion);
+        // 구버전으로 거절된 경우: 토스트 대신 전체 화면 안내 오버레이를 띄운다.
+        if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
         if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
         showToast(res.message || `${targets.length}건을 반납 처리했습니다.`, "ok");
       } else { showToast("데모 모드: 실제 반납은 연동 시 동작합니다.", "info"); }
@@ -266,6 +269,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           targets.forEach((e) => { (byBorrower[e.borrowerName] ||= []).push(e); });
           for (const b of Object.keys(byBorrower)) {
             const res = await reBorrowScenarioLogs(scriptUrl, byBorrower[b], appVersion);
+            if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
             if (res.success) ok += byBorrower[b].length;
             else showToast(`${b} 재대여 실패: ${res.message}`, "error");
           }
@@ -281,6 +285,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             employeeId: reborrowTargetAffiliation === "cfgw" ? empId : "",
             affiliation: reborrowTargetAffiliation,
           });
+          if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
           if (res.success) ok += targets.length;
           else showToast(`재대여 실패: ${res.message}`, "error");
         }
