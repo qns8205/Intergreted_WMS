@@ -865,3 +865,10 @@ export async function postSwapBorrowItem(
 export async function publishAppVersion(scriptUrl: string): Promise<{ success: boolean; version?: string; previous?: string; message?: string }> {
   return await apiPost(scriptUrl, "publishAppVersion", {});
 }
+
+/* ══════════ 가장 적게 대여된 물품 랭킹 ══════════ */
+// 서버에서 집계·캐시한 결과만 받아온다. (예전에는 전체 로그를 받아 프론트에서 집계했다)
+export async function fetchLeastBorrowedItems(scriptUrl: string, limit = 20): Promise<[string, number][]> {
+  const data = await apiGet(scriptUrl, "getLeastBorrowedItems", { limit: String(limit) }, { timeoutMs: 30000, retries: 1 });
+  return (data.items || []) as [string, number][];
+}
