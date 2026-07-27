@@ -78,10 +78,7 @@ export default function BrowsePage({
   const [leastBorrowedLoading, setLeastBorrowedLoading] = useState(false);
   const [leastBorrowedProgress, setLeastBorrowedProgress] = useState(0);
   const [leastBorrowedLoaded, setLeastBorrowedLoaded] = useState(false);
-  const [leastBorrowedPage, setLeastBorrowedPage] = useState(0);
   const [leastBorrowedDetail, setLeastBorrowedDetail] = useState<{ item: ObjectItem; borrowCount: number } | null>(null);
-  const swipeStartX = useRef<number | null>(null);
-  const swipeDeltaX = useRef(0);
   const stickyHeaderRef = useRef<HTMLDivElement>(null);
   const [stickyHeaderHeight, setStickyHeaderHeight] = useState(64);
   useEffect(() => {
@@ -206,14 +203,6 @@ export default function BrowsePage({
         setLeastBorrowedLoaded(true);
       });
   }, [step, sciLoaded, sciItems, connected, scriptUrl, leastBorrowedLoaded, leastBorrowedLoading]);
-
-  // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
-  const leastBorrowedPageCount = Math.max(1, Math.ceil(leastBorrowed.length / 10));
-  useEffect(() => {
-    if (leastBorrowedPageCount <= 1) return;
-    const timer = setInterval(() => setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount), 4000);
-    return () => clearInterval(timer);
-  }, [leastBorrowedPageCount]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -455,11 +444,19 @@ export default function BrowsePage({
         @media (min-width: 900px) {
           .bsp-scenario-layout {
             display: grid;
-            grid-template-columns: 260px 1fr;
+            /* 물품 그리드가 주인공이므로 넓게, 랭킹 패널은 오른쪽 고정폭으로 */
+            grid-template-columns: minmax(0, 1fr) 260px;
             gap: 20px;
             align-items: start;
           }
+          /* DOM 순서는 그대로 두고(모바일에서 랭킹이 위로 오도록) 데스크톱에서만 좌우를 바꾼다 */
+          .bsp-least-col { order: 2; }
+          .bsp-scenario-main { order: 1; min-width: 0; }
         }
+        /* 랭킹 목록 스크롤바를 얇게 */
+        .bsp-least-list::-webkit-scrollbar { width: 6px; }
+        .bsp-least-list::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(148,163,184,0.5); }
+        .bsp-least-list::-webkit-scrollbar-track { background: transparent; }
       `}</style>
 
       <div ref={stickyHeaderRef} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
@@ -474,7 +471,7 @@ export default function BrowsePage({
         ) : null}
       </div>
 
-      <div style={{ maxWidth: step === "scenario" || step === "warehouse" ? "1200px" : "620px", margin: "0 auto", padding: "24px 16px 96px" }}>
+      <div style={{ maxWidth: step === "scenario" || step === "warehouse" ? "1560px" : "620px", margin: "0 auto", padding: "24px 16px 96px" }}>
 
         <div key={step} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {step === "identity" ? (
@@ -597,58 +594,64 @@ export default function BrowsePage({
                     </button>
                   </div>
                 ) : (
-                  <>
-                    <div
-                      onPointerDown={(e) => { swipeStartX.current = e.clientX; swipeDeltaX.current = 0; }}
-                      onPointerMove={(e) => { if (swipeStartX.current !== null) swipeDeltaX.current = e.clientX - swipeStartX.current; }}
-                      onPointerUp={() => {
-                        if (swipeStartX.current === null) return;
-                        const delta = swipeDeltaX.current;
-                        if (Math.abs(delta) > 40) {
-                          if (delta < 0) setLeastBorrowedPage((p) => (p + 1) % leastBorrowedPageCount);
-                          else setLeastBorrowedPage((p) => (p - 1 + leastBorrowedPageCount) % leastBorrowedPageCount);
-                        }
-                        swipeStartX.current = null;
-                        swipeDeltaX.current = 0;
-                      }}
-                      style={{ position: "relative", overflow: "hidden", touchAction: "pan-y", cursor: leastBorrowedPageCount > 1 ? "grab" : "default" }}
-                    >
-                      <div style={{ display: "flex", transform: `translateX(-${leastBorrowedPage * 100}%)`, transition: "transform 0.5s ease" }}>
-                        {Array.from({ length: leastBorrowedPageCount }).map((_, pageIdx) => (
-                          <div
-                            key={pageIdx}
-                            style={{ flex: "0 0 100%", display: "grid", gridTemplateColumns: "1fr 1fr", gridAutoFlow: "column", gridTemplateRows: "repeat(5, auto)", gap: "8px 20px" }}
+                  <div
+                    className="bsp-least-list"
+                    style={{ maxHeight: "min(58vh, 520px)", overflowY: "auto", margin: "0 -4px", paddingRight: "4px" }}
+                  >
+                    {leastBorrowed.slice(0, 20).map(([name, qty], idx) => {
+                      const rank = idx + 1;
+                      const isTop3 = rank <= 3;
+                      return (
+                        <div
+                          key={name}
+                          onClick={() => {
+                            const it = sciItems.find((o) => o.name === name);
+                            if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
+                          }}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            padding: "7px 4px",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            borderBottom: `1px solid ${C.border}`,
+                          }}
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = C.cardSub; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+                        >
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              width: "18px",
+                              textAlign: "center",
+                              fontSize: "12px",
+                              fontWeight: 800,
+                              color: isTop3 ? C.accentText : C.label,
+                            }}
                           >
-                            {leastBorrowed.slice(pageIdx * 10, pageIdx * 10 + 10).map(([name, qty]) => (
-                              <div
-                                key={name}
-                                onClick={() => {
-                                  const it = sciItems.find((o) => o.name === name);
-                                  if (it) setLeastBorrowedDetail({ item: it, borrowCount: qty });
-                                }}
-                                style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px", cursor: "pointer" }}
-                              >
-                                <span style={{ color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                                <span style={{ color: C.label, flexShrink: 0 }}>{qty}개</span>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    {leastBorrowedPageCount > 1 ? (
-                      <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
-                        {Array.from({ length: leastBorrowedPageCount }).map((_, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setLeastBorrowedPage(i)}
-                            aria-label={`${i + 1}번째 페이지`}
-                            style={{ width: i === leastBorrowedPage ? "14px" : "6px", height: "6px", borderRadius: "999px", border: "none", padding: 0, cursor: "pointer", background: i === leastBorrowedPage ? C.accent : C.border, transition: "all 0.3s ease" }}
-                          />
-                        ))}
-                      </div>
-                    ) : null}
-                  </>
+                            {rank}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              fontSize: "12px",
+                              fontWeight: isTop3 ? 700 : 600,
+                              color: C.text,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={name}
+                          >
+                            {name}
+                          </span>
+                          <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 700, color: C.label }}>{qty}개</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             ) : null}
