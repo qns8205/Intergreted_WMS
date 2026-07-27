@@ -806,3 +806,37 @@ export async function reBorrowScenarioLogs(
   }];
   return postRecordBorrow(scriptUrl, borrowList, clientVersion);
 }
+
+/* ══════════ 구버전(재배포) 감지 신호 ══════════ */
+// 화면 어디에서든(대여 제출 중, 반납 제출 중 등) 구버전을 감지하면 이 함수를 호출한다.
+// App.tsx가 window 이벤트를 듣고 있다가 전체 화면 오버레이를 띄운다.
+// prop drilling 없이 어느 컴포넌트에서든 쓸 수 있도록 window 이벤트로 처리한다.
+export const VERSION_OUTDATED_EVENT = "wms:version-outdated";
+
+export function signalVersionOutdated(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(VERSION_OUTDATED_EVENT));
+}
+
+// 서버(GAS)가 clientVersion 불일치로 거절했을 때의 메시지인지 판별한다.
+// recordBorrow / processReturn 이 돌려주는 문구를 기준으로 한다.
+export function isVersionMismatchMessage(message?: string): boolean {
+  const m = String(message || "");
+  if (!m) return false;
+  return m.indexOf("구버전") !== -1 || (m.indexOf("최신 버전") !== -1 && m.indexOf("새로고침") !== -1);
+}
+
+// 제출 직전에 서버 버전을 한 번 더 확인한다.
+// 폴링(주기적 확인) 사이의 빈틈에 제출이 들어가는 것을 막기 위한 최종 방어선.
+// 조회 실패(네트워크 등)는 "구버전 아님"으로 취급해 정상 흐름을 막지 않는다.
+export async function ensureUpToDate(scriptUrl: string, clientVersion: string): Promise<boolean> {
+  if (!scriptUrl || !clientVersion) return true;
+  try {
+    const latest = await fetchBorrowAppVersion(scriptUrl);
+    if (latest && latest !== clientVersion) {
+      signalVersionOutdated();
+      return false;
+    }
+  } catch (e) { /* 조회 실패는 무시 */ }
+  return true;
+}
