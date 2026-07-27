@@ -777,8 +777,11 @@ export interface ScenarioLogEntry {
   rented: number;
 }
 
-export async function fetchScenarioAllLogs(scriptUrl: string): Promise<ScenarioLogEntry[]> {
-  const data = await apiGet(scriptUrl, "getScenarioAllLogs", {}, { timeoutMs: 60000, retries: 1 });
+// recentDays를 주면 "미반납 전체 + 최근 N일 내 반납분"만 받아온다 (관리자 화면 로딩 단축).
+// 생략하면 기존처럼 전체를 받아온다 (통계 화면 등).
+export async function fetchScenarioAllLogs(scriptUrl: string, recentDays?: number): Promise<ScenarioLogEntry[]> {
+  const params = recentDays && recentDays > 0 ? { recentDays: String(recentDays) } : {};
+  const data = await apiGet(scriptUrl, "getScenarioAllLogs", params, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ScenarioLogEntry[];
 }
 
