@@ -12,9 +12,10 @@ import {
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
 
-// 관리자 대여/반납 화면은 "미반납 → 최근 반납분 → 나머지 전체" 순으로 나눠 받는다.
-// 첫 화면은 빨리 뜨면서도, 백그라운드 로딩이 끝나면 전체 기간이 검색 대상이 된다.
-const RECENT_DAYS = 14;
+// 관리자 대여/반납 화면은 두 단계로 받는다.
+//  1) 미반납 전체 + 최근 1주 반납분  → 첫 화면 (실무에서 보는 건 대부분 여기에 있다)
+//  2) 나머지 전체 이력             → 백그라운드 (검색이 전체 기간을 덮도록)
+const RECENT_DAYS = 7;
 
 interface Props {
   scriptUrl: string;
@@ -104,9 +105,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           return arr.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
         };
 
-        // 1단계: 미반납 건만 먼저 받아 즉시 화면에 그린다. 실제로 처리해야 할 항목들이라 가장 급하다.
+        // 1단계: 미반납 전체 + 최근 1주 반납분을 한 번에 받아 화면을 채운다.
         const [unreturned, ver, catalog] = await Promise.all([
-          fetchScenarioAllLogs(scriptUrl, { scope: "unreturned", slim: true }),
+          fetchScenarioAllLogs(scriptUrl, { recentDays: RECENT_DAYS, slim: true }),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
           fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
@@ -122,9 +123,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         hasDataRef.current = unreturned.length > 0;
         setLoading(false);
 
-        // 2·3단계: 반납 이력을 백그라운드로 받아 합친다. 목록은 이미 조작 가능한 상태다.
-        // 먼저 최근 2주분을 붙여 흔히 찾는 기록이 빨리 검색되게 하고,
-        // 이어서 전체 기간을 받아 합쳐 최종적으로 모든 기록이 검색 대상이 되게 한다.
+        // 2단계: 나머지 전체 이력을 백그라운드로 받아 합친다. 목록은 이미 조작 가능한 상태다.
         const mergeInto = (incoming: ScenarioLogEntry[]) => {
           setLogs((prev) => {
             const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
@@ -135,7 +134,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
 
         setHistoryLoading(true);
         try {
-          mergeInto(await fetchScenarioAllLogs(scriptUrl, { scope: "returned", recentDays: RECENT_DAYS, slim: true }));
           mergeInto(await fetchScenarioAllLogs(scriptUrl, { scope: "returned", slim: true }));
           setHistoryComplete(true);
         } catch (e: any) {
@@ -562,7 +560,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             {`${filtered.length} / ${logs.length}건 (최신순)`}
             {historyLoading ? (
               <span style={{ marginLeft: "8px", color: C.accentText, fontWeight: 700 }}>
-                전체 이력 불러오는 중... (지금은 최근 기록만 검색됩니다)
+                전체 이력 불러오는 중... (지금은 최근 {RECENT_DAYS}일 기록만 검색됩니다)
               </span>
             ) : historyComplete ? (
               <span style={{ marginLeft: "8px", color: C.label }}>· 전체 기간 검색 가능</span>
