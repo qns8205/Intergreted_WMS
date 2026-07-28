@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
-  HandHelping, PackageOpen, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
+  HandHelping, PackageOpen, Package, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
   Warehouse, Trash2, RefreshCw,
 } from "lucide-react";
@@ -1231,6 +1231,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }
 
   // 세트를 한 번에 장바구니에 담기 — 위치(location) 기준으로 실제 재고 항목을 찾아 매칭한다.
+  // 랙별 물품 수 (필터 칩에 표시)
+  const whRackCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    whItems.forEach((it) => {
+      const r = parseRackSlot(it.location).rack;
+      if (!r) return;
+      m[r] = (m[r] || 0) + 1;
+    });
+    return m;
+  }, [whItems]);
+
   function addSetToCart(set: ItemSet) {
     // 이름 비교용 정규화: 앞뒤 공백 제거 + 연속 공백 하나로 + 대소문자 무시
     const norm = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
@@ -1427,6 +1438,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     <div className="bsp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "inherit" }}>
       <style>{`
         @keyframes bsp-spin { to { transform: rotate(360deg); } }
+
+        /* 공구 및 부품류 대여: 넓은 화면에서 목록(왼쪽) + 담은 목록(오른쪽) 2열 */
+        .wb-layout { display: block; }
+        .wb-side { margin-bottom: 16px; }
+        @media (min-width: 900px) {
+          .wb-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; align-items: start; }
+          .wb-main { min-width: 0; }
+          .wb-side { position: sticky; top: 12px; margin-bottom: 0; }
+        }
 
         /* PC(넓은 화면)에서는 전체적으로 살짝 크게 — 모바일 폭(480px 이하)에는 영향 없음 */
         @media (min-width: 900px) {
@@ -2188,165 +2208,171 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
             </div>
 
-            {itemSetsLoaded && itemSets.length > 0 ? (
-              <div style={{ marginBottom: "16px" }}>
-                <label style={{ ...labelStyle, marginBottom: "8px" }}>세트로 담기 <span style={{ fontWeight: 400, color: C.label }}>(자주 쓰는 부품 묶음을 한 번에 담습니다)</span></label>
-                <div style={{ display: "flex", gap: "8px", overflowX: "auto", paddingBottom: "4px" }}>
-                  {itemSets.map((set) => (
-                    <button
-                      key={set.name}
-                      onClick={() => addSetToCart(set)}
-                      style={{ flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "4px", padding: "12px 14px", borderRadius: "12px", border: `1.5px solid ${C.accent}`, background: C.accentSoft, color: C.accentText, cursor: "pointer", minWidth: "140px" }}
-                    >
-                      <span style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "13px", fontWeight: 800 }}><PackageOpen size={14} /> {set.name}</span>
-                      <span style={{ fontSize: "11px", color: C.label }}>{set.items.length}종 · {set.items.reduce((n, i) => n + (i.qty || 1), 0)}개</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {whCart.length > 0 ? (
-              <div style={{ marginBottom: "14px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "13px", color: C.label }}>담은 공구 및 부품류</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>{whCartCount}개</span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "180px", overflowY: "auto" }}>
-                  {whCart.map((item, idx) => {
-                    const orig = whItems.find((o) => o.rowIndex === item.rowIndex);
-                    return (
-                    <div key={`${item.rowIndex}-${item.name}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "flex", alignItems: "center", gap: "6px" }}>
-                          {item.name}
-                          {orig?.isConsumable ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "1px 6px", flexShrink: 0 }}>🔥 소모성</span> : null}
-                        </div>
-                        <div style={{ fontSize: "11px", color: C.label }}>{item.location}</div>
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
-                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
-                        <span style={{ fontWeight: 700, minWidth: "20px", textAlign: "center", fontSize: "13px" }}>{item.quantity}</span>
-                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
-                      </div>
-                      <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={13} /></button>
-                    </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            {/* 세트 담기 결과 — 못 찾은 물품이 있으면 사유가 화면에 남는다 */}
-            {setAddResult && (setAddResult.notFound.length > 0 || setAddResult.shortages.length > 0) ? (
-              <div style={{ marginBottom: "10px", padding: "12px 14px", borderRadius: "12px", background: C.warnSoft, border: `1px solid ${C.warn}55` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "12.5px", fontWeight: 800, color: C.warn, flex: 1 }}>
-                    '{setAddResult.setName}' 세트 — {setAddResult.added}개 담김
-                  </span>
-                  <button onClick={() => setSetAddResult(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", padding: 0 }}>
-                    <X size={15} />
-                  </button>
-                </div>
-                {setAddResult.notFound.length > 0 ? (
-                  <div style={{ fontSize: "12px", color: C.text, lineHeight: 1.6, marginBottom: setAddResult.shortages.length ? "6px" : 0 }}>
-                    <b>창고 목록에 없음:</b> {setAddResult.notFound.join(", ")}
-                    <div style={{ fontSize: "11.5px", color: C.label, marginTop: "3px" }}>
-                      '물품세트' 시트의 물품명이 '창고물품' 시트의 이름과 정확히 같은지 확인해주세요.
-                    </div>
-                  </div>
-                ) : null}
-                {setAddResult.shortages.length > 0 ? (
-                  <div style={{ fontSize: "12px", color: C.text, lineHeight: 1.6 }}>
-                    <b>재고 부족:</b> {setAddResult.shortages.join(", ")}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {/* 검색 + 랙/슬롯 필터 — 한 줄로 묶어 목록에 쓸 세로 공간을 확보한다 */}
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
-              <div style={{ position: "relative", flex: "2 1 220px", minWidth: 0 }}>
+            <div className="wb-layout">
+            {/* ── 왼쪽: 검색 · 랙 칩 · 물품 카드 그리드 ── */}
+            <div className="wb-main">
+            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
                 <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
                 <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "10px 12px 10px 36px", fontSize: "13.5px" }} />
               </div>
-              <select value={whRack} onChange={(e) => { setWhRack(e.target.value); setWhSlot(""); }} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "1 1 110px", minWidth: 0 }}>
-                <option value="">전체 랙</option>{whRacks.map((r) => <option key={r} value={r}>{r}랙</option>)}
-              </select>
-              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "1 1 110px", minWidth: 0 }}>
+              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "0 0 120px" }}>
                 <option value="">전체 슬롯</option>{whSlots.map((sl) => <option key={sl} value={sl}>{sl}번</option>)}
               </select>
             </div>
 
-            {/* 결과 수 + 선택 개수 */}
-            {whLoaded && whItems.length > 0 ? (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px", fontSize: "11.5px", color: C.label }}>
-                <span>{whFiltered.length} / {whItems.length}개 물품</span>
-                {whCart.length > 0 ? (
-                  <span style={{ fontWeight: 800, color: C.accentText }}>{whCart.length}종 선택됨</span>
-                ) : (
-                  <span>탭하면 담깁니다</span>
-                )}
+            {/* 랙 필터: 드롭다운 대신 칩 — 어느 랙에 몇 개 있는지 바로 보인다 */}
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" }}>
+              {[{ v: "", label: "전체", n: whItems.length }, ...whRacks.map((r) => ({ v: r, label: `${r}랙`, n: whRackCounts[r] || 0 }))].map((chip) => {
+                const on = whRack === chip.v;
+                return (
+                  <button
+                    key={chip.v || "all"}
+                    onClick={() => { setWhRack(chip.v); setWhSlot(""); }}
+                    style={{
+                      padding: "5px 12px", borderRadius: "999px", cursor: "pointer", fontSize: "12px", fontWeight: 700,
+                      border: `1px solid ${on ? C.accent : C.border}`,
+                      background: on ? C.accentSoft : C.card,
+                      color: on ? C.accentText : C.label,
+                    }}
+                  >
+                    {chip.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>{chip.n}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", fontSize: "11.5px", color: C.label }}>
+              <span>{whFiltered.length} / {whItems.length}개 물품</span>
+              <span>카드를 누르면 담깁니다</span>
+            </div>
+
+            {whLoading && !whLoaded ? (
+              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 공구 및 부품류를 불러오는 중...</div>
+            ) : !whLoaded || whItems.length === 0 ? (
+              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
+                <div>공구 및 부품류 목록을 불러오지 못했습니다.</div>
+                <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
               </div>
-            ) : null}
-            <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", overflow: "hidden", maxHeight: "min(58vh, 620px)", overflowY: "auto" }}>
-              {whLoading ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 공구 및 부품류를 불러오는 중...</div>
-              ) : !whLoaded || whItems.length === 0 ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                  <div>공구 및 부품류 목록을 불러오지 못했습니다.</div>
-                  <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
-                </div>
-              ) : whFiltered.length === 0 ? (
-                <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
-              ) : (
-                whFiltered.map((it) => {
+            ) : whFiltered.length === 0 ? (
+              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: "8px", maxHeight: "min(62vh, 640px)", overflowY: "auto", paddingRight: "2px" }}>
+                {whFiltered.map((it) => {
                   const inCart = whCart.some((c) => c.rowIndex === it.rowIndex);
+                  const cartQty = whCart.find((c) => c.rowIndex === it.rowIndex)?.quantity || 0;
                   const stockN = warehouseStockNum(it.stock);
+                  const soldOut = !isNaN(stockN) && stockN <= 0;
                   const { rack, slot } = parseRackSlot(it.location);
                   return (
                     <div
                       key={it.rowIndex}
-                      onClick={() => addWhCart(it)}
+                      onClick={() => { if (!soldOut) addWhCart(it); }}
                       style={{
+                        border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
+                        borderRadius: "12px",
+                        background: C.card,
+                        padding: "7px",
+                        cursor: soldOut ? "not-allowed" : "pointer",
+                        opacity: soldOut ? 0.5 : 1,
                         display: "flex",
-                        alignItems: "center",
-                        gap: "10px",
-                        padding: "8px 12px",
-                        borderBottom: `1px solid ${C.border}`,
-                        borderLeft: `3px solid ${inCart ? C.accent : "transparent"}`,
-                        cursor: "pointer",
-                        background: inCart ? C.accentSoft : "transparent",
+                        flexDirection: "column",
+                        gap: "5px",
                       }}
                     >
-                      <Thumb url={it.photo} size={38} C={C} setImageModalUrl={setImageModalUrl} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px", lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
-                        <div style={{ marginTop: "2px", fontSize: "11px", color: C.label, display: "flex", alignItems: "center", gap: "6px" }}>
-                          {it.location ? (
-                            <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>{rack}랙 {slot}</span>
-                          ) : null}
-                          <span style={{ color: isNaN(stockN) ? C.label : (stockN > 0 ? C.success : C.error), fontWeight: 700 }}>
-                            재고 {isNaN(stockN) ? "N/A" : stockN}
-                          </span>
-                        </div>
-                      </div>
-                      {/* 담김 여부는 오른쪽 체크 아이콘 하나로만 표시 (체크박스보다 시선이 덜 분산된다) */}
+                      {/* 사진: 고정 높이 + cover로 잘라 여백이 생기지 않게 한다 */}
                       <div
-                        style={{
-                          width: 22, height: 22, borderRadius: "999px", flexShrink: 0,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          background: inCart ? C.accent : "transparent",
-                          border: `1.5px solid ${inCart ? C.accent : C.border}`,
-                          color: "#fff",
-                        }}
+                        onClick={(e) => { if (it.photo) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.photo)); } }}
+                        style={{ height: "62px", borderRadius: "8px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                       >
-                        {inCart ? <Check size={13} strokeWidth={3} /> : null}
+                        {it.photo ? (
+                          <img src={getGoogleDriveImageUrl(it.photo)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                        ) : (
+                          <Package size={18} style={{ color: C.label, opacity: 0.5 }} />
+                        )}
                       </div>
+
+                      <div style={{ fontSize: "12.5px", fontWeight: 700, lineHeight: 1.3, minHeight: "32px", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                        {it.name}
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
+                        <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>{it.location ? `${rack}-${slot}` : "-"}</span>
+                        <span style={{ fontWeight: 700, color: isNaN(stockN) ? C.label : (soldOut ? C.error : C.success) }}>
+                          {isNaN(stockN) ? "N/A" : soldOut ? "재고 없음" : `재고 ${stockN}`}
+                        </span>
+                      </div>
+
+                      {inCart ? (
+                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "5px" }}>
+                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), -1)} style={{ width: 24, height: 24, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
+                          <span style={{ flex: 1, textAlign: "center", fontSize: "12.5px", fontWeight: 800, color: C.accentText }}>{cartQty}</span>
+                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), 1)} style={{ width: 24, height: 24, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>+</button>
+                        </div>
+                      ) : (
+                        <div style={{ height: "24px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11.5px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
+                          {soldOut ? "재고 없음" : "담기"}
+                        </div>
+                      )}
                     </div>
                   );
-                })
-              )}
+                })}
+              </div>
+            )}
+            </div>
+
+            {/* ── 오른쪽: 담은 물품 + 세트 ── */}
+            <div className="wb-side">
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 800, color: C.text }}>담은 물품</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: whCart.length ? C.accent : C.border, color: whCart.length ? "#fff" : C.label, borderRadius: "14px", padding: "2px 10px" }}>
+                    {whCart.length}종 · {whCartCount}개
+                  </span>
+                </div>
+
+                {whCart.length === 0 ? (
+                  <div style={{ padding: "14px 0", textAlign: "center", fontSize: "12px", color: C.label, borderTop: `1px solid ${C.border}` }}>
+                    왼쪽에서 물품을 골라주세요.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "min(38vh, 340px)", overflowY: "auto", borderTop: `1px solid ${C.border}`, paddingTop: "8px" }}>
+                    {whCart.map((c, idx) => (
+                      <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "12px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                          <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{c.location}</div>
+                        </div>
+                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1, flexShrink: 0 }}>−</button>
+                        <span style={{ minWidth: "16px", textAlign: "center", fontSize: "12px", fontWeight: 800 }}>{c.quantity}</span>
+                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1, flexShrink: 0 }}>+</button>
+                        <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 22, height: 22, borderRadius: "6px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={11} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {itemSetsLoaded && itemSets.length > 0 ? (
+                  <div style={{ marginTop: "12px", borderTop: `1px solid ${C.border}`, paddingTop: "10px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>세트로 담기</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                      {itemSets.map((set) => (
+                        <button
+                          key={set.name}
+                          onClick={() => addSetToCart(set)}
+                          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px", padding: "8px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer" }}
+                        >
+                          <span style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            <PackageOpen size={13} style={{ flexShrink: 0 }} /> {set.name}
+                          </span>
+                          <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{set.items.length}종</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
             </div>
 
             {/* 목록에 없는 물품 직접 입력하여 담기 */}
