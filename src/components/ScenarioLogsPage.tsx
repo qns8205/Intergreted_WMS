@@ -185,16 +185,51 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   }, [logs, search, kindFilter, statusFilter, borrowerFilter]);
 
   // 신청 단위(batchId+borrower)로 그룹화, 이미 최신순으로 서버 정렬됨
+  // 묶음 기준:
+  //  - 미반납 건은 "같은 시각에 대여한 묶음"(대여자 + 배치ID)으로 묶는다.
+  //  - 반납 완료 건은 "같은 시각에 반납한 묶음"(대여자 + 반납시각)으로 따로 묶는다.
+  // 한 번에 대여한 물품을 나눠서 반납한 경우, 대여 묶음이 아니라 반납한 시점별로 나뉘어 보인다.
   const groups = useMemo(() => {
-    const map = new Map<string, { key: string; borrower: string; scenarioId?: string; date: string; purpose: string; kind: string; items: ScenarioLogEntry[]; allReturned: boolean }>();
+    const map = new Map<string, {
+      key: string; borrower: string; scenarioId?: string; date: string; purpose: string;
+      kind: string; items: ScenarioLogEntry[]; allReturned: boolean; isReturnGroup: boolean;
+    }>();
+
+    // 반납 묶음은 분 단위까지만 보고 묶는다 (초가 1~2초 어긋나는 경우가 있다)
+    const returnBucket = (v?: string) => String(v || "").trim().slice(0, 16) || "(반납일 미상)";
+
     filtered.forEach((it) => {
-      const gkey = `${it.borrowerName}|${it.batchId || it.scenarioId || it.borrowDate}`;
-      if (!map.has(gkey)) map.set(gkey, { key: gkey, borrower: it.borrowerName, scenarioId: it.scenarioId, date: it.borrowDate, purpose: it.borrowPurpose, kind: it.sheetType === "scenario" ? "SID 대여" : "일반 대여", items: [], allReturned: true });
+      const isReturned = !!it.returned;
+      const gkey = isReturned
+        ? `R|${it.borrowerName}|${returnBucket(it.returnDate)}`
+        : `B|${it.borrowerName}|${it.batchId || it.scenarioId || it.borrowDate}`;
+
+      if (!map.has(gkey)) {
+        map.set(gkey, {
+          key: gkey,
+          borrower: it.borrowerName,
+          scenarioId: it.scenarioId,
+          date: isReturned ? (it.returnDate || it.borrowDate) : it.borrowDate,
+          purpose: it.borrowPurpose,
+          kind: isReturned ? "반납" : (it.sheetType === "scenario" ? "SID 대여" : "일반 대여"),
+          items: [],
+          allReturned: isReturned,
+          isReturnGroup: isReturned,
+        });
+      }
       const g = map.get(gkey)!;
       g.items.push(it);
       if (!it.returned) g.allReturned = false;
+      // 같은 묶음 안에 SID가 섞여 있으면 첫 값을 유지하되, 비어 있으면 채운다
+      if (!g.scenarioId && it.scenarioId) g.scenarioId = it.scenarioId;
     });
-    return Array.from(map.values());
+
+    // 묶음 시각(대여 묶음은 대여일, 반납 묶음은 반납일) 기준 최신순
+    const ts = (v?: string) => {
+      const t = Date.parse(String(v || "").trim().replace(" ", "T"));
+      return isNaN(t) ? 0 : t;
+    };
+    return Array.from(map.values()).sort((a, b) => ts(b.date) - ts(a.date));
   }, [filtered]);
 
   // 물품별 보기: 현재 미반납(대여 중)인 항목만 물품 기준으로 묶는다.
@@ -532,7 +567,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                 <div style={{ width: 34, height: 34, borderRadius: "9px", background: g.allReturned ? C.successSoft : C.accentSoft, color: g.allReturned ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><User size={17} /></div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: "14px" }}>{g.borrower} {g.scenarioId ? <span style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>· {g.scenarioId}</span> : null}</div>
-                  <div style={{ fontSize: "11px", color: C.label }}>{g.kind} · {g.date}{g.purpose ? ` · ${g.purpose}` : ""}</div>
+                  <div style={{ fontSize: "11px", color: C.label }}>
+                    {g.isReturnGroup ? `반납 · ${g.date}` : `${g.kind} · ${g.date}`}{g.purpose ? ` · ${g.purpose}` : ""}
+                  </div>
                 </div>
                 {g.allReturned ? <span style={{ fontSize: "11px", fontWeight: 700, color: C.success, background: C.successSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>반납완료</span>
                   : <span style={{ fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>미반납 포함</span>}
