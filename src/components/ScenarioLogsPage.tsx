@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Search, RotateCcw, Package, MapPin, User, Check, Undo2, RefreshCw,
-  TrendingUp, Clock, CheckCircle2, Repeat, X, UserCheck,
+  TrendingUp, Clock, CheckCircle2, Repeat, X, UserCheck, AlertTriangle,
 } from "lucide-react";
 import {
   ScenarioLogEntry, ReturnRequest, padSlot,
@@ -16,6 +16,9 @@ import ScrollToTopButton from "./ScrollToTopButton";
 //  1) 미반납 전체 + 최근 1주 반납분  → 첫 화면 (실무에서 보는 건 대부분 여기에 있다)
 //  2) 나머지 전체 이력             → 백그라운드 (검색이 전체 기간을 덮도록)
 const RECENT_DAYS = 7;
+
+// 이 일수를 넘겨 반납하지 않은 건은 "장기 체납"으로 본다.
+const OVERDUE_DAYS = 3;
 
 interface Props {
   scriptUrl: string;
@@ -287,6 +290,35 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     return { topBorrowers, topItems, bottomItems, recentDays };
   }, [logs, allItems]);
 
+  // 장기 체납자: 미반납 상태로 OVERDUE_DAYS를 넘긴 건을 대여자별로 모은다.
+  const overdueBorrowers = useMemo(() => {
+    const now = Date.now();
+    const limitMs = OVERDUE_DAYS * 24 * 60 * 60 * 1000;
+    const map = new Map<string, { name: string; count: number; qty: number; oldestMs: number; items: ScenarioLogEntry[] }>();
+
+    logs.forEach((l) => {
+      if (l.returned) return;
+      const raw = String(l.borrowDateTime || l.borrowDate || "").trim();
+      if (!raw) return;
+      const t = Date.parse(raw.replace(" ", "T"));
+      if (isNaN(t)) return;
+      if (now - t < limitMs) return;
+
+      const name = String(l.borrowerName || "").trim() || "(이름 없음)";
+      if (!map.has(name)) map.set(name, { name, count: 0, qty: 0, oldestMs: t, items: [] });
+      const g = map.get(name)!;
+      g.count += 1;
+      g.qty += l.quantity || 1;
+      g.items.push(l);
+      if (t < g.oldestMs) g.oldestMs = t;
+    });
+
+    // 가장 오래 안 돌려준 사람이 위로
+    return Array.from(map.values())
+      .map((g) => ({ ...g, days: Math.floor((now - g.oldestMs) / (24 * 60 * 60 * 1000)) }))
+      .sort((a, b) => b.days - a.days || b.qty - a.qty);
+  }, [logs]);
+
   const selKey = (it: ScenarioLogEntry) => `${it.sheetType}:${it.rowIndex}`;
   const selCount = Object.keys(sel).length;
   const selEntries = useMemo(() => Object.keys(sel).map((k) => logs.find((l) => selKey(l) === k)).filter(Boolean) as ScenarioLogEntry[], [sel, logs]);
@@ -554,6 +586,45 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         </select>
         <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
       </div>
+      {/* 장기 체납자: 미반납 상태로 오래 지난 대여자를 맨 위에 모아 보여준다 */}
+      {loaded && overdueBorrowers.length > 0 ? (
+        <div style={{ marginBottom: "12px", border: `1px solid ${C.error}55`, background: C.errorSoft, borderRadius: "14px", padding: "12px 14px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "10px" }}>
+            <AlertTriangle size={15} style={{ color: C.error }} />
+            <span style={{ fontSize: "13px", fontWeight: 800, color: C.error, flex: 1 }}>
+              장기 체납 {overdueBorrowers.length}명 <span style={{ fontWeight: 600, opacity: 0.85 }}>({OVERDUE_DAYS}일 이상 미반납)</span>
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "7px", flexWrap: "wrap" }}>
+            {overdueBorrowers.map((p) => {
+              const on = borrowerFilter === p.name;
+              return (
+                <button
+                  key={p.name}
+                  onClick={() => { setBorrowerFilter(on ? "" : p.name); setVisibleCount(30); }}
+                  title={`${p.name} · ${p.count}건 · 총 ${p.qty}개 · 최장 ${p.days}일 경과`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "7px",
+                    padding: "6px 12px", borderRadius: "999px", cursor: "pointer",
+                    border: `1px solid ${on ? C.error : C.border}`,
+                    background: on ? C.error : C.card,
+                    color: on ? "#fff" : C.text,
+                    fontSize: "12px", fontWeight: 700,
+                  }}
+                >
+                  {p.name}
+                  <span style={{ fontWeight: 800, color: on ? "#fff" : C.error }}>{p.days}일</span>
+                  <span style={{ fontWeight: 500, opacity: 0.8 }}>{p.qty}개</span>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: "11px", color: C.label, marginTop: "8px" }}>
+            이름을 누르면 그 사람의 기록만 걸러서 봅니다. 한 번 더 누르면 해제됩니다.
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
         {loaded ? (
           <>
