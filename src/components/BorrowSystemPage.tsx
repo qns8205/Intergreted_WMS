@@ -28,7 +28,7 @@ type Mode =
   | "mode"
   | "pickBorrowKind" | "pickReturnKind"
   | "b1" | "b2" | "b3g" | "b4g" | "b3s" | "b4s"
-  | "wborrow" | "wreturn"
+  | "wborrow" | "wborrow2" | "wreturn"
   | "return"
   | "result";
 
@@ -188,6 +188,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [setAddResult, setSetAddResult] = useState<{ setName: string; added: number; notFound: string[]; shortages: string[] } | null>(null);
   const [whSearch, setWhSearch] = useState("");
   const [whCustomLoc, setWhCustomLoc] = useState("");
+  // 목록에 없는 물품 직접 입력 (예전에는 검색창 값을 재사용해 검색어가 지워지는 문제가 있었다)
+  const [whCustomName, setWhCustomName] = useState("");
   const [whRack, setWhRack] = useState("");
   const [whSlot, setWhSlot] = useState("");
   const [whPurpose, setWhPurpose] = useState("");
@@ -1361,11 +1363,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     else if (mode === "b4g") setMode("b3g");
     else if (mode === "b4s") setMode("b3s");
     else if (mode === "return") setMode("pickReturnKind");
+    else if (mode === "wborrow2") setMode("wborrow");
     else if (mode === "wborrow" || mode === "wreturn") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
     else setMode(rootMode);
   }
 
-  const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" ? 3 : mode === "b4g" || mode === "b4s" ? 4 : 0;
+  const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" || mode === "wborrow" ? 3 : mode === "b4g" || mode === "b4s" || mode === "wborrow2" ? 4 : 0;
 
   /* ── URL 해시로 대여 단계를 세분화 (#/borrow/<단계>) — 새로고침·공유·뒤로가기 지원 ── */
   const MODE_SLUGS: Record<string, string> = {
@@ -2202,12 +2205,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── 공구 및 부품류 대여 ───────── */}
         {mode === "wborrow" ? (
           <div>
-            <label style={labelStyle}>대여자 성함</label>
-            <div style={{ position: "relative", marginBottom: "16px" }}>
-              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
-            </div>
-
             <div className="wb-layout">
             {/* ── 왼쪽: 검색 · 랙 칩 · 물품 카드 그리드 ── */}
             <div className="wb-main">
@@ -2375,28 +2372,64 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             </div>
 
+            {/* 1단계는 고르기에만 집중한다. 나머지 입력은 다음 화면으로 넘겼다. */}
+            <div style={{ display: "flex", gap: "10px", marginTop: "16px", alignItems: "center" }}>
+              <button onClick={goPrev} style={secondaryBtn}>이전</button>
+              <button
+                onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setMode("wborrow2"); }}
+                disabled={!whCart.length}
+                style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
+              >
+                다음 단계 {whCart.length ? `(${whCart.length}종 · ${whCartCount}개)` : ""} <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* ══════════ 공구 및 부품류 — 2단계: 확인 및 신청 ══════════ */}
+        {mode === "wborrow2" ? (
+          <div>
+            <div style={{ marginBottom: "16px", border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 800, color: C.text }}>담은 물품</span>
+                <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>
+                  {whCart.length}종 · {whCartCount}개
+                </span>
+              </div>
+              {whCart.length === 0 ? (
+                <div style={{ padding: "16px 0", textAlign: "center", fontSize: "12.5px", color: C.label, borderTop: `1px solid ${C.border}` }}>
+                  담은 물품이 없습니다. 이전 화면에서 골라주세요.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", borderTop: `1px solid ${C.border}`, paddingTop: "10px" }}>
+                  {whCart.map((c, idx) => (
+                    <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                        <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || "위치 없음"}</div>
+                      </div>
+                      <button onClick={() => chgWhCart(idx, -1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>−</button>
+                      <span style={{ minWidth: "20px", textAlign: "center", fontSize: "13px", fontWeight: 800 }}>{c.quantity}</span>
+                      <button onClick={() => chgWhCart(idx, 1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>+</button>
+                      <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={12} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* 목록에 없는 물품 직접 입력하여 담기 */}
-            <div style={{ marginTop: "10px", border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub }}>
+            <div style={{ marginBottom: "16px", border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub }}>
               <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
                 <Plus size={13} /> 목록에 없는 물품 직접 대여
               </div>
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                <input
-                  value={whSearch}
-                  onChange={(e) => setWhSearch(e.target.value)}
-                  placeholder="물품명"
-                  style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }}
-                />
-                <input
-                  value={whCustomLoc}
-                  onChange={(e) => setWhCustomLoc(e.target.value)}
-                  placeholder="위치 (선택)"
-                  style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }}
-                />
+                <input value={whCustomName} onChange={(e) => setWhCustomName(e.target.value)} placeholder="물품명" style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }} />
+                <input value={whCustomLoc} onChange={(e) => setWhCustomLoc(e.target.value)} placeholder="위치 (선택)" style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }} />
                 <button
-                  onClick={() => { addCustomWhCart(whSearch, whCustomLoc); setWhSearch(""); setWhCustomLoc(""); }}
-                  disabled={!whSearch.trim()}
-                  style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whSearch.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whSearch.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
+                  onClick={() => { addCustomWhCart(whCustomName, whCustomLoc); setWhCustomName(""); setWhCustomLoc(""); }}
+                  disabled={!whCustomName.trim()}
+                  style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whCustomName.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whCustomName.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
                 >
                   담기
                 </button>
@@ -2406,9 +2439,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               </div>
             </div>
 
-            <div style={{ marginTop: "16px" }}>
+            <label style={labelStyle}>대여자 성함</label>
+            <div style={{ position: "relative", marginBottom: "16px" }}>
+              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+            </div>
+
+            <div>
               <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
-              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "80px", resize: "none" }} />
+              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "72px", resize: "none" }} />
             </div>
             <div style={{ marginTop: "12px" }}>
               <label style={labelStyle}>반납 예정일 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(대여 시 선택 · 연체 관리에 사용)</span></label>
@@ -2429,6 +2468,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
           </div>
         ) : null}
+
 
         {/* ───────── 공구 및 부품류 반납 ───────── */}
         {mode === "wreturn" ? (
