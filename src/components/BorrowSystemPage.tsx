@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
-  HandHelping, PackageOpen, Package, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
+  HandHelping, PackageOpen, Package, ShoppingCart, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
   Warehouse, Trash2, RefreshCw,
 } from "lucide-react";
@@ -28,7 +28,7 @@ type Mode =
   | "mode"
   | "pickBorrowKind" | "pickReturnKind"
   | "b1" | "b2" | "b3g" | "b4g" | "b3s" | "b4s"
-  | "wborrow" | "wborrow2" | "wreturn"
+  | "wbname" | "wborrow" | "wborrow2" | "wreturn"
   | "return"
   | "result";
 
@@ -56,7 +56,7 @@ interface BorrowSystemPageProps {
 
 export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
   // 열람에서 공구 및 부품류를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
-  const rootMode: Mode = initialKind === "warehouse" ? "wborrow"
+  const rootMode: Mode = initialKind === "warehouse" ? "wbname"
     : initialKind === "scenario" ? "b1"
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   /* ---------- 팔레트 (WMS 디자인 시스템) ---------- */
@@ -190,6 +190,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [whCustomLoc, setWhCustomLoc] = useState("");
   // 목록에 없는 물품 직접 입력 (예전에는 검색창 값을 재사용해 검색어가 지워지는 문제가 있었다)
   const [whCustomName, setWhCustomName] = useState("");
+  // 장바구니: 평소엔 숨기고 우측 하단 아이콘으로만 접근한다
+  const [whCartOpen, setWhCartOpen] = useState(false);
+  const [whCartPulse, setWhCartPulse] = useState(false);
+  // 담을 때 카드에서 장바구니로 날아가는 점 애니메이션
+  const [flyDots, setFlyDots] = useState<{ id: number; x: number; y: number }[]>([]);
+  const flyIdRef = useRef(0);
+
+  // 카드 위치에서 장바구니 아이콘으로 점을 날린다 (담긴 걸 눈으로 확인시켜 준다)
+  function flyToCart(from: DOMRect) {
+    const id = ++flyIdRef.current;
+    setFlyDots((prev) => [...prev, { id, x: from.left + from.width / 2, y: from.top + from.height / 2 }]);
+    setWhCartPulse(true);
+    window.setTimeout(() => setFlyDots((prev) => prev.filter((d) => d.id !== id)), 620);
+    window.setTimeout(() => setWhCartPulse(false), 420);
+  }
   const [whRack, setWhRack] = useState("");
   const [whSlot, setWhSlot] = useState("");
   const [whPurpose, setWhPurpose] = useState("");
@@ -1339,7 +1354,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
-    if (rootMode === "wborrow") { loadWarehouse(true); }
+    if (rootMode === "wbname") { loadWarehouse(true); }
     if (rootMode === "wreturn") loadWhReturn();
   }
 
@@ -1354,7 +1369,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   function goPrev() {
     if (mode === rootMode) {
-      if (rootMode === "wborrow" && onBackToWarehouseBrowse) { onBackToWarehouseBrowse(); return; }
+      if (rootMode === "wbname" && onBackToWarehouseBrowse) { onBackToWarehouseBrowse(); return; }
       onBack(); return;
     }
     if (mode === "b1") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
@@ -1364,11 +1379,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     else if (mode === "b4s") setMode("b3s");
     else if (mode === "return") setMode("pickReturnKind");
     else if (mode === "wborrow2") setMode("wborrow");
-    else if (mode === "wborrow" || mode === "wreturn") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
+    else if (mode === "wborrow") setMode("wbname");
+    else if (mode === "wbname" || mode === "wreturn") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
     else setMode(rootMode);
   }
 
-  const progressIdx = mode === "b1" ? 1 : mode === "b2" ? 2 : mode === "b3g" || mode === "b3s" || mode === "wborrow" ? 3 : mode === "b4g" || mode === "b4s" || mode === "wborrow2" ? 4 : 0;
+  const progressIdx = mode === "b1" ? 1 : mode === "b2" || mode === "wbname" ? 2 : mode === "b3g" || mode === "b3s" || mode === "wborrow" ? 3 : mode === "b4g" || mode === "b4s" || mode === "wborrow2" ? 4 : 0;
 
   /* ── URL 해시로 대여 단계를 세분화 (#/borrow/<단계>) — 새로고침·공유·뒤로가기 지원 ── */
   const MODE_SLUGS: Record<string, string> = {
@@ -1380,7 +1396,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const SLUG_TO_MODE: Record<string, Mode> = {
     kind: entry === "return" ? "pickReturnKind" : "pickBorrowKind",
     identity: "b1", items: "b2", general: "b3g", confirm: "b4g",
-    sid: "b3s", "confirm-sid": "b4s", warehouse: "wborrow",
+    sid: "b3s", "confirm-sid": "b4s", warehouse: "wbname",
     "warehouse-return": "wreturn", return: "return", done: "result",
   };
   const modeRef = useRef(mode);
@@ -1442,14 +1458,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       <style>{`
         @keyframes bsp-spin { to { transform: rotate(360deg); } }
 
-        /* 공구 및 부품류 대여: 넓은 화면에서 목록(왼쪽) + 담은 목록(오른쪽) 2열 */
-        .wb-layout { display: block; }
-        .wb-side { margin-bottom: 16px; }
-        @media (min-width: 900px) {
-          .wb-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 16px; align-items: start; }
-          .wb-main { min-width: 0; }
-          .wb-side { position: sticky; top: 12px; margin-bottom: 0; }
+        /* 담을 때 카드에서 장바구니로 날아가는 점 */
+        @keyframes wb-fly {
+          0%   { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+          70%  { opacity: 1; }
+          100% { transform: translate(-50%, -50%) scale(0.35); opacity: 0; }
         }
+        @keyframes wb-pop {
+          0%   { transform: scale(1); }
+          45%  { transform: scale(1.22); }
+          100% { transform: scale(1); }
+        }
+        .wb-cart-pop { animation: wb-pop 0.4s ease-out; }
 
         /* PC(넓은 화면)에서는 전체적으로 살짝 크게 — 모바일 폭(480px 이하)에는 영향 없음 */
         @media (min-width: 900px) {
@@ -1670,7 +1690,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 onClick={() => {
                   if (mode === "pickBorrowKind") {
                     if (m.kind === "scenario") { setMode("b1"); setItemsLoaded(false); loadItems(); }
-                    else { setMode("wborrow"); loadWarehouse(); }
+                    else { setMode("wbname"); loadWarehouse(); }
                   } else {
                     if (m.kind === "scenario") { setMode("return"); loadUnreturned(); }
                     else { setMode("wreturn"); loadWhReturn(); }
@@ -2203,45 +2223,89 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         ) : null}
 
         {/* ───────── 공구 및 부품류 대여 ───────── */}
+        {/* ══════════ 공구 및 부품류 1단계: 대여자 성함 ══════════ */}
+        {mode === "wbname" ? (
+          <div>
+            <label style={labelStyle}>대여자 성함</label>
+            <div style={{ position: "relative", marginBottom: "8px" }}>
+              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input
+                value={whName}
+                onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
+                onKeyDown={(e) => { if (e.key === "Enter" && whName.trim()) setMode("wborrow"); }}
+                placeholder="성함을 입력해주세요"
+                autoFocus
+                style={{ ...inputStyle, paddingLeft: "40px" }}
+              />
+            </div>
+            <div style={{ fontSize: "11.5px", color: C.label, lineHeight: 1.6, marginBottom: "18px" }}>
+              대여 기록과 반납 알림에 사용됩니다.
+            </div>
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button onClick={goPrev} style={secondaryBtn}>이전</button>
+              <button
+                onClick={() => { if (!whName.trim()) { showToast("성함을 입력해주세요.", "warn"); return; } setMode("wborrow"); }}
+                disabled={!whName.trim()}
+                style={{ ...primaryBtn, opacity: whName.trim() ? 1 : 0.5 }}
+              >
+                다음 단계 <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* ══════════ 공구 및 부품류 2단계: 물건 담기 ══════════ */}
         {mode === "wborrow" ? (
           <div>
-            <div className="wb-layout">
-            {/* ── 왼쪽: 검색 · 랙 칩 · 물품 카드 그리드 ── */}
-            <div className="wb-main">
             <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
               <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
                 <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
                 <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "10px 12px 10px 36px", fontSize: "13.5px" }} />
               </div>
-              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "0 0 120px" }}>
+              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "0 0 110px" }}>
                 <option value="">전체 슬롯</option>{whSlots.map((sl) => <option key={sl} value={sl}>{sl}번</option>)}
               </select>
             </div>
 
-            {/* 랙 필터: 드롭다운 대신 칩 — 어느 랙에 몇 개 있는지 바로 보인다 */}
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" }}>
+            {/* 랙 필터 칩 */}
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
               {[{ v: "", label: "전체", n: whItems.length }, ...whRacks.map((r) => ({ v: r, label: `${r}랙`, n: whRackCounts[r] || 0 }))].map((chip) => {
                 const on = whRack === chip.v;
                 return (
-                  <button
-                    key={chip.v || "all"}
-                    onClick={() => { setWhRack(chip.v); setWhSlot(""); }}
-                    style={{
-                      padding: "5px 12px", borderRadius: "999px", cursor: "pointer", fontSize: "12px", fontWeight: 700,
-                      border: `1px solid ${on ? C.accent : C.border}`,
-                      background: on ? C.accentSoft : C.card,
-                      color: on ? C.accentText : C.label,
-                    }}
-                  >
+                  <button key={chip.v || "all"} onClick={() => { setWhRack(chip.v); setWhSlot(""); }}
+                    style={{ padding: "5px 12px", borderRadius: "999px", cursor: "pointer", fontSize: "12px", fontWeight: 700, border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accentSoft : C.card, color: on ? C.accentText : C.label }}>
                     {chip.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>{chip.n}</span>
                   </button>
                 );
               })}
             </div>
 
+            {/* 세트로 담기 */}
+            {itemSetsLoaded && itemSets.length > 0 ? (
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" }}>
+                {itemSets.map((set) => (
+                  <button key={set.name} onClick={(e) => { flyToCart(e.currentTarget.getBoundingClientRect()); addSetToCart(set); }}
+                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 12px", borderRadius: "999px", border: `1px dashed ${C.accent}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
+                    <PackageOpen size={13} /> {set.name} <span style={{ fontWeight: 500, opacity: 0.7 }}>{set.items.length}종</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {setAddResult && (setAddResult.notFound.length > 0 || setAddResult.shortages.length > 0) ? (
+              <div style={{ marginBottom: "10px", padding: "10px 12px", borderRadius: "10px", background: C.warnSoft, border: `1px solid ${C.warn}55` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 800, color: C.warn, flex: 1 }}>'{setAddResult.setName}' — {setAddResult.added}개 담김</span>
+                  <button onClick={() => setSetAddResult(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", padding: 0 }}><X size={14} /></button>
+                </div>
+                {setAddResult.notFound.length > 0 ? <div style={{ fontSize: "11.5px", color: C.text }}><b>창고 목록에 없음:</b> {setAddResult.notFound.join(", ")}</div> : null}
+                {setAddResult.shortages.length > 0 ? <div style={{ fontSize: "11.5px", color: C.text }}><b>재고 부족:</b> {setAddResult.shortages.join(", ")}</div> : null}
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", fontSize: "11.5px", color: C.label }}>
               <span>{whFiltered.length} / {whItems.length}개 물품</span>
-              <span>카드를 누르면 담깁니다</span>
+              <span>카드를 누르면 장바구니에 담깁니다</span>
             </div>
 
             {whLoading && !whLoaded ? (
@@ -2254,7 +2318,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : whFiltered.length === 0 ? (
               <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px", maxHeight: "min(42vh, 380px)", overflowY: "auto", paddingRight: "2px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px", maxHeight: "min(52vh, 500px)", overflowY: "auto", paddingRight: "2px" }}>
                 {whFiltered.map((it) => {
                   const inCart = whCart.some((c) => c.rowIndex === it.rowIndex);
                   const cartQty = whCart.find((c) => c.rowIndex === it.rowIndex)?.quantity || 0;
@@ -2262,49 +2326,21 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const soldOut = !isNaN(stockN) && stockN <= 0;
                   const { rack, slot } = parseRackSlot(it.location);
                   return (
-                    <div
-                      key={it.rowIndex}
-                      onClick={() => { if (!soldOut) addWhCart(it); }}
-                      style={{
-                        border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
-                        borderRadius: "12px",
-                        background: C.card,
-                        padding: "6px",
-                        cursor: soldOut ? "not-allowed" : "pointer",
-                        opacity: soldOut ? 0.5 : 1,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "4px",
-                      }}
-                    >
-                      {/* 사진: 고정 높이 + cover로 잘라 여백이 생기지 않게 한다 */}
-                      <div
-                        onClick={(e) => { if (it.photo) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.photo)); } }}
-                        style={{ height: "44px", borderRadius: "6px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                      >
-                        {it.photo ? (
-                          <img src={getGoogleDriveImageUrl(it.photo)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        ) : (
-                          <Package size={18} style={{ color: C.label, opacity: 0.5 }} />
-                        )}
+                    <div key={it.rowIndex}
+                      onClick={(e) => { if (soldOut) return; flyToCart(e.currentTarget.getBoundingClientRect()); addWhCart(it); }}
+                      style={{ border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`, borderRadius: "12px", background: C.card, padding: "6px", cursor: soldOut ? "not-allowed" : "pointer", opacity: soldOut ? 0.5 : 1, display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <div onClick={(e) => { if (it.photo) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.photo)); } }}
+                        style={{ height: "44px", borderRadius: "6px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {it.photo ? <img src={getGoogleDriveImageUrl(it.photo)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <Package size={18} style={{ color: C.label, opacity: 0.5 }} />}
                       </div>
-
-                      <div title={it.name} style={{ fontSize: "12px", fontWeight: 700, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {it.name}
-                      </div>
-
+                      <div title={it.name} style={{ fontSize: "12px", fontWeight: 700, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
                         <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>{it.location ? `${rack}-${slot}` : "-"}</span>
-                        <span style={{ fontWeight: 700, color: isNaN(stockN) ? C.label : (soldOut ? C.error : C.success) }}>
-                          {isNaN(stockN) ? "N/A" : soldOut ? "재고 없음" : `재고 ${stockN}`}
-                        </span>
+                        <span style={{ fontWeight: 700, color: isNaN(stockN) ? C.label : (soldOut ? C.error : C.success) }}>{isNaN(stockN) ? "N/A" : soldOut ? "재고 없음" : `재고 ${stockN}`}</span>
                       </div>
-
                       {inCart ? (
-                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), -1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
-                          <span style={{ flex: 1, textAlign: "center", fontSize: "12.5px", fontWeight: 800, color: C.accentText }}>{cartQty}</span>
-                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), 1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>+</button>
+                        <div style={{ height: "22px", borderRadius: "6px", background: C.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 800, color: C.accentText }}>
+                          담김 {cartQty}개
                         </div>
                       ) : (
                         <div style={{ height: "22px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
@@ -2316,63 +2352,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 })}
               </div>
             )}
-            </div>
 
-            {/* ── 오른쪽: 담은 물품 + 세트 ── */}
-            <div className="wb-side">
-              <div style={{ border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "13px", fontWeight: 800, color: C.text }}>담은 물품</span>
-                  <span style={{ fontSize: "11px", fontWeight: 700, background: whCart.length ? C.accent : C.border, color: whCart.length ? "#fff" : C.label, borderRadius: "14px", padding: "2px 10px" }}>
-                    {whCart.length}종 · {whCartCount}개
-                  </span>
-                </div>
-
-                {whCart.length === 0 ? (
-                  <div style={{ padding: "14px 0", textAlign: "center", fontSize: "12px", color: C.label, borderTop: `1px solid ${C.border}` }}>
-                    왼쪽에서 물품을 골라주세요.
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "min(38vh, 340px)", overflowY: "auto", borderTop: `1px solid ${C.border}`, paddingTop: "8px" }}>
-                    {whCart.map((c, idx) => (
-                      <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: "12px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                          <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{c.location}</div>
-                        </div>
-                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1, flexShrink: 0 }}>−</button>
-                        <span style={{ minWidth: "16px", textAlign: "center", fontSize: "12px", fontWeight: 800 }}>{c.quantity}</span>
-                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1, flexShrink: 0 }}>+</button>
-                        <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 22, height: 22, borderRadius: "6px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={11} /></button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {itemSetsLoaded && itemSets.length > 0 ? (
-                  <div style={{ marginTop: "12px", borderTop: `1px solid ${C.border}`, paddingTop: "10px" }}>
-                    <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "6px" }}>세트로 담기</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {itemSets.map((set) => (
-                        <button
-                          key={set.name}
-                          onClick={() => addSetToCart(set)}
-                          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "6px", padding: "8px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer" }}
-                        >
-                          <span style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            <PackageOpen size={13} style={{ flexShrink: 0 }} /> {set.name}
-                          </span>
-                          <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{set.items.length}종</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-            </div>
-
-            {/* 1단계는 고르기에만 집중한다. 나머지 입력은 다음 화면으로 넘겼다. */}
             <div style={{ display: "flex", gap: "10px", marginTop: "16px", alignItems: "center" }}>
               <button onClick={goPrev} style={secondaryBtn}>이전</button>
               <button
@@ -2380,7 +2360,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 disabled={!whCart.length}
                 style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
               >
-                다음 단계 {whCart.length ? `(${whCart.length}종 · ${whCartCount}개)` : ""} <ChevronRight size={16} />
+                다음 단계 <ChevronRight size={16} />
               </button>
             </div>
           </div>
@@ -2418,31 +2398,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               )}
             </div>
 
-            {/* 목록에 없는 물품 직접 입력하여 담기 */}
-            <div style={{ marginBottom: "16px", border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub }}>
-              <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
-                <Plus size={13} /> 목록에 없는 물품 직접 대여
-              </div>
-              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                <input value={whCustomName} onChange={(e) => setWhCustomName(e.target.value)} placeholder="물품명" style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }} />
-                <input value={whCustomLoc} onChange={(e) => setWhCustomLoc(e.target.value)} placeholder="위치 (선택)" style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }} />
-                <button
-                  onClick={() => { addCustomWhCart(whCustomName, whCustomLoc); setWhCustomName(""); setWhCustomLoc(""); }}
-                  disabled={!whCustomName.trim()}
-                  style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whCustomName.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whCustomName.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}
-                >
-                  담기
-                </button>
-              </div>
-              <div style={{ fontSize: "11px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
-                재고에 등록되지 않은 물품도 이름을 입력해 대여 기록을 남길 수 있습니다.
-              </div>
-            </div>
-
-            <label style={labelStyle}>대여자 성함</label>
-            <div style={{ position: "relative", marginBottom: "16px" }}>
-              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="성함을 입력해주세요" style={{ ...inputStyle, paddingLeft: "40px" }} />
+            <div style={{ marginBottom: "16px", fontSize: "12px", color: C.label }}>
+              대여자: <b style={{ color: C.text }}>{whName || "(미입력)"}</b>
+              <button onClick={() => setMode("wbname")} style={{ marginLeft: "8px", background: "transparent", border: "none", color: C.accentText, cursor: "pointer", fontSize: "11.5px", fontWeight: 700 }}>변경</button>
             </div>
 
             <div>
@@ -2691,6 +2649,125 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       </div>
 
       {/* 이미지 확대 모달 */}
+      {/* ══════════ 장바구니: 우측 하단 아이콘 + 시트 + 날아가는 점 ══════════ */}
+      {mode === "wborrow" ? (
+        <>
+          {/* 날아가는 점 */}
+          {flyDots.map((d) => (
+            <div
+              key={d.id}
+              style={{
+                position: "fixed", left: d.x, top: d.y, zIndex: 2400, pointerEvents: "none",
+                width: 16, height: 16, borderRadius: "999px", background: C.accent,
+                transform: "translate(-50%, -50%)",
+                animation: "wb-fly 0.6s cubic-bezier(0.4, 0, 0.6, 1) forwards",
+                transition: "left 0.6s cubic-bezier(0.4,0,0.6,1), top 0.6s cubic-bezier(0.4,0,0.6,1)",
+              }}
+              ref={(el) => {
+                if (!el) return;
+                // 다음 프레임에 목적지(장바구니 버튼)로 좌표를 옮겨 이동 애니메이션을 만든다
+                requestAnimationFrame(() => {
+                  const cart = document.getElementById("wb-cart-fab");
+                  if (!cart) return;
+                  const r = cart.getBoundingClientRect();
+                  el.style.left = `${r.left + r.width / 2}px`;
+                  el.style.top = `${r.top + r.height / 2}px`;
+                });
+              }}
+            />
+          ))}
+
+          {/* 장바구니 버튼 */}
+          <button
+            id="wb-cart-fab"
+            onClick={() => setWhCartOpen(true)}
+            className={whCartPulse ? "wb-cart-pop" : ""}
+            style={{
+              position: "fixed", right: "22px", bottom: "22px", zIndex: 2300,
+              width: 58, height: 58, borderRadius: "999px", border: "none", cursor: "pointer",
+              background: C.accent, color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+            }}
+            aria-label="장바구니 열기"
+          >
+            <ShoppingCart size={24} />
+            {whCartCount > 0 ? (
+              <span style={{
+                position: "absolute", top: -4, right: -4, minWidth: 24, height: 24, padding: "0 6px",
+                borderRadius: "999px", background: C.error, color: "#fff",
+                fontSize: "12px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                border: `2px solid ${C.card}`,
+              }}>
+                {whCartCount}
+              </span>
+            ) : null}
+          </button>
+
+          {/* 장바구니 시트 */}
+          {whCartOpen ? (
+            <div onClick={() => setWhCartOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 2500, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)", maxHeight: "82vh", overflowY: "auto", background: C.card, borderRadius: "18px 18px 0 0", border: `1px solid ${C.border}`, padding: "18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+                  <ShoppingCart size={18} style={{ color: C.accentText }} />
+                  <span style={{ fontSize: "15px", fontWeight: 800, color: C.text, flex: 1 }}>
+                    장바구니 <span style={{ color: C.accentText }}>{whCart.length}종 · {whCartCount}개</span>
+                  </span>
+                  <button onClick={() => setWhCartOpen(false)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+                </div>
+
+                {whCart.length === 0 ? (
+                  <div style={{ padding: "28px 0", textAlign: "center", fontSize: "13px", color: C.label }}>
+                    아직 담은 물품이 없습니다.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
+                    {whCart.map((c, idx) => (
+                      <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "8px", paddingBottom: "10px", borderBottom: `1px solid ${C.border}` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "13.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                          <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || "위치 없음"}</div>
+                        </div>
+                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>−</button>
+                        <span style={{ minWidth: "22px", textAlign: "center", fontSize: "13.5px", fontWeight: 800 }}>{c.quantity}</span>
+                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>+</button>
+                        <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={13} /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 목록에 없는 물품 직접 담기 */}
+                <div style={{ border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub, marginBottom: "14px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
+                    <Plus size={13} /> 목록에 없는 물품 직접 대여
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    <input value={whCustomName} onChange={(e) => setWhCustomName(e.target.value)} placeholder="물품명" style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }} />
+                    <input value={whCustomLoc} onChange={(e) => setWhCustomLoc(e.target.value)} placeholder="위치 (선택)" style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }} />
+                    <button onClick={() => { addCustomWhCart(whCustomName, whCustomLoc); setWhCustomName(""); setWhCustomLoc(""); }} disabled={!whCustomName.trim()}
+                      style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whCustomName.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whCustomName.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>
+                      담기
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button onClick={() => setWhCartOpen(false)} style={{ ...secondaryBtn, flex: 1 }}>계속 담기</button>
+                  <button
+                    onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setWhCartOpen(false); setMode("wborrow2"); }}
+                    disabled={!whCart.length}
+                    style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
+                  >
+                    다음 단계 <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
       {imageModalUrl ? (
         <div
           onClick={() => setImageModalUrl("")}
