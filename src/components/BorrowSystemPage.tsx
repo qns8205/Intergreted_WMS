@@ -2257,7 +2257,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             ) : whFiltered.length === 0 ? (
               <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))", gap: "8px", maxHeight: "min(62vh, 640px)", overflowY: "auto", paddingRight: "2px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px", maxHeight: "min(42vh, 380px)", overflowY: "auto", paddingRight: "2px" }}>
                 {whFiltered.map((it) => {
                   const inCart = whCart.some((c) => c.rowIndex === it.rowIndex);
                   const cartQty = whCart.find((c) => c.rowIndex === it.rowIndex)?.quantity || 0;
@@ -2272,18 +2272,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
                         borderRadius: "12px",
                         background: C.card,
-                        padding: "7px",
+                        padding: "6px",
                         cursor: soldOut ? "not-allowed" : "pointer",
                         opacity: soldOut ? 0.5 : 1,
                         display: "flex",
                         flexDirection: "column",
-                        gap: "5px",
+                        gap: "4px",
                       }}
                     >
                       {/* 사진: 고정 높이 + cover로 잘라 여백이 생기지 않게 한다 */}
                       <div
                         onClick={(e) => { if (it.photo) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.photo)); } }}
-                        style={{ height: "62px", borderRadius: "8px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                        style={{ height: "44px", borderRadius: "6px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
                       >
                         {it.photo ? (
                           <img src={getGoogleDriveImageUrl(it.photo)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -2292,7 +2292,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         )}
                       </div>
 
-                      <div style={{ fontSize: "12.5px", fontWeight: 700, lineHeight: 1.3, minHeight: "32px", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                      <div title={it.name} style={{ fontSize: "12px", fontWeight: 700, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {it.name}
                       </div>
 
@@ -2304,13 +2304,13 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                       </div>
 
                       {inCart ? (
-                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "5px" }}>
-                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), -1)} style={{ width: 24, height: 24, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
+                        <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), -1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>−</button>
                           <span style={{ flex: 1, textAlign: "center", fontSize: "12.5px", fontWeight: 800, color: C.accentText }}>{cartQty}</span>
-                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), 1)} style={{ width: 24, height: 24, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>+</button>
+                          <button onClick={() => chgWhCart(whCart.findIndex((c) => c.rowIndex === it.rowIndex), 1)} style={{ width: 22, height: 22, borderRadius: "6px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1 }}>+</button>
                         </div>
                       ) : (
-                        <div style={{ height: "24px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11.5px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
+                        <div style={{ height: "22px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
                           {soldOut ? "재고 없음" : "담기"}
                         </div>
                       )}
