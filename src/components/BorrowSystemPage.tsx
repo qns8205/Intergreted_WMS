@@ -1224,6 +1224,26 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   }, [whItems, whSearch, whRack, whSlot]);
   const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
 
+  // 화면별로 다른 장바구니를 하나의 UI로 다룬다 (창고 / 일반 대여 / SID 추가물품)
+  const cartKind: "wh" | "gen" | "req" | null =
+    mode === "wborrow" ? "wh" : mode === "b3g" ? "gen" : mode === "b4s" ? "req" : null;
+  const activeCart: any[] = cartKind === "wh" ? whCart : cartKind === "gen" ? cart : cartKind === "req" ? reqCart : [];
+  const activeCartCount = cartKind === "wh"
+    ? whCartCount
+    : activeCart.reduce((sum: number, c: any) => sum + (Number(c.quantity) || 1), 0);
+
+  function changeActiveQty(idx: number, delta: number) {
+    if (cartKind === "wh") { chgWhCart(idx, delta); return; }
+    const setter = cartKind === "gen" ? setCart : setReqCart;
+    setter((prev: CartItem[]) => prev.map((c, i) => (i === idx ? { ...c, quantity: Math.max(1, (c.quantity || 1) + delta) } : c)));
+  }
+  function removeActiveItem(idx: number) {
+    if (cartKind === "wh") { setWhCart(whCart.filter((_, i) => i !== idx)); return; }
+    const setter = cartKind === "gen" ? setCart : setReqCart;
+    setter((prev: CartItem[]) => prev.filter((_, i) => i !== idx));
+  }
+
+
   function addWhCart(it: WarehouseItem) {
     const stock = warehouseStockNum(it.stock);
     if (!isNaN(stock) && stock < 1) { showToast("재고가 부족합니다. (재고: 0)", "warn"); return; }
@@ -1829,9 +1849,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── Step 3-일반: 물품 선택 ───────── */}
         {mode === "b3g" ? (
           <div>
-            <label style={labelStyle}>대여 물품 선택</label>
-            <CartBox list={cart} setList={setCart} emptyText="아래 목록에서 물품을 선택해주세요" C={C} objectItems={objectItems} showToast={showToast} />
-            <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} />
+            <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} onFly={flyToCart} />
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={() => setMode("b2")} style={secondaryBtn}>이전</button>
               <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } if (generalTypeOverflow) { setTypeOverflowModal(generalTypeOverflow); return; } setMode("b4g"); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
@@ -1966,7 +1984,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
             <label style={labelStyle}>추가 물품 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(필요 물품과 별도로 필요한 물품만 선택하세요. 추가 물품은 일반 대여로 처리됩니다.)</span></label>
             <CartBox list={reqCart} setList={setReqCart} emptyText="필요하다면 아래 목록에서 물품을 선택해주세요" C={C} objectItems={objectItems} showToast={showToast} />
-            <ItemPicker list={reqCart} setList={setReqCart} search={reqSearch} setSearch={setReqSearch} cat={reqCat} setCat={setReqCat} sub={reqSub} setSub={setReqSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} />
+            <ItemPicker list={reqCart} setList={setReqCart} search={reqSearch} setSearch={setReqSearch} cat={reqCat} setCat={setReqCat} sub={reqSub} setSub={setReqSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} onFly={flyToCart} />
 
             <div style={{ marginTop: "18px" }}>
               <label style={labelStyle}>대여 목적</label>
@@ -2650,7 +2668,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
       {/* 이미지 확대 모달 */}
       {/* ══════════ 장바구니: 우측 하단 아이콘 + 시트 + 날아가는 점 ══════════ */}
-      {mode === "wborrow" ? (
+      {cartKind ? (
         <>
           {/* 날아가는 점 */}
           {flyDots.map((d) => (
@@ -2692,14 +2710,14 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             aria-label="장바구니 열기"
           >
             <ShoppingCart size={24} />
-            {whCartCount > 0 ? (
+            {activeCartCount > 0 ? (
               <span style={{
                 position: "absolute", top: -4, right: -4, minWidth: 24, height: 24, padding: "0 6px",
                 borderRadius: "999px", background: C.error, color: "#fff",
                 fontSize: "12px", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
                 border: `2px solid ${C.card}`,
               }}>
-                {whCartCount}
+                {activeCartCount}
               </span>
             ) : null}
           </button>
@@ -2711,33 +2729,34 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
                   <ShoppingCart size={18} style={{ color: C.accentText }} />
                   <span style={{ fontSize: "15px", fontWeight: 800, color: C.text, flex: 1 }}>
-                    장바구니 <span style={{ color: C.accentText }}>{whCart.length}종 · {whCartCount}개</span>
+                    장바구니 <span style={{ color: C.accentText }}>{activeCart.length}종 · {activeCartCount}개</span>
                   </span>
                   <button onClick={() => setWhCartOpen(false)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
                 </div>
 
-                {whCart.length === 0 ? (
+                {activeCart.length === 0 ? (
                   <div style={{ padding: "28px 0", textAlign: "center", fontSize: "13px", color: C.label }}>
                     아직 담은 물품이 없습니다.
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
-                    {whCart.map((c, idx) => (
-                      <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "8px", paddingBottom: "10px", borderBottom: `1px solid ${C.border}` }}>
+                    {activeCart.map((c: any, idx: number) => (
+                      <div key={c.rowIndex ?? c.id ?? idx} style={{ display: "flex", alignItems: "center", gap: "8px", paddingBottom: "10px", borderBottom: `1px solid ${C.border}` }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: "13.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                          <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || "위치 없음"}</div>
+                          <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || c.id || ""}</div>
                         </div>
-                        <button onClick={() => chgWhCart(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>−</button>
+                        <button onClick={() => changeActiveQty(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>−</button>
                         <span style={{ minWidth: "22px", textAlign: "center", fontSize: "13.5px", fontWeight: 800 }}>{c.quantity}</span>
-                        <button onClick={() => chgWhCart(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>+</button>
-                        <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={13} /></button>
+                        <button onClick={() => changeActiveQty(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>+</button>
+                        <button onClick={() => removeActiveItem(idx)} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={13} /></button>
                       </div>
                     ))}
                   </div>
                 )}
 
-                {/* 목록에 없는 물품 직접 담기 */}
+                {/* 목록에 없는 물품 직접 담기 (창고 물품에서만 지원) */}
+                {cartKind === "wh" ? (
                 <div style={{ border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub, marginBottom: "14px" }}>
                   <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
                     <Plus size={13} /> 목록에 없는 물품 직접 대여
@@ -2751,16 +2770,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     </button>
                   </div>
                 </div>
+                ) : null}
 
                 <div style={{ display: "flex", gap: "10px" }}>
-                  <button onClick={() => setWhCartOpen(false)} style={{ ...secondaryBtn, flex: 1 }}>계속 담기</button>
-                  <button
-                    onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setWhCartOpen(false); setMode("wborrow2"); }}
-                    disabled={!whCart.length}
-                    style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
-                  >
-                    다음 단계 <ChevronRight size={16} />
-                  </button>
+                  <button onClick={() => setWhCartOpen(false)} style={{ ...(activeCart.length ? secondaryBtn : primaryBtn), flex: 1 }}>계속 담기</button>
+                  {cartKind === "wh" ? (
+                    <button
+                      onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setWhCartOpen(false); setMode("wborrow2"); }}
+                      disabled={!whCart.length}
+                      style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
+                    >
+                      다음 단계 <ChevronRight size={16} />
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -3159,6 +3181,7 @@ function ItemPicker({
   matchesFilters,
   showToast,
   setImageModalUrl,
+  onFly,
 }: {
   list: CartItem[];
   setList: (val: any) => void;
@@ -3177,6 +3200,7 @@ function ItemPicker({
   matchesFilters: (it: any, query: string, c: string, s: string) => boolean;
   showToast: (msg: string, type?: string) => void;
   setImageModalUrl: (url: string) => void;
+  onFly?: (rect: DOMRect) => void;
 }) {
   const inputStyle = {
     width: "100%",
@@ -3255,27 +3279,54 @@ function ItemPicker({
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "12px" }}>조건에 맞는 물품이 없습니다.</div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "6px", maxHeight: "240px", overflowY: "auto", paddingRight: "2px" }}>
-          {filtered.slice(0, 100).map((it) => {
+        // 카드 그리드: 사진을 크게 보여 물품을 알아보기 쉽게 한다
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "10px", maxHeight: "min(56vh, 560px)", overflowY: "auto", paddingRight: "2px" }}>
+          {filtered.slice(0, 120).map((it) => {
             const inCart = list.some((x) => x.id === it.id);
             const stock = Number(it.stock || 0);
             const rented = Number(it.rented || 0);
+            const soldOut = stock <= 0;
             return (
-              <div key={it.id} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px", background: C.card, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
-                <Thumb url={it.image} size={40} C={C} setImageModalUrl={setImageModalUrl} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                    <span style={{ fontWeight: 800, fontSize: "12px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</span>
-                    <span style={{ fontSize: "10px", color: C.label, fontFamily: "monospace" }}>({it.id})</span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
-                    <LocBadge slot={it.rootSlot} C={C} />
-                    <StockBadges stock={stock} rented={rented} C={C} />
-                  </div>
+              <div
+                key={it.id}
+                onClick={(e) => {
+                  if (!inCart && soldOut) { showToast("재고가 없는 물품입니다.", "warn"); return; }
+                  if (!inCart && onFly) onFly(e.currentTarget.getBoundingClientRect());
+                  toggleItem(it);
+                }}
+                style={{
+                  border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
+                  borderRadius: "14px", background: C.card, padding: "8px",
+                  cursor: (!inCart && soldOut) ? "not-allowed" : "pointer",
+                  opacity: (!inCart && soldOut) ? 0.5 : 1,
+                  display: "flex", flexDirection: "column", gap: "6px",
+                }}
+              >
+                <div
+                  onClick={(e) => { if (it.image) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.image)); } }}
+                  style={{ height: "104px", borderRadius: "10px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                >
+                  {it.image
+                    ? <img src={getGoogleDriveImageUrl(it.image)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    : <Package size={26} style={{ color: C.label, opacity: 0.45 }} />}
                 </div>
-                <button onClick={() => toggleItem(it)} style={itemBtnStyle(inCart)}>
-                  {inCart ? "취소" : "선택"}
-                </button>
+
+                <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
+                  <LocBadge slot={it.rootSlot} C={C} />
+                  <StockBadges stock={stock} rented={rented} C={C} />
+                </div>
+
+                <div style={{
+                  height: "26px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: "11.5px", fontWeight: 800,
+                  background: inCart ? C.accentSoft : "transparent",
+                  border: inCart ? "none" : `1px solid ${C.border}`,
+                  color: inCart ? C.accentText : (soldOut ? C.label : C.accentText),
+                }}>
+                  {inCart ? "담김 · 누르면 제거" : soldOut ? "재고 없음" : "담기"}
+                </div>
               </div>
             );
           })}
