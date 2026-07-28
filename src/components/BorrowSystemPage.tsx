@@ -3,7 +3,7 @@ import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
   HandHelping, PackageOpen, Package, ShoppingCart, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Feather, Flame, PlusCircle, IdCard,
-  Warehouse, Trash2, RefreshCw,
+  Warehouse, Trash2, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import {
   ObjectItem, ScenarioDefinition, UnreturnedItem, BorrowEntry, ReturnRequest,
@@ -2873,12 +2873,23 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             style={{ width: "min(400px, 100%)", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "26px 24px", textAlign: "center", boxShadow: "0 18px 50px rgba(0,0,0,0.28)" }}
           >
             <div style={{ fontSize: "34px", lineHeight: 1, marginBottom: "14px" }}>📦</div>
-            <div style={{ fontSize: "15.5px", fontWeight: 800, color: C.text, marginBottom: "10px" }}>
+            <div style={{ fontSize: "15.5px", fontWeight: 800, color: C.text, marginBottom: "14px" }}>
               신청 전 확인해주세요
             </div>
-            <div style={{ fontSize: "13.5px", color: C.label, lineHeight: 1.7, marginBottom: "20px" }}>
+
+            <div style={{ fontSize: "13.5px", color: C.label, lineHeight: 1.7, marginBottom: "12px" }}>
               반드시 <b style={{ color: C.text }}>가져가시는 물건의 개수</b>도<br />
               고려해서 신청해주세요.
+            </div>
+
+            <div style={{ textAlign: "left", padding: "12px 14px", borderRadius: "12px", background: C.errorSoft, border: `1px solid ${C.error}44`, marginBottom: "20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 800, color: C.error, marginBottom: "6px" }}>
+                <AlertTriangle size={15} /> 무단 사용 금지
+              </div>
+              <div style={{ fontSize: "12.5px", color: C.text, lineHeight: 1.7 }}>
+                반드시 <b>본인이 대여한 물품만</b> 사용해주세요.<br />
+                남의 물건을 사용하다 적발될 경우 <b>별도의 조치가 취해질 수 있습니다.</b>
+              </div>
             </div>
             <button
               onClick={() => setQtyNoticeOpen(false)}
