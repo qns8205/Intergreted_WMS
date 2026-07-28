@@ -110,7 +110,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
           fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
-        setLogs(sortLogs([...unreturned]));
+        // 이미 화면에 있던 "반납 완료" 항목은 유지한 채 미반납 목록만 갈아끼운다.
+        // (그러지 않으면 새로고침할 때마다 반납 이력이 사라졌다가 뒤늦게 다시 나타난다)
+        setLogs((prev) => {
+          const keptReturned = prev.filter((l) => l.returned);
+          const seen = new Set(unreturned.map((l) => `${l.sheetType}:${l.rowIndex}`));
+          return sortLogs([...unreturned, ...keptReturned.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`))]);
+        });
         setAppVersion(ver);
         setAllItems(catalog);
         hasDataRef.current = unreturned.length > 0;
@@ -316,6 +322,16 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
         showToast(res.message || `${targets.length}건을 반납 처리했습니다.`, "ok");
       } else { showToast("데모 모드: 실제 반납은 연동 시 동작합니다.", "info"); }
+
+      // 서버 재조회는 반납 이력을 뒤늦게 받아오기 때문에, 방금 반납한 건이 한동안 목록에서 사라진다.
+      // 화면에서 먼저 반납 상태로 바꿔 "반납 묶음"이 즉시 맨 위에 뜨도록 한다. (이후 재조회로 정합성 확보)
+      const nowStamp = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const returnedAt = `${nowStamp.getFullYear()}-${pad(nowStamp.getMonth() + 1)}-${pad(nowStamp.getDate())} ${pad(nowStamp.getHours())}:${pad(nowStamp.getMinutes())}:${pad(nowStamp.getSeconds())}`;
+      const returnedKeys = new Set(targets.map((e) => selKey(e)));
+      setLogs((prev) => prev.map((l) => (returnedKeys.has(selKey(l)) ? { ...l, returned: true, returnDate: returnedAt } : l)));
+      setSel({});
+
       await load();
     } catch (e: any) { showToast(`반납 처리 실패: ${e.message}`, "error"); }
     finally { setSubmitting(false); }
