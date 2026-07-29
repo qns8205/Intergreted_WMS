@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History, ChevronRight, Package,
 } from "lucide-react";
 import StockAdjustModal from "./StockAdjustModal";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -12,6 +12,7 @@ import {
   fetchStockAuditHistory, recordStockAudit, StockAuditRecord,
   fetchStockFormulaStatus, StockFormulaStatus,
   fetchScenarioAllLogs, ScenarioLogEntry,
+  fetchBatchDetail, BatchDetailItem,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, resizeAndCompressImage } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -59,6 +60,25 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [borrowersItem, setBorrowersItem] = useState<ScenarioObjectAdmin | null>(null);
   const [stockAdjustItem, setStockAdjustItem] = useState<ScenarioObjectAdmin | null>(null);
   const [unreturned, setUnreturned] = useState<UnreturnedItem[]>([]);
+  // 신청 묶음 상세 (어떤 건이 함께 나갔는지)
+  const [batchDetail, setBatchDetail] = useState<{ batchId: string; title: string; items: BatchDetailItem[] } | null>(null);
+  const [batchLoading, setBatchLoading] = useState(false);
+
+  async function openBatchDetail(batchId: string, title: string) {
+    if (!batchId) { showToast("이 기록에는 신청 묶음 정보가 없습니다.", "warn"); return; }
+    if (!connected || !scriptUrl) { showToast("연동이 필요합니다.", "warn"); return; }
+    setBatchLoading(true);
+    setBatchDetail({ batchId, title, items: [] });
+    try {
+      const items = await fetchBatchDetail(scriptUrl, batchId);
+      setBatchDetail({ batchId, title, items });
+    } catch (e: any) {
+      showToast(`묶음 조회 실패: ${e.message}`, "error");
+      setBatchDetail(null);
+    } finally {
+      setBatchLoading(false);
+    }
+  }
   const [unreturnedLoading, setUnreturnedLoading] = useState(false);
   const [unreturnedLoaded, setUnreturnedLoaded] = useState(false);
   const [detailTab, setDetailTab] = useState<"borrowers" | "audit" | "history">("borrowers");
@@ -575,7 +595,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       {borrowersForItem.map((u, idx) => (
-                        <div key={`${u.sheetType}-${u.rowIndex}-${idx}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                        <div
+                          key={`${u.sheetType}-${u.rowIndex}-${idx}`}
+                          onClick={() => openBatchDetail(u.batchId || "", `${u.borrowerName || "대여자 미상"} · ${u.borrowDate || ""}`)}
+                          title="이 신청 묶음에 무엇이 함께 나갔는지 보기"
+                          style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px", cursor: u.batchId ? "pointer" : "default" }}
+                        >
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                               <span style={{ fontWeight: 700, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.borrowerName || "(대여자 미상)"}</span>
@@ -592,6 +617,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                             </div>
                           </div>
                           <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
+                          {u.batchId ? <ChevronRight size={15} style={{ color: C.label, flexShrink: 0 }} /> : null}
                         </div>
                       ))}
                     </div>
@@ -615,7 +641,12 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                           return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
                         })
                         .map((l, idx) => (
-                          <div key={`${l.sheetType}-${l.rowIndex}-${idx}`} style={{ padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
+                          <div
+                            key={`${l.sheetType}-${l.rowIndex}-${idx}`}
+                            onClick={() => openBatchDetail(l.batchId || "", `${l.borrowerName || "대여자 미상"} · ${l.returned ? `반납 ${l.returnDate || ""}` : `대여 ${l.borrowDate || ""}`}`)}
+                            title="이 신청 묶음에 무엇이 함께 나갔는지 보기"
+                            style={{ padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px", cursor: l.batchId ? "pointer" : "default" }}
+                          >
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
@@ -790,6 +821,68 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       ) : null}
 
       {/* 이미지 확대 */}
+      {/* 신청 묶음 상세 */}
+      {batchDetail ? createPortal(
+        <div
+          onClick={() => setBatchDetail(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 4200, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "min(520px, 100%)", maxHeight: "82vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+              <Boxes size={17} style={{ color: C.accentText }} />
+              <span style={{ fontSize: "15px", fontWeight: 800, color: C.text, flex: 1 }}>이 신청에 함께 나간 물품</span>
+              <button onClick={() => setBatchDetail(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
+            </div>
+            <div style={{ fontSize: "12px", color: C.label, marginBottom: "14px" }}>{batchDetail.title}</div>
+
+            {batchLoading ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={24} /> 불러오는 중...</div>
+            ) : batchDetail.items.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "28px 0", color: C.label, fontSize: "13px" }}>이 묶음에서 기록을 찾지 못했습니다.</div>
+            ) : (
+              <>
+                <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
+                  총 <b style={{ color: C.accentText }}>{batchDetail.items.length}종</b> ·{" "}
+                  <b style={{ color: C.accentText }}>{batchDetail.items.reduce((n, x) => n + (x.quantity || 1), 0)}개</b>
+                  {" · "}반납 완료 {batchDetail.items.filter((x) => x.returned).length}건
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {batchDetail.items.map((x, i) => (
+                    <div
+                      key={`${x.sheetType}-${x.rowIndex}-${i}`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px",
+                        background: C.cardSub, borderRadius: "10px",
+                        border: `1px solid ${x.returned ? C.border : `${C.warn}55`}`,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {x.itemName || x.itemLabel}
+                        </div>
+                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                          {x.itemId ? <span style={{ fontFamily: "monospace" }}>{x.itemId}</span> : null}
+                          {x.location ? <span>📍 {x.location}</span> : null}
+                          {x.itemKind ? <span>· {x.itemKind}</span> : null}
+                        </div>
+                        <div style={{ fontSize: "10.5px", color: C.label, marginTop: "3px" }}>
+                          대여 {x.borrowDate || "-"}{x.returned && x.returnDate ? ` · 반납 ${x.returnDate}` : ""}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: "11px", fontWeight: 800, borderRadius: "999px", padding: "3px 10px", flexShrink: 0, color: x.returned ? C.success : C.warn, background: x.returned ? C.successSoft : C.warnSoft }}>
+                        {x.returned ? "반납 완료" : "미반납"}
+                      </span>
+                      <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>{x.quantity || 1}개</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      ) : null}
+
       {modalUrl ? createPortal(
         <div className="sap-root" onClick={() => setModalUrl("")} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <button onClick={() => setModalUrl("")} style={{ position: "absolute", top: "16px", right: "20px", background: "none", border: "none", color: "#fff", cursor: "pointer" }}><X size={32} /></button>
