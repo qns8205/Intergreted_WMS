@@ -718,14 +718,22 @@ export async function fetchSeatOccupancy(scriptUrl: string, floor: string, unit:
 
 export interface ActiveItemTypeInfo {
   count: number;
-  max: number;
+  max: number;                 // 실제 적용되는 한도 (페널티가 있으면 낮아진 값)
+  baseMax?: number;            // 페널티 없을 때의 기본 한도
+  penalty?: { max: number; reason?: string; until?: string } | null;
   items: { id: string; name: string; quantity: number; borrowDate: string }[];
 }
 
 export async function fetchActiveItemTypeCount(scriptUrl: string, name: string): Promise<ActiveItemTypeInfo> {
   try {
     const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
-    return { count: data.count || 0, max: data.max || 0, items: data.items || [] };
+    return {
+      count: data.count || 0,
+      max: data.max || 0,
+      baseMax: data.baseMax,
+      penalty: data.penalty || null,
+      items: data.items || [],
+    };
   } catch (err: any) {
     // 서버가 이 액션을 모르는 구버전이면 제한 없음으로 취급해 대여를 막지 않는다.
     if (err?.message && String(err.message).includes("알 수 없는")) {
