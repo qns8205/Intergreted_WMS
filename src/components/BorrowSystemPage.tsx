@@ -1680,6 +1680,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 </span>
               ) : null}
 
+              {/* 개인 페널티가 걸려 있으면 한도가 낮아진 이유를 함께 보여준다 */}
+              {!seatExempt && activeTypeInfo.penalty ? (
+                <span
+                  title={[activeTypeInfo.penalty.reason, activeTypeInfo.penalty.until ? `${activeTypeInfo.penalty.until}까지` : ""].filter(Boolean).join(" · ")}
+                  style={{ fontSize: "11px", fontWeight: 800, color: "#fff", background: C.error, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}
+                >
+                  ⚠ 페널티 {activeTypeInfo.penalty.max}종류 제한
+                </span>
+              ) : null}
+
               <span style={{ flex: 1 }} />
 
               <span style={{ fontSize: "12px", fontWeight: 800, color: limitReached ? C.error : C.accentText, whiteSpace: "nowrap" }}>
