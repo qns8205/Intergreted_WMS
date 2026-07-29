@@ -117,7 +117,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [employeeId, setEmployeeId] = useState(initialIdentity?.employeeId || "");
   const [otherName, setOtherName] = useState(initialIdentity?.affiliation === "other" ? (initialIdentity?.name || "") : "");
   // 좌석 위치 (관리자 좌석맵 연동 — 대여 시 층수/유닛 입력)
-  const [seatMap, setSeatMap] = useState<SeatFloor[]>([]);
+  // 좌석 배치도는 거의 바뀌지 않으므로, 지난번에 받은 값을 먼저 그려 선택 UI가 바로 뜨게 한다.
+  // (서버 응답이 오면 최신 값으로 교체한다)
+  const SEAT_MAP_CACHE_KEY = "wms_seat_map_v1";
+  const [seatMap, setSeatMap] = useState<SeatFloor[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(SEAT_MAP_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as SeatFloor[];
+      }
+    } catch (e) { /* 캐시 없거나 깨졌으면 빈 값으로 시작 */ }
+    return [];
+  });
   const [seatMapLoaded, setSeatMapLoaded] = useState(false);
   const [selFloor, setSelFloor] = useState("");
   const [selUnit, setSelUnit] = useState("");
@@ -248,8 +260,19 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   useEffect(() => {
     if (seatMapLoaded || !connected || !scriptUrl) return;
     fetchSeatMap(scriptUrl)
-      .then((m) => setSeatMap(m.floors || []))
-      .catch(() => { /* 좌석맵 조회 실패해도 대여 자체는 진행 가능해야 하므로 조용히 무시 */ })
+      .then((m) => {
+        const floors = m.floors || [];
+        setSeatMap(floors);
+        try { sessionStorage.setItem(SEAT_MAP_CACHE_KEY, JSON.stringify(floors)); } catch (e) { /* 저장 실패는 무시 */ }
+      })
+      .catch((e: any) => {
+        // 조회에 실패하면 좌석 선택 UI가 사라져 "유닛 지정이 없어졌다"로 보인다.
+        // 캐시로 이미 그려져 있으면 굳이 알리지 않는다.
+        console.error("[좌석배치도 조회 실패]", e);
+        if (seatMap.length === 0) {
+          showToast("좌석 배치도를 불러오지 못해 층/유닛 선택이 표시되지 않습니다. 새로고침해주세요.", "warn");
+        }
+      })
       .finally(() => setSeatMapLoaded(true));
   }, [connected, scriptUrl, seatMapLoaded]);
 
@@ -1795,6 +1818,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <div style={{ fontSize: "12px", color: C.label, marginTop: "6px", lineHeight: 1.5 }}>
                   기타 소속은 Slack 이메일 없이 성함만 입력합니다. (Slack 멘션은 제공되지 않습니다)
                 </div>
+              </div>
+            ) : null}
+
+            {seatMap.length === 0 ? (
+              <div style={{ marginBottom: "16px", padding: "11px 13px", borderRadius: "10px", background: C.warnSoft, border: `1px solid ${C.warn}44`, fontSize: "12px", color: C.warn, fontWeight: 600 }}>
+                {!seatMapLoaded ? "좌석 배치도를 불러오는 중입니다..." : "좌석 배치도를 불러오지 못했습니다. 층/유닛 없이 진행됩니다."}
               </div>
             ) : null}
 
