@@ -176,11 +176,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!connected || !scriptUrl) return;
     if (!effectiveBorrowerName) return;
     let cancelled = false;
-    fetchActiveItemTypeCount(scriptUrl, effectiveBorrowerName)
+    fetchActiveItemTypeCount(scriptUrl, effectiveBorrowerName, { floor: selFloor, unit: selUnit })
       .then((info) => { if (!cancelled) setActiveTypeInfo(info); })
       .catch(() => { /* 상태 표시용이므로 실패는 무시 */ });
     return () => { cancelled = true; };
-  }, [connected, scriptUrl, effectiveBorrowerName]);
+  }, [connected, scriptUrl, effectiveBorrowerName, selFloor, selUnit]);
 
   const [itemSets, setItemSets] = useState<ItemSet[]>([]);
   const [itemSetsLoaded, setItemSetsLoaded] = useState(false);
@@ -380,13 +380,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   // 물품 종류 최대 보유 개수(한도) 초과 여부 — 이미 보유 중인 종류 + 이번에 새로 담은(안 갖고 있던) 종류를 합산.
   // 좌석배치도에서 ∞(예외 유닛)로 지정된 유닛을 선택한 신청은 물품 종류 한도를 적용하지 않는다.
-  const seatExempt = useMemo(() => {
+  const seatExemptLocal = useMemo(() => {
     if (!selFloor || !selUnit) return false;
     const floor = seatMap.find((f) => (f.name || f.id) === selFloor);
     if (!floor) return false;
     const unit = (floor.units || []).find((u) => u.label === selUnit);
     return !!(unit && unit.exempt);
   }, [seatMap, selFloor, selUnit]);
+
+  // 서버 판정이 있으면 그것을 우선하고, 없으면 화면에서 계산한 값을 쓴다.
+  const seatExempt = activeTypeInfo?.exempt ?? seatExemptLocal;
 
   function computeTypeOverflow(newIds: Set<string>) {
     if (seatExempt) return null; // 예외 유닛: 종류 제한 없음
@@ -486,9 +489,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       const nameForCheck = affiliation === "other" ? otherName.trim() : borrowerName.trim();
       setVerifying(true);
       try {
-        const info = await fetchActiveItemTypeCount(scriptUrl, nameForCheck);
+        const info = await fetchActiveItemTypeCount(scriptUrl, nameForCheck, { floor: selFloor, unit: selUnit });
         setActiveTypeInfo(info);
-        if (!seatExempt && info.max > 0 && info.count >= info.max) {
+        // 예외 유닛 판정은 서버 값을 우선한다 (화면과 서버가 각자 판단하면 어긋난다)
+        if (!(info.exempt || seatExempt) && info.max > 0 && info.count >= info.max) {
           setTypeLimitModal(info);
           return;
         }
@@ -2290,22 +2294,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
                 <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "10px 12px 10px 36px", fontSize: "13.5px" }} />
               </div>
-              <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "10px 10px", fontSize: "13px", flex: "0 0 110px" }}>
-                <option value="">전체 슬롯</option>{whSlots.map((sl) => <option key={sl} value={sl}>{sl}번</option>)}
-              </select>
-            </div>
-
-            {/* 랙 필터 칩 */}
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
-              {[{ v: "", label: "전체", n: whItems.length }, ...whRacks.map((r) => ({ v: r, label: `${r}랙`, n: whRackCounts[r] || 0 }))].map((chip) => {
-                const on = whRack === chip.v;
-                return (
-                  <button key={chip.v || "all"} onClick={() => { setWhRack(chip.v); setWhSlot(""); }}
-                    style={{ padding: "5px 12px", borderRadius: "999px", cursor: "pointer", fontSize: "12px", fontWeight: 700, border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accentSoft : C.card, color: on ? C.accentText : C.label }}>
-                    {chip.label} <span style={{ fontWeight: 500, opacity: 0.75 }}>{chip.n}</span>
-                  </button>
-                );
-              })}
             </div>
 
             {/* 세트로 담기 */}
