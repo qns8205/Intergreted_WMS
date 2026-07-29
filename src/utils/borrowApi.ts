@@ -910,3 +910,30 @@ export async function postWarehouseRentBulk(
 ): Promise<{ success: boolean; processed?: number; failed?: string[]; error?: string }> {
   return apiPost(scriptUrl, "rentInventoryItemsBulk", { items });
 }
+
+/* ══════════ 신청 묶음(배치) 상세 ══════════ */
+// 한 번의 신청에 무엇이 함께 나갔는지 확인한다. 반납 완료 건도 포함된다.
+export interface BatchDetailItem {
+  sheetType: "scenario" | "general";
+  rowIndex: number;
+  borrowerName: string;
+  scenarioId?: string;
+  itemId: string;
+  itemName: string;
+  itemLabel: string;
+  quantity: number;
+  location: string;
+  borrowDate: string;
+  borrowDateTime?: string;
+  borrowPurpose?: string;
+  returned: boolean;
+  returnDate?: string;
+  itemKind?: string;
+  floor?: string;
+  unit?: string;
+}
+
+export async function fetchBatchDetail(scriptUrl: string, batchId: string): Promise<BatchDetailItem[]> {
+  const data = await apiGet(scriptUrl, "getBatchDetail", { batchId });
+  return (data.items || []) as BatchDetailItem[];
+}
