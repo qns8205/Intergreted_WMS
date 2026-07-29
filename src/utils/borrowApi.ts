@@ -721,17 +721,26 @@ export interface ActiveItemTypeInfo {
   max: number;                 // 실제 적용되는 한도 (페널티가 있으면 낮아진 값)
   baseMax?: number;            // 페널티 없을 때의 기본 한도
   penalty?: { max: number; reason?: string; until?: string } | null;
+  exempt?: boolean;            // 좌석배치도에서 ∞로 지정된 유닛이면 true (서버 판정)
   items: { id: string; name: string; quantity: number; borrowDate: string }[];
 }
 
-export async function fetchActiveItemTypeCount(scriptUrl: string, name: string): Promise<ActiveItemTypeInfo> {
+export async function fetchActiveItemTypeCount(
+  scriptUrl: string,
+  name: string,
+  seat?: { floor?: string; unit?: string }
+): Promise<ActiveItemTypeInfo> {
   try {
-    const data = await apiGet(scriptUrl, "getActiveItemTypeCount", { name });
+    const params: Record<string, string> = { name };
+    if (seat?.floor) params.floor = seat.floor;
+    if (seat?.unit) params.unit = seat.unit;
+    const data = await apiGet(scriptUrl, "getActiveItemTypeCount", params);
     return {
       count: data.count || 0,
       max: data.max || 0,
       baseMax: data.baseMax,
       penalty: data.penalty || null,
+      exempt: !!data.exempt,
       items: data.items || [],
     };
   } catch (err: any) {
