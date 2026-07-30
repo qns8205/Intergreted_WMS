@@ -1797,23 +1797,30 @@ export default function App() {
   // 모바일인 경우, PC 화면을 축소한 형태가 아닌
   // 검색 / 사진확인 / 대여·반납 / 등록 / 불량제품에 집중한 전용 모바일 UI를 노출한다.
   // 관리자 로그인 직후: 헤더·사이드바 없이 하위 메뉴 선택 화면만 보여준다
+  // (CSS 변수는 메인 return의 <style>에서 정의되므로, 여기서는 isLightMode로 색을 직접 지정한다)
   if (isAdmin && !adminSection) {
+    const hubBg = isLightMode ? "#f8fafc" : "#0b0f19";
+    const hubCard = isLightMode ? "#ffffff" : "#151d30";
+    const hubBorder = isLightMode ? "#e2e8f0" : "#26324a";
+    const hubText = isLightMode ? "#111827" : "#f1f5f9";
+    const hubDim = isLightMode ? "#64748b" : "#94a3b8";
+
     return (
       <div
         className={isLightMode ? "wms-light" : "wms-dark"}
         style={{
           width: "100%", minHeight: "100vh",
-          background: "var(--app-bg, #0f172a)", color: "var(--text-main, #f1f5f9)",
+          background: hubBg, color: hubText,
           fontFamily: "'Inter', sans-serif",
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           padding: "24px", gap: "26px",
         }}
       >
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: "22px", fontWeight: 800, marginBottom: "8px" }}>
+          <div style={{ fontSize: "22px", fontWeight: 800, marginBottom: "8px", color: hubText }}>
             {currentUser?.name ? `${currentUser.name}님, 무엇을 하시겠어요?` : "무엇을 하시겠어요?"}
           </div>
-          <div style={{ fontSize: "13.5px", color: "var(--text-dim, #94a3b8)" }}>관리할 영역을 선택해주세요.</div>
+          <div style={{ fontSize: "13.5px", color: hubDim }}>관리할 영역을 선택해주세요.</div>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "18px", width: "100%", maxWidth: "760px" }}>
@@ -1827,20 +1834,20 @@ export default function App() {
               style={{
                 display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "10px",
                 padding: "28px 26px", borderRadius: "18px", cursor: "pointer", textAlign: "left",
-                border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
-                background: isLightMode ? "#ffffff" : "#151d30",
-                color: "var(--text-main, #f1f5f9)",
-                boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+                border: `1px solid ${hubBorder}`,
+                background: hubCard,
+                color: hubText,
+                boxShadow: isLightMode ? "0 4px 18px rgba(0,0,0,0.06)" : "0 4px 18px rgba(0,0,0,0.35)",
                 transition: "transform 0.15s ease, border-color 0.15s ease",
               }}
               onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.borderColor = "#2563eb"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#26324a"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = hubBorder; }}
             >
-              <div style={{ width: 54, height: 54, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", background: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(37,99,235,0.16)", color: "#2563eb" }}>
+              <div style={{ width: 54, height: 54, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", background: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(37,99,235,0.18)", color: "#60a5fa" }}>
                 {c.icon}
               </div>
-              <div style={{ fontSize: "17px", fontWeight: 800 }}>{c.title}</div>
-              <div style={{ fontSize: "12.5px", color: "var(--text-dim, #94a3b8)", lineHeight: 1.6 }}>{c.desc}</div>
+              <div style={{ fontSize: "17px", fontWeight: 800, color: hubText }}>{c.title}</div>
+              <div style={{ fontSize: "12.5px", color: hubDim, lineHeight: 1.6 }}>{c.desc}</div>
             </button>
           ))}
         </div>
@@ -1849,7 +1856,7 @@ export default function App() {
           <button
             onClick={() => setCurrentView("landing")}
             style={{ padding: "10px 18px", borderRadius: "10px", cursor: "pointer", fontSize: "13px", fontWeight: 700,
-              border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, background: "transparent", color: "var(--text-dim, #94a3b8)" }}
+              border: `1px solid ${hubBorder}`, background: "transparent", color: hubDim }}
           >
             초기 화면
           </button>
@@ -1864,12 +1871,11 @@ export default function App() {
               showToast("로그아웃되었습니다. 로그인 화면으로 이동합니다.", "info");
             }}
             style={{ padding: "10px 18px", borderRadius: "10px", cursor: "pointer", fontSize: "13px", fontWeight: 700,
-              border: "1px solid rgba(220,38,38,0.3)", background: "rgba(220,38,38,0.08)", color: "#dc2626" }}
+              border: "1px solid rgba(220,38,38,0.35)", background: "rgba(220,38,38,0.10)", color: isLightMode ? "#dc2626" : "#f87171" }}
           >
             로그아웃
           </button>
         </div>
-
       </div>
     );
   }
