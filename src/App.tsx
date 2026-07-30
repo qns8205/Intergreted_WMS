@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice, fetchBorrowLock, setBorrowLock, BorrowLock } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -159,10 +159,6 @@ export default function App() {
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
   const [publishingVersion, setPublishingVersion] = useState(false);
-  // 랜딩 공지 작성 (관리자 전용)
-  const [noticeModalOpen, setNoticeModalOpen] = useState(false);
-  const [noticeDraft, setNoticeDraft] = useState("");
-  const [noticeSaving, setNoticeSaving] = useState(false);
 
   async function openNoticeModal() {
     setNoticeModalOpen(true);
@@ -393,6 +389,46 @@ export default function App() {
     }
     return savedConnected === "true";
   });
+
+  // 대여 잠금 (관리자 전용) — 반납은 계속 가능
+  const [borrowLock, setBorrowLockState] = useState<BorrowLock>({ locked: false });
+  const [lockBusy, setLockBusy] = useState(false);
+
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    fetchBorrowLock(scriptUrl).then(setBorrowLockState).catch(() => { /* 조회 실패는 무시 */ });
+  }, [connected, scriptUrl]);
+
+  async function toggleBorrowLock() {
+    const next = !borrowLock.locked;
+    let reason = borrowLock.reason || "";
+    if (next) {
+      const input = window.prompt("대여를 일시 중단합니다.\n\n사유를 입력하면 사용자에게 함께 표시됩니다. (선택)", "");
+      if (input === null) return; // 취소
+      reason = input.trim();
+    } else if (!window.confirm("대여 잠금을 해제할까요?")) {
+      return;
+    }
+    setLockBusy(true);
+    try {
+      const res = await setBorrowLock(scriptUrl, next, reason);
+      if (res.success) {
+        setBorrowLockState(res.lock || { locked: next, reason });
+        showToast(next ? "대여를 잠갔습니다. 반납은 계속 가능합니다." : "대여 잠금을 해제했습니다.", "ok");
+      } else {
+        showToast(res.message || "설정에 실패했습니다.", "error");
+      }
+    } catch (e: any) {
+      showToast(`설정 실패: ${e.message}`, "error");
+    } finally {
+      setLockBusy(false);
+    }
+  }
+
+  // 랜딩 공지 작성 (관리자 전용)
+  const [noticeModalOpen, setNoticeModalOpen] = useState(false);
+  const [noticeDraft, setNoticeDraft] = useState("");
+  const [noticeSaving, setNoticeSaving] = useState(false);
 
   // 구버전 감지: 처음 접속했을 때의 서버 버전을 기억해두고, 2분마다 서버의 현재 버전과 비교한다.
   // 그 사이 관리자가 GAS를 새 버전으로 재배포했으면 값이 달라지므로, 새로고침 전까지 안 사라지는 경고를 띄운다.
@@ -2357,6 +2393,26 @@ export default function App() {
               }}
             >
               📢 공지 작성
+            </button>
+          )}
+          {isAdmin && connected && scriptUrl && (
+            <button
+              onClick={toggleBorrowLock}
+              disabled={lockBusy}
+              title={borrowLock.locked ? "대여 잠금을 해제합니다" : "대여를 일시 중단합니다 (반납은 계속 가능)"}
+              style={{
+                background: borrowLock.locked ? "#dc2626" : "rgba(100, 116, 139, 0.12)",
+                border: `1px solid ${borrowLock.locked ? "#dc2626" : "rgba(100, 116, 139, 0.32)"}`,
+                borderRadius: "6px",
+                padding: "3px 10px",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: borrowLock.locked ? "#ffffff" : "#64748b",
+                cursor: lockBusy ? "not-allowed" : "pointer",
+                opacity: lockBusy ? 0.6 : 1,
+              }}
+            >
+              {lockBusy ? "처리 중..." : borrowLock.locked ? "🔒 대여 잠김 (해제)" : "🔓 대여 잠금"}
             </button>
           )}
           {!isAdmin && (
