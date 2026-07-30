@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice, fetchBorrowLock, setBorrowLock, BorrowLock } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -399,22 +399,47 @@ export default function App() {
     fetchBorrowLock(scriptUrl).then(setBorrowLockState).catch(() => { /* 조회 실패는 무시 */ });
   }, [connected, scriptUrl]);
 
-  async function toggleBorrowLock() {
-    const next = !borrowLock.locked;
-    let reason = borrowLock.reason || "";
-    if (next) {
-      const input = window.prompt("대여를 일시 중단합니다.\n\n사유를 입력하면 사용자에게 함께 표시됩니다. (선택)", "");
-      if (input === null) return; // 취소
-      reason = input.trim();
-    } else if (!window.confirm("대여 잠금을 해제할까요?")) {
-      return;
-    }
+  const [lockModalOpen, setLockModalOpen] = useState(false);
+  const [lockDraftGlobal, setLockDraftGlobal] = useState(false);
+  const [lockDraftReason, setLockDraftReason] = useState("");
+  const [lockDraftUnits, setLockDraftUnits] = useState<UnitLock[]>([]);
+  const [lockSeatFloors, setLockSeatFloors] = useState<{ id: string; name?: string; units: { label: string }[] }[]>([]);
+
+  async function openLockModal() {
+    setLockModalOpen(true);
+    setLockDraftGlobal(borrowLock.locked);
+    setLockDraftReason(borrowLock.reason || "");
+    setLockDraftUnits(borrowLock.units || []);
+    try {
+      const map = await fetchSeatMap(scriptUrl);
+      setLockSeatFloors((map.floors || []) as any);
+    } catch (e) { /* 좌석 배치도를 못 받으면 전체 잠금만 사용한다 */ }
+  }
+
+  function toggleUnitLock(floor: string, unit: string) {
+    const key = unitLockKey(floor, unit);
+    setLockDraftUnits((prev) =>
+      prev.some((u) => unitLockKey(u.floor, u.unit) === key)
+        ? prev.filter((u) => unitLockKey(u.floor, u.unit) !== key)
+        : [...prev, { floor, unit, reason: "" }]
+    );
+  }
+
+  async function submitLock() {
     setLockBusy(true);
     try {
-      const res = await setBorrowLock(scriptUrl, next, reason);
+      const res = await setBorrowLock(scriptUrl, lockDraftGlobal, lockDraftReason.trim(), lockDraftUnits);
       if (res.success) {
-        setBorrowLockState(res.lock || { locked: next, reason });
-        showToast(next ? "대여를 잠갔습니다. 반납은 계속 가능합니다." : "대여 잠금을 해제했습니다.", "ok");
+        setBorrowLockState(res.lock || { locked: lockDraftGlobal, reason: lockDraftReason, units: lockDraftUnits });
+        setLockModalOpen(false);
+        showToast(
+          lockDraftGlobal
+            ? "대여를 전체 잠갔습니다. 반납은 계속 가능합니다."
+            : lockDraftUnits.length
+              ? `${lockDraftUnits.length}개 유닛의 대여를 잠갔습니다.`
+              : "대여 잠금을 모두 해제했습니다.",
+          "ok"
+        );
       } else {
         showToast(res.message || "설정에 실패했습니다.", "error");
       }
@@ -1851,6 +1876,103 @@ export default function App() {
     );
   }
 
+  // 대여 잠금 설정 모달 (관리자)
+  const lockModal = lockModalOpen ? (
+    <div
+      onClick={() => !lockBusy && setLockModalOpen(false)}
+      style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(520px, 100%)", maxHeight: "84vh", overflowY: "auto",
+          background: isLightMode ? "#ffffff" : "#151d30",
+          border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, borderRadius: "16px", padding: "22px",
+          color: isLightMode ? "#111827" : "#f1f5f9",
+        }}
+      >
+        <div style={{ fontSize: "15px", fontWeight: 800, marginBottom: "6px" }}>🔒 대여 잠금 설정</div>
+        <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "14px", lineHeight: 1.6 }}>
+          잠금 중에도 <b>반납은 계속 가능</b>합니다.
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", borderRadius: "12px", cursor: "pointer", marginBottom: "12px", border: `1px solid ${lockDraftGlobal ? "#dc2626" : (isLightMode ? "#e2e8f0" : "#26324a")}`, background: lockDraftGlobal ? "rgba(220,38,38,0.08)" : "transparent" }}>
+          <input type="checkbox" checked={lockDraftGlobal} onChange={(e) => setLockDraftGlobal(e.target.checked)} />
+          <span style={{ fontSize: "13.5px", fontWeight: 800 }}>전체 대여 잠금</span>
+          <span style={{ marginLeft: "auto", fontSize: "11.5px", color: isLightMode ? "#94a3b8" : "#64748b" }}>모든 유닛·창고물품</span>
+        </label>
+
+        <input
+          value={lockDraftReason}
+          onChange={(e) => setLockDraftReason(e.target.value)}
+          placeholder="사유 (선택) — 사용자에게 함께 표시됩니다"
+          style={{
+            width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: "10px", fontSize: "13px", marginBottom: "16px",
+            border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+            background: isLightMode ? "#f8fafc" : "#0f172a", color: isLightMode ? "#111827" : "#f1f5f9", outline: "none",
+          }}
+        />
+
+        <div style={{ fontSize: "12.5px", fontWeight: 800, marginBottom: "8px", opacity: lockDraftGlobal ? 0.45 : 1 }}>
+          유닛별 잠금 {lockDraftUnits.length > 0 ? <span style={{ color: "#dc2626" }}>({lockDraftUnits.length}곳)</span> : null}
+        </div>
+
+        {lockSeatFloors.length === 0 ? (
+          <div style={{ fontSize: "12px", color: isLightMode ? "#94a3b8" : "#64748b", padding: "12px 0" }}>
+            좌석 배치도를 불러오지 못했습니다. 전체 잠금만 사용할 수 있습니다.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "12px", opacity: lockDraftGlobal ? 0.45 : 1, pointerEvents: lockDraftGlobal ? "none" : "auto" }}>
+            {lockSeatFloors.map((f) => {
+              const floorName = f.name || f.id;
+              return (
+                <div key={f.id}>
+                  <div style={{ fontSize: "11.5px", fontWeight: 700, color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "5px" }}>{floorName}</div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {(f.units || []).map((u) => {
+                      const on = lockDraftUnits.some((x) => unitLockKey(x.floor, x.unit) === unitLockKey(floorName, u.label));
+                      return (
+                        <button
+                          key={u.label}
+                          onClick={() => toggleUnitLock(floorName, u.label)}
+                          style={{
+                            padding: "6px 12px", borderRadius: "999px", cursor: "pointer", fontSize: "12px", fontWeight: 700,
+                            border: `1px solid ${on ? "#dc2626" : (isLightMode ? "#e2e8f0" : "#26324a")}`,
+                            background: on ? "#dc2626" : "transparent",
+                            color: on ? "#ffffff" : (isLightMode ? "#475569" : "#94a3b8"),
+                          }}
+                        >
+                          {on ? "🔒 " : ""}{u.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
+          <button
+            onClick={() => setLockModalOpen(false)}
+            disabled={lockBusy}
+            style={{ flex: 1, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13.5px", fontWeight: 700, border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, background: "transparent", color: isLightMode ? "#475569" : "#94a3b8" }}
+          >
+            취소
+          </button>
+          <button
+            onClick={submitLock}
+            disabled={lockBusy}
+            style={{ flex: 2, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: 800, border: "none", background: "#dc2626", color: "#fff", opacity: lockBusy ? 0.7 : 1 }}
+          >
+            {lockBusy ? "저장 중..." : "저장"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // 공지 작성 모달 (관리자)
   const noticeModal = noticeModalOpen ? (
     <div
@@ -2397,7 +2519,7 @@ export default function App() {
           )}
           {isAdmin && connected && scriptUrl && (
             <button
-              onClick={toggleBorrowLock}
+              onClick={openLockModal}
               disabled={lockBusy}
               title={borrowLock.locked ? "대여 잠금을 해제합니다" : "대여를 일시 중단합니다 (반납은 계속 가능)"}
               style={{
@@ -2412,7 +2534,13 @@ export default function App() {
                 opacity: lockBusy ? 0.6 : 1,
               }}
             >
-              {lockBusy ? "처리 중..." : borrowLock.locked ? "🔒 대여 잠김 (해제)" : "🔓 대여 잠금"}
+              {lockBusy
+                ? "처리 중..."
+                : borrowLock.locked
+                  ? "🔒 대여 잠김"
+                  : (borrowLock.units && borrowLock.units.length)
+                    ? `🔒 유닛 ${borrowLock.units.length}곳 잠김`
+                    : "🔓 대여 잠금"}
             </button>
           )}
           {!isAdmin && (
@@ -2826,6 +2954,7 @@ export default function App() {
         </div>
       ) : null}
 
+      {lockModal}
       {noticeModal}
 
       {showSetup && isAdmin && (
