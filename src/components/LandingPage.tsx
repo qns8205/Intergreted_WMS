@@ -157,6 +157,40 @@ export default function LandingPage({
           </div>
         ) : null}
 
+        {/* 유닛별 대여 잠금 안내 */}
+        {connected && !borrowLock.locked && (borrowLock.units || []).length > 0 ? (
+          <div
+            style={{
+              marginTop: "4px",
+              padding: "12px 16px",
+              borderRadius: "14px",
+              border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
+              background: isLightMode ? "#fef2f2" : "#1f1113",
+              maxWidth: "420px",
+              width: "100%",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5", marginBottom: "6px" }}>
+              <AlertTriangle size={14} />
+              대여가 중단된 유닛
+            </div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {(borrowLock.units || []).map((u, i) => (
+                <span
+                  key={`${u.floor}-${u.unit}-${i}`}
+                  title={u.reason || ""}
+                  style={{ fontSize: "11.5px", fontWeight: 700, padding: "4px 10px", borderRadius: "999px", background: isLightMode ? "#fee2e2" : "#3f1113", color: isLightMode ? "#b91c1c" : "#fca5a5" }}
+                >
+                  {u.floor} · {u.unit}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: "11.5px", color: isLightMode ? "#7f1d1d" : "#fecaca", marginTop: "7px", lineHeight: 1.6 }}>
+              다른 유닛은 정상적으로 대여할 수 있고, 반납도 가능합니다.
+            </div>
+          </div>
+        ) : null}
+
         {/* 상단: 페널티 기준 안내 (항상 고정) */}
         <div
           style={{
