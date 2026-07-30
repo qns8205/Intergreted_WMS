@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { fetchNotice, NoticeData, fetchBorrowLock, BorrowLock } from "../utils/borrowApi";
+import { fetchNotices, NoticeData, fetchBorrowLock, BorrowLock } from "../utils/borrowApi";
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
 const PENALTY_RULES: { label: string; limit: string }[] = [
@@ -9,37 +9,58 @@ const PENALTY_RULES: { label: string; limit: string }[] = [
   { label: "1주 이상 연체", limit: "5종류로 제한 (7일)" },
 ];
 
-// 관리자 공지: 랜딩 진입마다 다시 받지 않도록 3분 캐시한다.
-const noticeCache: { key: string; at: number; data: NoticeData } = { key: "", at: 0, data: { text: "" } };
+// 관리자 공지: 지난번에 받은 값을 먼저 그려 즉시 보이게 하고, 응답이 오면 교체한다.
+// (GAS 왕복이 느려 공지가 뒤늦게 뜨는 문제를 없애기 위함)
+const NOTICE_CACHE_KEY = "wms_notices_v1";
+const noticeCache: { key: string; at: number; items: NoticeData[] } = { key: "", at: 0, items: [] };
 
-function useNotice(scriptUrl: string, connected: boolean) {
-  const cached = noticeCache.key === scriptUrl && Date.now() - noticeCache.at < 3 * 60 * 1000;
-  const [notice, setNotice] = useState<NoticeData>(cached ? noticeCache.data : { text: "" });
-  const [loading, setLoading] = useState(!!connected && !!scriptUrl && !cached);
+function readNoticeSeed(): NoticeData[] {
+  try {
+    const raw = sessionStorage.getItem(NOTICE_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as NoticeData[]) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function useNotices(scriptUrl: string, connected: boolean) {
+  const fresh = noticeCache.key === scriptUrl && Date.now() - noticeCache.at < 3 * 60 * 1000;
+  const [items, setItems] = useState<NoticeData[]>(fresh ? noticeCache.items : readNoticeSeed());
 
   useEffect(() => {
-    if (!connected || !scriptUrl) { setLoading(false); return; }
+    if (!connected || !scriptUrl) return;
     if (noticeCache.key === scriptUrl && Date.now() - noticeCache.at < 3 * 60 * 1000) {
-      setNotice(noticeCache.data);
-      setLoading(false);
+      setItems(noticeCache.items);
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    fetchNotice(scriptUrl)
-      .then((n) => {
+    fetchNotices(scriptUrl)
+      .then((list) => {
         if (cancelled) return;
         noticeCache.key = scriptUrl;
         noticeCache.at = Date.now();
-        noticeCache.data = n;
-        setNotice(n);
+        noticeCache.items = list;
+        setItems(list);
+        try { sessionStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify(list)); } catch (e) { /* 저장 실패 무시 */ }
       })
-      .catch(() => { /* 랜딩의 부가 정보이므로 실패는 조용히 숨긴다 */ })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .catch(() => { /* 랜딩의 부가 정보이므로 실패는 조용히 숨긴다 */ });
     return () => { cancelled = true; };
   }, [scriptUrl, connected]);
 
-  return { notice, loading };
+  return items;
+}
+
+// 대여 잠금도 같은 방식으로 즉시 그린다
+const LOCK_CACHE_KEY = "wms_borrow_lock_v1";
+
+function readLockSeed(): BorrowLock {
+  try {
+    const raw = sessionStorage.getItem(LOCK_CACHE_KEY);
+    if (raw) return JSON.parse(raw) as BorrowLock;
+  } catch (e) { /* 무시 */ }
+  return { locked: false };
 }
 
 interface LandingPageProps {
@@ -70,12 +91,19 @@ export default function LandingPage({
   onOpenSetup,
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
-  const { notice } = useNotice(scriptUrl, connected);
+  const notices = useNotices(scriptUrl, connected);
+  const [openNotice, setOpenNotice] = useState<NoticeData | null>(null);
+
   // 대여 잠금 상태 (관리자가 일시 중단한 경우 안내한다)
-  const [borrowLock, setBorrowLock] = useState<BorrowLock>({ locked: false });
+  const [borrowLock, setBorrowLock] = useState<BorrowLock>(readLockSeed);
   useEffect(() => {
     if (!connected || !scriptUrl) return;
-    fetchBorrowLock(scriptUrl).then(setBorrowLock).catch(() => { /* 조회 실패는 무시 */ });
+    fetchBorrowLock(scriptUrl)
+      .then((l) => {
+        setBorrowLock(l);
+        try { sessionStorage.setItem(LOCK_CACHE_KEY, JSON.stringify(l)); } catch (e) { /* 무시 */ }
+      })
+      .catch(() => { /* 조회 실패는 무시 */ });
   }, [connected, scriptUrl]);
 
   return (
@@ -230,8 +258,8 @@ export default function LandingPage({
           </div>
         </div>
 
-        {/* 하단: 관리자가 작성한 공지 */}
-        {connected && notice.text ? (
+        {/* 하단: 관리자가 작성한 공지 (최대 3개, 제목만 표시 → 클릭하면 전체 내용) */}
+        {connected && notices.length > 0 ? (
           <div
             style={{
               marginTop: "10px",
@@ -247,17 +275,67 @@ export default function LandingPage({
               textAlign: "left",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd", marginBottom: "7px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd", marginBottom: "8px" }}>
               <ClipboardList size={14} />
-              공지사항
-              {notice.updatedAt ? (
-                <span style={{ marginLeft: "auto", fontSize: "10.5px", fontWeight: 600, color: isLightMode ? "#94a3b8" : "#64748b" }}>
-                  {notice.updatedAt}{notice.author ? ` · ${notice.author}` : ""}
-                </span>
-              ) : null}
+              공지사항 {notices.length > 1 ? <span style={{ fontWeight: 600, opacity: 0.8 }}>{notices.length}건</span> : null}
             </div>
-            <div style={{ fontSize: "12.5px", color: isLightMode ? "#111827" : "#e2e8f0", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
-              {notice.text}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              {notices.slice(0, 3).map((n, i) => (
+                <button
+                  key={`${n.title}-${i}`}
+                  onClick={() => setOpenNotice(n)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "8px", width: "100%",
+                    padding: "8px 6px", borderRadius: "8px", cursor: "pointer",
+                    border: "none", background: "transparent", textAlign: "left",
+                    borderBottom: i < Math.min(notices.length, 3) - 1 ? `1px solid ${isLightMode ? "#e2e8f0" : "#1e293b"}` : "none",
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, color: isLightMode ? "#111827" : "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {n.title || "(제목 없음)"}
+                  </span>
+                  {n.updatedAt ? (
+                    <span style={{ flexShrink: 0, fontSize: "10.5px", color: isLightMode ? "#94a3b8" : "#64748b" }}>
+                      {n.updatedAt.slice(0, 10)}
+                    </span>
+                  ) : null}
+                  <ChevronDown size={13} style={{ flexShrink: 0, transform: "rotate(-90deg)", color: isLightMode ? "#94a3b8" : "#64748b" }} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {/* 공지 전체 내용 모달 */}
+        {openNotice ? (
+          <div
+            onClick={() => setOpenNotice(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(520px, 100%)", maxHeight: "80vh", overflowY: "auto",
+                background: isLightMode ? "#ffffff" : "#151d30",
+                border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+                borderRadius: "16px", padding: "22px", textAlign: "left",
+                color: isLightMode ? "#111827" : "#f1f5f9",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "6px" }}>
+                <ClipboardList size={17} style={{ color: isLightMode ? "#1d4ed8" : "#93c5fd", flexShrink: 0, marginTop: "2px" }} />
+                <span style={{ flex: 1, fontSize: "16px", fontWeight: 800, lineHeight: 1.4 }}>{openNotice.title || "공지사항"}</span>
+                <button onClick={() => setOpenNotice(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: isLightMode ? "#94a3b8" : "#64748b", padding: 0 }}>✕</button>
+              </div>
+              {openNotice.updatedAt ? (
+                <div style={{ fontSize: "11.5px", color: isLightMode ? "#94a3b8" : "#64748b", marginBottom: "14px" }}>
+                  {openNotice.updatedAt}{openNotice.author ? ` · ${openNotice.author}` : ""}
+                </div>
+              ) : null}
+              <div style={{ fontSize: "13.5px", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
+                {openNotice.text}
+              </div>
             </div>
           </div>
         ) : null}
