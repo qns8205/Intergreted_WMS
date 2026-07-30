@@ -183,7 +183,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   };
 
   return (
-    <div style={{ display: "flex", height: "100%", minHeight: 0, background: C.bg, color: C.text }}>
+    <div style={{ display: "flex", flex: 1, width: "100%", minWidth: 0, height: "100%", minHeight: 0, background: C.bg, color: C.text }}>
       {/* ── 왼쪽: 대여자 / 물품 ── */}
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
