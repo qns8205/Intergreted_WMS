@@ -229,7 +229,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const groups = useMemo(() => {
     const map = new Map<string, {
       key: string; borrower: string; scenarioId?: string; date: string; purpose: string;
-      kind: string; items: ScenarioLogEntry[]; allReturned: boolean; isReturnGroup: boolean;
+      kind: string; seat: string; items: ScenarioLogEntry[]; allReturned: boolean; isReturnGroup: boolean;
     }>();
 
     // 반납 묶음은 분 단위까지만 보고 묶는다 (초가 1~2초 어긋나는 경우가 있다)
@@ -249,6 +249,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           date: isReturned ? (it.returnDate || it.borrowDate) : it.borrowDate,
           purpose: it.borrowPurpose,
           kind: isReturned ? "반납" : (it.sheetType === "scenario" ? "SID 대여" : "일반 대여"),
+          seat: [it.floor, it.unit].filter(Boolean).join(" · "),
           items: [],
           allReturned: isReturned,
           isReturnGroup: isReturned,
@@ -259,6 +260,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       if (!it.returned) g.allReturned = false;
       // 같은 묶음 안에 SID가 섞여 있으면 첫 값을 유지하되, 비어 있으면 채운다
       if (!g.scenarioId && it.scenarioId) g.scenarioId = it.scenarioId;
+      if (!g.seat) g.seat = [it.floor, it.unit].filter(Boolean).join(" · ");
     });
 
     // 묶음 시각(대여 묶음은 대여일, 반납 묶음은 반납일) 기준 최신순
@@ -779,7 +781,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, fontSize: "14px" }}>{g.borrower} {g.scenarioId ? <span style={{ fontSize: "11px", color: C.warn, fontWeight: 700 }}>· {g.scenarioId}</span> : null}</div>
                   <div style={{ fontSize: "11px", color: C.label }}>
-                    {g.isReturnGroup ? `반납 · ${g.date}` : `${g.kind} · ${g.date}`}{g.purpose ? ` · ${g.purpose}` : ""}
+                    {g.isReturnGroup ? `반납 · ${g.date}` : `${g.kind} · ${g.date}`}
+                    {g.seat ? <span style={{ color: C.warn, fontWeight: 700 }}> · 📍 {g.seat}</span> : null}
+                    {g.purpose ? ` · ${g.purpose}` : ""}
                   </div>
                 </div>
                 {g.allReturned ? <span style={{ fontSize: "11px", fontWeight: 700, color: C.success, background: C.successSoft, padding: "3px 10px", borderRadius: "14px", flexShrink: 0 }}>반납완료</span>
