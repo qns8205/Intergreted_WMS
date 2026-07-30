@@ -988,3 +988,20 @@ export async function fetchNotice(scriptUrl: string): Promise<NoticeData> {
 export async function saveNotice(scriptUrl: string, text: string, author: string): Promise<{ success: boolean; message?: string }> {
   return apiPost(scriptUrl, "saveNotice", { text, author });
 }
+
+/* ══════════ 대여 잠금 ══════════ */
+// 관리자가 대여를 일시 중단할 수 있다. 반납은 계속 가능하다.
+export interface BorrowLock { locked: boolean; reason?: string; at?: string }
+
+export async function fetchBorrowLock(scriptUrl: string): Promise<BorrowLock> {
+  const data = await apiGet(scriptUrl, "getBorrowLock", {});
+  return (data.lock || { locked: false }) as BorrowLock;
+}
+
+export async function setBorrowLock(
+  scriptUrl: string,
+  locked: boolean,
+  reason: string
+): Promise<{ success: boolean; lock?: BorrowLock; message?: string }> {
+  return apiPost(scriptUrl, "setBorrowLock", { locked, reason });
+}
