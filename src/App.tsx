@@ -2693,124 +2693,6 @@ export default function App() {
           )}
         </div>
 
-        {/* 품목 실시간 검색란 (랙 배치도 위치로 이동하는 용도라 모니터링 화면에서만 의미가 있음) */}
-        {currentView === "monitor" && (
-        <div ref={searchContainerRef} style={{ position: "relative", width: 440 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              background: "var(--input-bg, #0f172a)",
-              border: "1px solid var(--panel-border, #2563eb)",
-              borderRadius: 9999,
-              padding: "0 16px",
-            }}
-          >
-            <Search size={15} style={{ color: "var(--text-dim, #94a3b8)", marginRight: 8 }} />
-            <input
-              placeholder="품목 검색... (엔터 누르면 첫 결과의 위치로 바로 이동)"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setSearchOpen(true);
-              }}
-              onFocus={() => setSearchOpen(true)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && searchResults.length > 0) {
-                  focusOnItem(searchResults[0]);
-                }
-              }}
-              style={{
-                width: "100%",
-                padding: "8px 0",
-                background: "transparent",
-                border: "none",
-                color: "var(--text-main, #f1f5f9)",
-                fontSize: 13,
-                outline: "none",
-              }}
-            />
-          </div>
-
-          {searchOpen && searchQuery && (
-            <div
-              style={{
-                position: "absolute",
-                top: 44,
-                left: 0,
-                right: 0,
-                background: "var(--panel-bg, #1e293b)",
-                border: "1px solid var(--panel-border, #334155)",
-                borderRadius: 8,
-                boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
-                maxHeight: 350,
-                overflowY: "auto",
-                zIndex: 1000,
-              }}
-            >
-              {searchResults.length > 0 ? (
-                searchResults.map((item) => (
-                  <div
-                    key={item.rowIndex}
-                    onClick={() => focusOnItem(item)}
-                    style={{
-                      padding: "10px 14px",
-                      borderBottom: "1px solid var(--panel-border, #334155)",
-                      cursor: "pointer",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      transition: "background 0.15s",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "var(--panel-border, #334155)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-main, #f1f5f9)" }}>
-                        {item.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 10.5,
-                          color: "var(--text-dim, #94a3b8)",
-                          marginTop: 3,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <span className="mono" style={{ background: "var(--input-bg, #0f172a)", padding: "1px 5px", borderRadius: 3, color: "#94a3b8" }}>
-                          {item.location}
-                        </span>
-                        {item.note && <span>| 특이사항: {item.note}</span>}
-                        {item.manager && <span>| 담당: {item.manager}</span>}
-                      </div>
-                    </div>
-                    <div
-                      className="mono"
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: 800,
-                        color: item.stock === 0 ? "#f43f5e" : "#34d399",
-                      }}
-                    >
-                      {item.stock ?? 0} 개
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div style={{ padding: 16, color: "#94a3b8", textAlign: "center", fontSize: 12.5 }}>
-                  검색 결과와 일치하는 품목이 존재하지 않습니다.
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        )}
 
         {/* 우측 보조 컨트롤 영역 */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -3032,6 +2914,12 @@ export default function App() {
                 onAdjustStock={(item) => setStockAdjustItem(item)}
                 onManageSets={() => setShowItemSetManager(true)}
                 onImageClick={(url) => setImageModalUrl(url)}
+                onAddItem={(presetLocation) => {
+                  // 해당 랙/슬롯 위치를 미리 채운 채 등록 화면을 연다
+                  setDefaultLocationForNewItem(presetLocation);
+                  setEditingItem(null);
+                  setShowAddForm(true);
+                }}
               />
             </div>
           </>
