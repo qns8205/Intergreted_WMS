@@ -1046,3 +1046,11 @@ export async function fetchWarehouseLogs(scriptUrl: string, recentDays?: number)
   const data = await apiGet(scriptUrl, "getWarehouseLogs", params, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as WarehouseLogEntry[];
 }
+
+/* ══════════ 반납 독촉 DM ══════════ */
+export async function sendReturnReminderDm(
+  scriptUrl: string,
+  payload: { name: string; email?: string; days: number; items: { label: string; location?: string }[] }
+): Promise<{ success: boolean; message?: string }> {
+  return apiPost(scriptUrl, "sendReturnReminderDm", payload);
+}
