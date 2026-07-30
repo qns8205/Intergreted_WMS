@@ -142,12 +142,62 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     ).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
   }, [items, search]);
 
+  // 물품별 경과일 (대여일 기준)
+  const daysSince = (borrowDate?: string) => {
+    const raw = String(borrowDate || "").trim();
+    if (!raw) return null;
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+  };
+
   const activeItems = useMemo(() => {
     if (!selectedBorrower) return [];
     return items
       .filter((it) => (String(it.borrowerName || "").trim() || "(이름 없음)") === selectedBorrower)
-      .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
+      .sort((a, b) => {
+        const ta = Date.parse(String(a.borrowDate || "").replace(" ", "T"));
+        const tb = Date.parse(String(b.borrowDate || "").replace(" ", "T"));
+        const va = isNaN(ta) ? -Infinity : ta;
+        const vb = isNaN(tb) ? -Infinity : tb;
+        if (vb !== va) return vb - va; // 최근 대여가 위로
+        return String(a.location || "").localeCompare(String(b.location || ""));
+      });
   }, [items, selectedBorrower]);
+
+  // 대여 시각(분 단위)이 같으면 같은 묶음으로 본다. 값이 바뀌는 지점마다 헤더를 표시한다.
+  const timeGroupKey = useCallback((borrowDate?: string) => {
+    const raw = String(borrowDate || "").trim();
+    if (!raw) return "__none__";
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (isNaN(t)) return raw;
+    return String(Math.floor(t / 60000)); // 분 단위로 묶기
+  }, []);
+
+  const formatGroupLabel = useCallback((borrowDate?: string) => {
+    const raw = String(borrowDate || "").trim();
+    if (!raw) return "대여 시각 정보 없음";
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (isNaN(t)) return raw;
+    const d = new Date(t);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    const days = daysSince(borrowDate);
+    return `${mm}/${dd} ${hh}:${mi}${days !== null && days >= 1 ? ` · ${days}일 경과` : ""}`;
+  }, []);
+
+  // activeItems를 시각 그룹 경계와 함께 렌더링할 수 있도록, 각 항목에 "이 항목 앞에 새 그룹 헤더가 필요한지" 표시
+  const activeItemsWithGroup = useMemo(() => {
+    let prevKey: string | null = null;
+    return activeItems.map((it) => {
+      const key = timeGroupKey(it.borrowDate);
+      const isNewGroup = key !== prevKey;
+      prevKey = key;
+      return { item: it, isNewGroup, groupLabel: isNewGroup ? formatGroupLabel(it.borrowDate) : "" };
+    });
+  }, [activeItems, timeGroupKey, formatGroupLabel]);
 
   // 반납이 늦은 사람 (7일 이상 / 2일 이상)
   const overdue = useMemo(() => {
@@ -274,15 +324,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       setDmSending(null);
     }
   }
-
-  // 물품별 경과일 (대여일 기준)
-  const daysSince = (borrowDate?: string) => {
-    const raw = String(borrowDate || "").trim();
-    if (!raw) return null;
-    const t = Date.parse(raw.replace(" ", "T"));
-    if (isNaN(t)) return null;
-    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
-  };
 
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
@@ -619,56 +660,70 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
                   {on ? (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 10px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {activeItems.map((it, idx) => {
+                      {activeItemsWithGroup.map(({ item: it, isNewGroup, groupLabel }, idx) => {
                         const picked = inCartQty(it);
                         const max = it.quantity || 1;
                         const done = picked >= max;
                         const atCursor = idx === cursor;
                         return (
-                          <div
-                            key={`${it.sheetType}-${it.rowIndex}`}
-                            ref={atCursor ? cursorElRef : undefined}
-                            onClick={() => { setCursor(idx); if (!done) addOne(it); }}
-                            style={{
-                              display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
-                              cursor: done ? "default" : "pointer",
-                              background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
-                              border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
-                              boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
-                            }}
-                          >
-                            <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-                                <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
-                                {(() => {
-                                  const d = daysSince(it.borrowDate);
-                                  if (d === null || d < 2) return null;
-                                  const severe = d >= 7;
-                                  return (
-                                    <span
-                                      title={`${it.borrowDate} 대여 · ${d}일 경과`}
-                                      style={{
-                                        flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
-                                        color: severe ? C.error : C.warn,
-                                        background: severe ? C.errorSoft : C.warnSoft,
-                                      }}
-                                    >
-                                      {severe ? `⚠ ${d}일` : `${d}일`}
-                                    </span>
-                                  );
-                                })()}
+                          <React.Fragment key={`${it.sheetType}-${it.rowIndex}`}>
+                            {isNewGroup ? (
+                              <div
+                                style={{
+                                  display: "flex", alignItems: "center", gap: "6px",
+                                  padding: idx === 0 ? "2px 4px 2px" : "10px 4px 2px",
+                                  fontSize: "10.5px", fontWeight: 800, color: C.label,
+                                  textTransform: "uppercase", letterSpacing: "0.02em",
+                                }}
+                              >
+                                <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.label, flexShrink: 0 }} />
+                                {groupLabel}
                               </div>
-                              {it.location ? (
-                                <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
-                                  <MapPin size={9} /> {it.location}
+                            ) : null}
+                            <div
+                              ref={atCursor ? cursorElRef : undefined}
+                              onClick={() => { setCursor(idx); if (!done) addOne(it); }}
+                              style={{
+                                display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
+                                cursor: done ? "default" : "pointer",
+                                background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
+                                border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
+                                boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
+                              }}
+                            >
+                              <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                                  <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                  {(() => {
+                                    const d = daysSince(it.borrowDate);
+                                    if (d === null || d < 2) return null;
+                                    const severe = d >= 7;
+                                    return (
+                                      <span
+                                        title={`${it.borrowDate} 대여 · ${d}일 경과`}
+                                        style={{
+                                          flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
+                                          color: severe ? C.error : C.warn,
+                                          background: severe ? C.errorSoft : C.warnSoft,
+                                        }}
+                                      >
+                                        {severe ? `⚠ ${d}일` : `${d}일`}
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
-                              ) : null}
+                                {it.location ? (
+                                  <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
+                                    <MapPin size={9} /> {it.location}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
+                                {picked} / {max}
+                              </span>
                             </div>
-                            <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
-                              {picked} / {max}
-                            </span>
-                          </div>
+                          </React.Fragment>
                         );
                       })}
                     </div>
