@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
@@ -159,6 +159,35 @@ export default function App() {
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
   const [publishingVersion, setPublishingVersion] = useState(false);
+  // 랜딩 공지 작성 (관리자 전용)
+  const [noticeModalOpen, setNoticeModalOpen] = useState(false);
+  const [noticeDraft, setNoticeDraft] = useState("");
+  const [noticeSaving, setNoticeSaving] = useState(false);
+
+  async function openNoticeModal() {
+    setNoticeModalOpen(true);
+    try {
+      const n = await fetchNotice(scriptUrl);
+      setNoticeDraft(n.text || "");
+    } catch (e) { /* 기존 공지가 없으면 빈 값으로 시작 */ }
+  }
+
+  async function submitNotice() {
+    setNoticeSaving(true);
+    try {
+      const res = await saveNotice(scriptUrl, noticeDraft, currentUser?.name || "관리자");
+      if (res.success) {
+        showToast("공지를 저장했습니다. 랜딩 화면에 표시됩니다.", "ok");
+        setNoticeModalOpen(false);
+      } else {
+        showToast(res.message || "공지 저장에 실패했습니다.", "error");
+      }
+    } catch (e: any) {
+      showToast(`공지 저장 실패: ${e.message}`, "error");
+    } finally {
+      setNoticeSaving(false);
+    }
+  }
   const baselineAppVersionRef = useRef<string | null>(null);
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
@@ -1786,6 +1815,57 @@ export default function App() {
     );
   }
 
+  // 공지 작성 모달 (관리자)
+  const noticeModal = noticeModalOpen ? (
+    <div
+      onClick={() => !noticeSaving && setNoticeModalOpen(false)}
+      style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(520px, 100%)", background: isLightMode ? "#ffffff" : "#151d30",
+          border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, borderRadius: "16px", padding: "22px",
+          color: isLightMode ? "#111827" : "#f1f5f9",
+        }}
+      >
+        <div style={{ fontSize: "15px", fontWeight: 800, marginBottom: "6px" }}>📢 공지 작성</div>
+        <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "12px", lineHeight: 1.6 }}>
+          첫 화면(랜딩) 하단에 표시됩니다. 비워두고 저장하면 공지가 사라집니다.
+        </div>
+        <textarea
+          value={noticeDraft}
+          onChange={(e) => setNoticeDraft(e.target.value)}
+          placeholder="예) 8월 1일 창고 정리로 오전 대여가 중단됩니다."
+          style={{
+            width: "100%", minHeight: "140px", resize: "vertical", boxSizing: "border-box",
+            padding: "12px", borderRadius: "10px", fontSize: "13.5px", lineHeight: 1.6,
+            border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+            background: isLightMode ? "#f8fafc" : "#0f172a",
+            color: isLightMode ? "#111827" : "#f1f5f9",
+            outline: "none",
+          }}
+        />
+        <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
+          <button
+            onClick={() => setNoticeModalOpen(false)}
+            disabled={noticeSaving}
+            style={{ flex: 1, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13.5px", fontWeight: 700, border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, background: "transparent", color: isLightMode ? "#475569" : "#94a3b8" }}
+          >
+            취소
+          </button>
+          <button
+            onClick={submitNotice}
+            disabled={noticeSaving}
+            style={{ flex: 2, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: 800, border: "none", background: "#2563eb", color: "#fff", opacity: noticeSaving ? 0.7 : 1 }}
+          >
+            {noticeSaving ? "저장 중..." : "공지 저장"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div
       className={isLightMode ? "wms-light" : "wms-dark"}
@@ -2261,6 +2341,24 @@ export default function App() {
               {publishingVersion ? "발급 중..." : "🚀 새 버전 발급"}
             </button>
           )}
+          {isAdmin && connected && scriptUrl && (
+            <button
+              onClick={openNoticeModal}
+              title="랜딩 화면에 표시할 공지를 작성합니다"
+              style={{
+                background: "rgba(37, 99, 235, 0.10)",
+                border: "1px solid rgba(37, 99, 235, 0.30)",
+                borderRadius: "6px",
+                padding: "3px 10px",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: "#2563eb",
+                cursor: "pointer",
+              }}
+            >
+              📢 공지 작성
+            </button>
+          )}
           {!isAdmin && (
             <button
               onClick={() => {
@@ -2671,6 +2769,8 @@ export default function App() {
           <img src={imageModalUrl} alt="" referrerPolicy="no-referrer" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "92%", maxHeight: "92%", borderRadius: "10px", objectFit: "contain", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }} />
         </div>
       ) : null}
+
+      {noticeModal}
 
       {showSetup && isAdmin && (
         <SetupModal
