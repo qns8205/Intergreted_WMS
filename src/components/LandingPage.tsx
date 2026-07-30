@@ -144,6 +144,8 @@ export default function LandingPage({
               background: isLightMode ? "#fef2f2" : "#1f1113",
               maxWidth: "480px",
               width: "100%",
+              marginLeft: "auto",
+              marginRight: "auto",
               textAlign: "left",
             }}
           >
@@ -169,6 +171,8 @@ export default function LandingPage({
               background: isLightMode ? "#fef2f2" : "#1f1113",
               maxWidth: "480px",
               width: "100%",
+              marginLeft: "auto",
+              marginRight: "auto",
               textAlign: "left",
             }}
           >
@@ -204,7 +208,9 @@ export default function LandingPage({
             boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
             maxWidth: "480px",
             width: "100%",
-              textAlign: "left",
+            marginLeft: "auto",
+            marginRight: "auto",
+            textAlign: "left",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#c2410c" : "#fdba74", marginBottom: "6px" }}>
@@ -236,6 +242,8 @@ export default function LandingPage({
               boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
               maxWidth: "480px",
               width: "100%",
+              marginLeft: "auto",
+              marginRight: "auto",
               textAlign: "left",
             }}
           >
