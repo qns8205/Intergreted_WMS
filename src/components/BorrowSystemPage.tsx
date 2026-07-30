@@ -1710,10 +1710,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
               {/* 개인 페널티가 걸려 있으면 한도가 낮아진 이유를 함께 보여준다 */}
               {!seatExempt && activeTypeInfo.penalty ? (
                 <span
-                  title={[activeTypeInfo.penalty.reason, activeTypeInfo.penalty.until ? `${activeTypeInfo.penalty.until}까지` : ""].filter(Boolean).join(" · ")}
-                  style={{ fontSize: "11px", fontWeight: 800, color: "#fff", background: C.error, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}
+                  style={{ fontSize: "11px", fontWeight: 800, color: "#fff", background: C.error, borderRadius: "999px", padding: "3px 10px" }}
                 >
                   ⚠ 페널티 {activeTypeInfo.penalty.max}종류 제한
+                  {activeTypeInfo.penalty.reason ? ` · ${activeTypeInfo.penalty.reason}` : ""}
+                  {activeTypeInfo.penalty.until ? ` · ${activeTypeInfo.penalty.until}까지` : ""}
                 </span>
               ) : null}
 
@@ -2968,13 +2969,36 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           <div
             style={{ width: "min(420px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}
           >
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: C.warnSoft, color: C.warn, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
-              <AlertCircle size={30} />
-            </div>
-            <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>반납이 늦어지고 있는 물품이 있어요</div>
-            <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
-              아래 물품을 빌린 지 48시간이 지났습니다. 잊고 계셨다면 빠른 시일 내에 반납해주세요.
-            </div>
+            {(() => {
+              // 7일(168시간) 이상 지난 물품이 있으면 페널티 경고로 바꿔 띄운다
+              const hasSevere = overdueReminderModal.some((it) => it.hoursAgo >= 168);
+              return (
+                <>
+                  <div style={{ width: 56, height: 56, borderRadius: "50%", background: hasSevere ? C.errorSoft : C.warnSoft, color: hasSevere ? C.error : C.warn, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                    <AlertCircle size={30} />
+                  </div>
+                  {hasSevere ? (
+                    <>
+                      <div style={{ fontSize: "17px", fontWeight: 800, color: C.error, marginBottom: "6px" }}>
+                        7일 이상 미반납 — 페널티 대상입니다
+                      </div>
+                      <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.7 }}>
+                        아래 물품을 빌린 지 <b style={{ color: C.error }}>7일이 지났습니다</b>.<br />
+                        1주 이상 연체 시 <b style={{ color: C.error }}>대여 가능 종류가 10종류로 제한</b>될 수 있습니다.<br />
+                        빠른 시일 내에 반납해주세요.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: "17px", fontWeight: 800, color: C.text, marginBottom: "6px" }}>반납이 늦어지고 있는 물품이 있어요</div>
+                      <div style={{ fontSize: "13px", color: C.label, marginBottom: "18px", lineHeight: 1.6 }}>
+                        아래 물품을 빌린 지 48시간이 지났습니다. 잊고 계셨다면 빠른 시일 내에 반납해주세요.
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "20px", textAlign: "left" }}>
               {overdueReminderModal.map((it) => (
                 <div key={it.id} style={{ padding: "10px 12px", background: C.warnSoft, borderRadius: "10px" }}>
