@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin } from "lucide-react";
+import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin, Clock } from "lucide-react";
 import {
   fetchUnreturnedItems, UnreturnedItem,
   postProcessReturn, fetchBorrowAppVersion,
@@ -165,39 +165,59 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       });
   }, [items, selectedBorrower]);
 
-  // 대여 시각(분 단위)이 같으면 같은 묶음으로 본다. 값이 바뀌는 지점마다 헤더를 표시한다.
-  const timeGroupKey = useCallback((borrowDate?: string) => {
+  const parseTs = (borrowDate?: string) => {
     const raw = String(borrowDate || "").trim();
-    if (!raw) return "__none__";
-    const t = Date.parse(raw.replace(" ", "T"));
-    if (isNaN(t)) return raw;
-    return String(Math.floor(t / 60000)); // 분 단위로 묶기
-  }, []);
+    if (!raw) return NaN;
+    return Date.parse(raw.replace(" ", "T"));
+  };
 
   const formatGroupLabel = useCallback((borrowDate?: string) => {
     const raw = String(borrowDate || "").trim();
     if (!raw) return "대여 시각 정보 없음";
-    const t = Date.parse(raw.replace(" ", "T"));
+    const t = parseTs(raw);
     if (isNaN(t)) return raw;
     const d = new Date(t);
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     const hh = String(d.getHours()).padStart(2, "0");
     const mi = String(d.getMinutes()).padStart(2, "0");
-    const days = daysSince(borrowDate);
-    return `${mm}/${dd} ${hh}:${mi}${days !== null && days >= 1 ? ` · ${days}일 경과` : ""}`;
+    return `${mm}/${dd} ${hh}:${mi}`;
   }, []);
 
-  // activeItems를 시각 그룹 경계와 함께 렌더링할 수 있도록, 각 항목에 "이 항목 앞에 새 그룹 헤더가 필요한지" 표시
-  const activeItemsWithGroup = useMemo(() => {
-    let prevKey: string | null = null;
-    return activeItems.map((it) => {
-      const key = timeGroupKey(it.borrowDate);
-      const isNewGroup = key !== prevKey;
-      prevKey = key;
-      return { item: it, isNewGroup, groupLabel: isNewGroup ? formatGroupLabel(it.borrowDate) : "" };
+  // 한 번의 대여도 일반/시나리오 시트에 초 단위로 갈려 기록될 수 있어,
+  // 2분 이내로 붙어 있는 시각은 같은 대여 묶음으로 본다.
+  const CLUSTER_MS = 2 * 60 * 1000;
+
+  interface TimeGroup {
+    key: string;
+    ts: number;
+    label: string;
+    days: number | null;
+    startIndex: number;   // activeItems 안에서의 시작 인덱스 (커서 계산용)
+    items: UnreturnedItem[];
+  }
+
+  const timeGroups = useMemo<TimeGroup[]>(() => {
+    const groups: TimeGroup[] = [];
+    activeItems.forEach((it, idx) => {
+      const t = parseTs(it.borrowDate);
+      const last = groups[groups.length - 1];
+      const same =
+        !!last &&
+        ((isNaN(t) && isNaN(last.ts)) ||
+          (!isNaN(t) && !isNaN(last.ts) && Math.abs(last.ts - t) <= CLUSTER_MS));
+      if (same) { last!.items.push(it); return; }
+      groups.push({
+        key: `${it.sheetType}-${it.rowIndex}-${idx}`,
+        ts: t,
+        label: formatGroupLabel(it.borrowDate),
+        days: daysSince(it.borrowDate),
+        startIndex: idx,
+        items: [it],
+      });
     });
-  }, [activeItems, timeGroupKey, formatGroupLabel]);
+    return groups;
+  }, [activeItems, formatGroupLabel]);
 
   // 반납이 늦은 사람 (7일 이상 / 2일 이상)
   const overdue = useMemo(() => {
@@ -403,6 +423,14 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       else setCursor(Math.min(idx + 1, activeItems.length - 1));
     }
   }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull]);
+
+  // 시각 묶음 전체를 한 번에 담는다 (그룹 헤더의 "모두 담기")
+  const addGroupAll = useCallback((groupItems: UnreturnedItem[]) => {
+    groupItems.forEach((it) => {
+      const need = (it.quantity || 1) - inCartQty(it);
+      for (let i = 0; i < need; i++) addOne(it);
+    });
+  }, [cart, addOne]);
 
   // P / O : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
   const moveCursor = useCallback((delta: number) => {
@@ -660,70 +688,103 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
                   {on ? (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 10px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {activeItemsWithGroup.map(({ item: it, isNewGroup, groupLabel }, idx) => {
-                        const picked = inCartQty(it);
-                        const max = it.quantity || 1;
-                        const done = picked >= max;
-                        const atCursor = idx === cursor;
+                      {timeGroups.map((g) => {
+                        const gTotal = g.items.reduce((n, it) => n + (it.quantity || 1), 0);
+                        const gPicked = g.items.reduce((n, it) => n + inCartQty(it), 0);
+                        const gDone = gPicked >= gTotal;
+                        const severe = g.days !== null && g.days >= 7;
+                        const late = g.days !== null && g.days >= 2;
+                        const tone = severe ? C.error : late ? C.warn : C.label;
+                        const toneSoft = severe ? C.errorSoft : late ? C.warnSoft : C.cardSub;
                         return (
-                          <React.Fragment key={`${it.sheetType}-${it.rowIndex}`}>
-                            {isNewGroup ? (
-                              <div
-                                style={{
-                                  display: "flex", alignItems: "center", gap: "6px",
-                                  padding: idx === 0 ? "2px 4px 2px" : "10px 4px 2px",
-                                  fontSize: "10.5px", fontWeight: 800, color: C.label,
-                                  textTransform: "uppercase", letterSpacing: "0.02em",
-                                }}
-                              >
-                                <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.label, flexShrink: 0 }} />
-                                {groupLabel}
-                              </div>
-                            ) : null}
+                          <div
+                            key={g.key}
+                            style={{
+                              border: `1px solid ${gDone ? C.success + "55" : C.border}`,
+                              borderRadius: "10px",
+                              overflow: "hidden",
+                              marginBottom: "2px",
+                            }}
+                          >
+                            {/* 대여 시각 헤더 */}
                             <div
-                              ref={atCursor ? cursorElRef : undefined}
-                              onClick={() => { setCursor(idx); if (!done) addOne(it); }}
                               style={{
-                                display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
-                                cursor: done ? "default" : "pointer",
-                                background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
-                                border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
-                                boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
+                                display: "flex", alignItems: "center", gap: "7px",
+                                padding: "7px 10px",
+                                background: gDone ? C.successSoft : toneSoft,
+                                borderBottom: `1px solid ${C.border}`,
                               }}
                             >
-                              <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-                                  <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
-                                  {(() => {
-                                    const d = daysSince(it.borrowDate);
-                                    if (d === null || d < 2) return null;
-                                    const severe = d >= 7;
-                                    return (
-                                      <span
-                                        title={`${it.borrowDate} 대여 · ${d}일 경과`}
-                                        style={{
-                                          flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
-                                          color: severe ? C.error : C.warn,
-                                          background: severe ? C.errorSoft : C.warnSoft,
-                                        }}
-                                      >
-                                        {severe ? `⚠ ${d}일` : `${d}일`}
-                                      </span>
-                                    );
-                                  })()}
-                                </div>
-                                {it.location ? (
-                                  <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
-                                    <MapPin size={9} /> {it.location}
-                                  </div>
-                                ) : null}
-                              </div>
-                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
-                                {picked} / {max}
+                              <Clock size={12} style={{ color: tone, flexShrink: 0 }} />
+                              <span style={{ fontSize: "12px", fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                                {g.label}
                               </span>
+                              {late ? (
+                                <span style={{ fontSize: "10px", fontWeight: 800, color: tone, background: C.card, borderRadius: "999px", padding: "1px 7px" }}>
+                                  {severe ? `⚠ ${g.days}일 경과` : `${g.days}일 경과`}
+                                </span>
+                              ) : null}
+                              <span style={{ flex: 1 }} />
+                              <span style={{ fontSize: "10.5px", fontWeight: 700, color: gDone ? C.success : C.label, flexShrink: 0 }}>
+                                {g.items.length}종 · {gPicked}/{gTotal}개
+                              </span>
+                              {!gDone ? (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); addGroupAll(g.items); }}
+                                  title="이 시각에 대여한 물품 전체 담기"
+                                  style={{
+                                    flexShrink: 0, padding: "3px 9px", borderRadius: "999px",
+                                    border: `1px solid ${C.accent}`, background: C.card, color: C.accentText,
+                                    fontSize: "10.5px", fontWeight: 800, cursor: "pointer",
+                                  }}
+                                >
+                                  모두 담기
+                                </button>
+                              ) : (
+                                <Check size={13} style={{ color: C.success, flexShrink: 0 }} />
+                              )}
                             </div>
-                          </React.Fragment>
+
+                            {/* 이 시각의 물품들 */}
+                            <div style={{ padding: "6px", display: "flex", flexDirection: "column", gap: "5px" }}>
+                              {g.items.map((it, i) => {
+                                const idx = g.startIndex + i;
+                                const picked = inCartQty(it);
+                                const max = it.quantity || 1;
+                                const done = picked >= max;
+                                const atCursor = idx === cursor;
+                                return (
+                                  <div
+                                    key={`${it.sheetType}-${it.rowIndex}`}
+                                    ref={atCursor ? cursorElRef : undefined}
+                                    onClick={() => { setCursor(idx); if (!done) addOne(it); }}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
+                                      cursor: done ? "default" : "pointer",
+                                      background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
+                                      border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
+                                      boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
+                                    }}
+                                  >
+                                    <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <span style={{ display: "block", fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {it.itemLabel}
+                                      </span>
+                                      {it.location ? (
+                                        <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
+                                          <MapPin size={9} /> {it.location}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
+                                      {picked} / {max}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
                         );
                       })}
                     </div>
