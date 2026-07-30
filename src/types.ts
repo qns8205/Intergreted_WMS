@@ -24,6 +24,7 @@ export interface DefectLog {
   manager: string;
   note: string;
   actionTaken: string;
+  culprit?: string; // 파손자 (로봇/시나리오 오브젝트 파손 시 기록)
   photo?: string;
   itemCategory?: string;
 }
