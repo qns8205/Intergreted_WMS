@@ -978,7 +978,21 @@ export function maskName(name: string): string {
 }
 
 /* ══════════ 랜딩 공지 ══════════ */
-export interface NoticeData { text: string; updatedAt?: string; author?: string }
+export interface NoticeData { title?: string; text: string; updatedAt?: string; author?: string }
+export const NOTICE_MAX = 3;
+
+export async function fetchNotices(scriptUrl: string): Promise<NoticeData[]> {
+  const data = await apiGet(scriptUrl, "getNotices", {});
+  return (data.items || []) as NoticeData[];
+}
+
+export async function saveNotices(
+  scriptUrl: string,
+  items: NoticeData[],
+  author: string
+): Promise<{ success: boolean; items?: NoticeData[]; message?: string }> {
+  return apiPost(scriptUrl, "saveNotices", { items, author });
+}
 
 export async function fetchNotice(scriptUrl: string): Promise<NoticeData> {
   const data = await apiGet(scriptUrl, "getNotice", {});
