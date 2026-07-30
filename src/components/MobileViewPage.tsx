@@ -103,6 +103,60 @@ export default function MobileViewPage({
   }
   const tabSlideDir = tabSlideDirRef.current;
 
+  // 스와이프로 탭 이동 (관리자: 등록 → 시나리오 → 대여/반납 → 불량)
+  const mainRef = useRef<HTMLElement | null>(null);
+  const swipeRef = useRef<{ x: number; y: number; t: number } | null>(null);
+
+  // 관리자 탭 순서 (사이드/상단 탭과 동일)
+  const swipeTabs: Mode[] = isAdmin
+    ? (["등록", "시나리오", "대여", "불량"] as Mode[])
+    : (["대여", "반납"] as Mode[]);
+
+  function goTab(delta: number) {
+    const cur = swipeTabs.indexOf(mode as Mode);
+    if (cur === -1) return;
+    const next = cur + delta;
+    if (next < 0 || next >= swipeTabs.length) return;
+    setMode(swipeTabs[next]);
+  }
+
+  function onSwipeStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
+  }
+
+  function onSwipeEnd(e: React.TouchEvent) {
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // 가로 이동이 충분히 크고, 세로 스크롤보다 확실히 우세할 때만 탭을 넘긴다
+    if (Math.abs(dx) < 70) return;
+    if (Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    if (Date.now() - start.t > 800) return;
+    goTab(dx < 0 ? 1 : -1); // 왼쪽으로 밀면 다음 탭
+  }
+
+  // 탭이 바뀌면 목록을 맨 위에서 시작한다 (이전 탭의 스크롤 위치가 남지 않도록)
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [mode]);
+
+  // 화면에 처음 들어올 때 페이지가 살짝 내려가 있는 경우가 있어 맨 위로 맞춘다.
+  // (직전 화면의 스크롤 위치가 남거나, 모바일 주소창 높이 변화로 어긋나는 경우)
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    mainRef.current?.scrollTo({ top: 0 });
+    // 레이아웃이 잡힌 뒤 한 번 더 (이미지·폰트 로딩으로 높이가 바뀌는 경우 대비)
+    const t = window.setTimeout(() => {
+      window.scrollTo(0, 0);
+      mainRef.current?.scrollTo({ top: 0 });
+    }, 80);
+    return () => window.clearTimeout(t);
+  }, []);
+
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [outstandingContext, setOutstandingContext] = useState<OutstandingRental | null>(null);
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
@@ -152,6 +206,8 @@ export default function MobileViewPage({
   };
   // 불량 등록: 품목 검색 목록 열림 여부 (PC DefectLogsPage와 동일한 실시간 검색 방식)
   const [defListOpen, setDefListOpen] = useState(true);
+  // 파손자 (로봇/시나리오 오브젝트일 때만 기록)
+  const [defCulprit, setDefCulprit] = useState("");
   const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
 
   /* ---------- 시나리오 물품 탭 (공구 및 부품류 탭과 동일한 구조) ---------- */
@@ -745,6 +801,7 @@ export default function MobileViewPage({
         actionTaken: defActionTaken.trim() || "조치 예정",
         photo: defPhoto,
         itemCategory: defItemCategory,
+        culprit: defItemCategory === "robot" ? defCulprit.trim() : "",
       };
 
       if (onAddDefectLog) {
@@ -755,6 +812,7 @@ export default function MobileViewPage({
         setDefCustomLoc("");
         setDefQty(1);
         setDefNote("");
+        setDefCulprit("");
         setDefPhoto(""); // Reset photo state
         setDefSelectedInvIndex(-1);
         setDefItemCategory("rack"); setDefSearch(""); setDefSelectedInvIndex(-1); setDefCustomName(""); setDefCustomLoc(""); setDefListOpen(true);
@@ -1160,7 +1218,12 @@ export default function MobileViewPage({
       </div>
 
       {/* ===== 리스트 & 폼 메인 영역 ===== */}
-      <main style={{ flex: 1, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto" }}>
+      <main
+        ref={mainRef}
+        onTouchStart={onSwipeStart}
+        onTouchEnd={onSwipeEnd}
+        style={{ flex: 1, padding: "14px 14px 32px", display: "flex", flexDirection: "column", gap: "10px", overflowY: "auto" }}
+      >
         <div key={mode} className={tabSlideDir === "forward" ? "step-forward" : "step-back"} style={{ display: "flex", flexDirection: "column", gap: "10px", flex: 1 }}>
         {mode === "대여" ? (
           <>
@@ -2474,6 +2537,21 @@ export default function MobileViewPage({
                     style={inputBaseStyle}
                   />
                 </div>
+
+                {/* 파손자 — 로봇 오브젝트일 때만 */}
+                {defItemCategory === "robot" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>🙋 파손자</label>
+                    <input
+                      className="mvp-input"
+                      type="text"
+                      value={defCulprit}
+                      onChange={(e) => setDefCulprit(e.target.value)}
+                      placeholder="파손시킨 사람의 이름 (모르면 비워두세요)"
+                      style={inputBaseStyle}
+                    />
+                  </div>
+                ) : null}
 
                 {/* 불량 사진 직접 촬영 / 업로드 */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
