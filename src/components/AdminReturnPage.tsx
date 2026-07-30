@@ -55,20 +55,55 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!connected || !scriptUrl) { setLoaded(true); return; }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       setItems(await fetchUnreturnedItems(scriptUrl));
       setLoaded(true);
     } catch (e: any) {
       showToast(`미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [connected, scriptUrl]);
 
   useEffect(() => { load(); }, [load]);
+
+  // 15초마다 자동 새로고침.
+  // 다른 관리자가 처리한 내용이 바로 반영되도록 하되, 담아둔 장바구니와 선택은 유지한다.
+  const submittingRef = useRef(false);
+  submittingRef.current = submitting;
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    const timer = window.setInterval(() => {
+      if (submittingRef.current) return;      // 처리 중에는 건너뛴다
+      if (document.hidden) return;            // 다른 탭을 보고 있으면 굳이 부르지 않는다
+      load(true);                             // 조용히 갱신 (로딩 표시 없음)
+    }, 15000);
+    return () => window.clearInterval(timer);
+  }, [connected, scriptUrl, load]);
+
+  // 자동 새로고침으로 사라진 행(다른 사람이 먼저 반납한 경우)은 장바구니에서 정리한다.
+  useEffect(() => {
+    if (!loaded || !cart.length) return;
+    const alive = new Map(items.map((it) => [`${it.sheetType}:${it.rowIndex}`, it.quantity || 1]));
+    let changed = false;
+    const next = cart
+      .map((c) => {
+        const max = alive.get(c.key);
+        if (max === undefined) { changed = true; return null; }   // 이미 반납됨
+        if (c.qty > max) { changed = true; return { ...c, qty: max, max }; }
+        if (c.max !== max) { changed = true; return { ...c, max }; }
+        return c;
+      })
+      .filter(Boolean) as ReturnCartLine[];
+    if (changed) {
+      setCart(next);
+      addHistoryRef.current = addHistoryRef.current.filter((k) => alive.has(k));
+      showToast("다른 곳에서 처리된 항목이 있어 장바구니를 갱신했습니다.", "info");
+    }
+  }, [items, loaded]);
 
   // 대여자별로 묶는다
   const borrowers = useMemo(() => {
@@ -260,7 +295,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
           <Undo2 size={19} style={{ color: C.accentText }} />
           <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>반납 처리</h1>
-          <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
+          <span style={{ fontSize: "11px", color: C.label }}>15초마다 자동 새로고침</span>
+          <button onClick={load} title="지금 새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
             <RotateCcw size={14} />
           </button>
         </div>
