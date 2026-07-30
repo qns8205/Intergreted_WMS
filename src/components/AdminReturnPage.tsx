@@ -52,6 +52,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [selectedBorrower, setSelectedBorrower] = useState<string | null>(null);
   const [cart, setCart] = useState<ReturnCartLine[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // 담은 순서를 기억해 C 키로 하나씩 되돌린다
+  const addHistoryRef = useRef<string[]>([]);
 
   const load = useCallback(async () => {
     if (!connected || !scriptUrl) { setLoaded(true); return; }
@@ -118,6 +120,26 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (prev[idx].qty >= max) return prev; // 대여 수량을 넘길 수 없다
       return prev.map((c, i) => (i === idx ? { ...c, qty: c.qty + 1 } : c));
     });
+    addHistoryRef.current.push(key);
+  }, []);
+
+  // C: 마지막으로 담은 한 개를 되돌린다
+  const undoOne = useCallback(() => {
+    const key = addHistoryRef.current.pop();
+    if (!key) { showToast("되돌릴 항목이 없습니다.", "info"); return; }
+    setCart((prev) =>
+      prev
+        .map((c) => (c.key === key ? { ...c, qty: c.qty - 1 } : c))
+        .filter((c) => c.qty > 0)
+    );
+  }, []);
+
+  // C 길게 누르기: 담은 것과 대여자 선택을 모두 해제
+  const clearAll = useCallback(() => {
+    addHistoryRef.current = [];
+    setCart([]);
+    setSelectedBorrower(null);
+    showToast("선택과 장바구니를 모두 해제했습니다.", "info");
   }, []);
 
   // A 키: 선택한 사람이 빌린 물품 중 아직 다 담지 않은 "제일 위" 항목을 한 개 담는다
@@ -128,22 +150,66 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     addOne(target);
   }, [selectedBorrower, activeItems, cart, addOne]);
 
-  const addTopmostRef = useRef(addTopmost);
-  addTopmostRef.current = addTopmost;
+  // 최신 핸들러를 참조로 들고 있어야 키 이벤트가 오래된 값을 잡지 않는다
+  const handlersRef = useRef({ addTopmost, undoOne, clearAll, submit: async () => {} });
+  handlersRef.current.addTopmost = addTopmost;
+  handlersRef.current.undoOne = undoOne;
+  handlersRef.current.clearAll = clearAll;
+
+  const [cHeld, setCHeld] = useState(false);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      // 입력 중에는 단축키가 동작하지 않게 한다
+    const LONG_PRESS_MS = 650;
+    let cTimer: number | null = null;
+    let cLongFired = false;
+
+    const isTyping = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       const tag = el?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || el?.isContentEditable) return;
-      if (e.key === "a" || e.key === "A" || e.key === "ㅁ") {
+      return tag === "input" || tag === "textarea" || !!el?.isContentEditable;
+    };
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isTyping(e)) return;
+      const k = e.key.toLowerCase();
+
+      // A: 맨 위 물품 한 개 담기
+      if (k === "a" || e.key === "ㅁ") { e.preventDefault(); handlersRef.current.addTopmost(); return; }
+
+      // B: 반납 완료
+      if (k === "b" || e.key === "ㅠ") { e.preventDefault(); handlersRef.current.submit(); return; }
+
+      // C: 짧게 누르면 하나 되돌리기 / 꾹 누르면 전체 해제
+      if (k === "c" || e.key === "ㅊ") {
         e.preventDefault();
-        addTopmostRef.current();
+        if (e.repeat || cTimer !== null) return; // 자동 반복 무시
+        cLongFired = false;
+        setCHeld(true);
+        cTimer = window.setTimeout(() => {
+          cLongFired = true;
+          cTimer = null;
+          setCHeld(false);
+          handlersRef.current.clearAll();
+        }, LONG_PRESS_MS);
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (k !== "c" && e.key !== "ㅊ") return;
+      if (cTimer !== null) { window.clearTimeout(cTimer); cTimer = null; }
+      setCHeld(false);
+      if (!cLongFired) handlersRef.current.undoOne(); // 짧게 눌렀을 때만
+      cLongFired = false;
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      if (cTimer !== null) window.clearTimeout(cTimer);
+    };
   }, []);
 
   function changeQty(key: string, delta: number) {
@@ -153,6 +219,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         .filter((c) => c.qty > 0)
     );
   }
+
+  const submitReturnRef = useRef<() => Promise<void>>();
 
   async function submitReturn() {
     if (!cart.length) { showToast("반납할 물품을 담아주세요.", "warn"); return; }
@@ -176,6 +244,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       setSubmitting(false);
     }
   }
+
+  submitReturnRef.current = submitReturn;
+  handlersRef.current.submit = async () => { await submitReturnRef.current?.(); };
 
   const inputStyle: React.CSSProperties = {
     padding: "10px 12px", borderRadius: "10px", border: `1px solid ${C.border}`,
@@ -205,7 +276,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          대여자를 고른 뒤 <b style={{ color: C.accentText }}>A</b> 키를 누르면 맨 위 물품이 한 개씩 담깁니다. 물품을 직접 눌러 담아도 됩니다.
+          <b style={{ color: C.accentText }}>A</b> 맨 위 물품 한 개 담기 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
+          <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
 
         {loading && !loaded ? (
@@ -283,8 +355,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           <span style={{ fontSize: "15px", fontWeight: 800, flex: 1 }}>
             반납 장바구니 <span style={{ color: C.accentText }}>{cart.length}종 · {cartTotal}개</span>
           </span>
+          {cHeld ? (
+            <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.error, background: C.errorSoft, borderRadius: "999px", padding: "3px 10px" }}>
+              계속 누르면 전체 해제…
+            </span>
+          ) : null}
           {cart.length > 0 ? (
-            <button onClick={() => setCart([])} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
+            <button onClick={clearAll} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
               비우기
             </button>
           ) : null}
@@ -329,7 +406,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               opacity: submitting ? 0.7 : 1,
             }}
           >
-            {submitting ? "처리 중..." : `반납 처리하기 (${cartTotal}개)`}
+            {submitting ? "처리 중..." : `반납 처리하기 (${cartTotal}개) · B`}
           </button>
         </div>
       </div>
