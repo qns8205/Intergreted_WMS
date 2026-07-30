@@ -62,6 +62,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [search, setSearch] = useState("");
   const [selectedBorrower, setSelectedBorrower] = useState<string | null>(null);
   const [cart, setCart] = useState<ReturnCartLine[]>([]);
+  // 현재 선택 위치(하이라이트). A는 이 위치를 담고, ↑/↓로 위치만 옮길 수 있다.
+  const [cursor, setCursor] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
@@ -120,13 +122,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   // 대여자별로 묶는다
   const borrowers = useMemo(() => {
-    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number }>();
+    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[] }>();
     items.forEach((it) => {
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
-      if (!map.has(name)) map.set(name, { name, items: [], qty: 0 });
+      if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [] });
       const g = map.get(name)!;
       g.items.push(it);
       g.qty += it.quantity || 1;
+      const seat = [it.floor, it.unit].filter(Boolean).join(" · ");
+      if (seat && !g.seats.includes(seat)) g.seats.push(seat);
     });
     const list = Array.from(map.values());
     const q = search.trim();
@@ -190,17 +194,48 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     showToast("선택과 장바구니를 모두 해제했습니다.", "info");
   }, []);
 
-  // A 키: 선택한 사람이 빌린 물품 중 아직 다 담지 않은 "제일 위" 항목을 한 개 담는다
-  const addTopmost = useCallback(() => {
+  // 아직 다 담지 않은 항목인지
+  const isFull = useCallback(
+    (it: UnreturnedItem) => inCartQty(it) >= (it.quantity || 1),
+    [cart]
+  );
+
+  // A 키: 현재 커서 위치의 물품을 한 개 담는다.
+  // 그 물품을 다 담았으면 커서를 "아직 안 찬 다음 항목"으로 옮긴다.
+  const addAtCursor = useCallback(() => {
     if (!selectedBorrower) { showToast("먼저 대여자를 선택해주세요.", "warn"); return; }
-    const target = activeItems.find((it) => inCartQty(it) < (it.quantity || 1));
-    if (!target) { showToast("이 대여자의 물품을 모두 담았습니다.", "info"); return; }
+    if (!activeItems.length) return;
+
+    // 커서가 이미 다 찬 항목을 가리키면 다음 빈 항목으로 먼저 이동
+    let idx = cursor;
+    if (idx >= activeItems.length || isFull(activeItems[idx])) {
+      const next = activeItems.findIndex((it, i) => i >= idx && !isFull(it));
+      idx = next !== -1 ? next : activeItems.findIndex((it) => !isFull(it));
+      if (idx === -1) { showToast("이 대여자의 물품을 모두 담았습니다.", "info"); return; }
+      setCursor(idx);
+    }
+
+    const target = activeItems[idx];
     addOne(target);
-  }, [selectedBorrower, activeItems, cart, addOne]);
+
+    // 이번 한 개로 가득 찼다면 다음 미완료 항목으로 커서 이동
+    if (inCartQty(target) + 1 >= (target.quantity || 1)) {
+      const next = activeItems.findIndex((it, i) => i > idx && !isFull(it));
+      if (next !== -1) setCursor(next);
+      else setCursor(Math.min(idx + 1, activeItems.length - 1));
+    }
+  }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull]);
+
+  // ↓ / ↑ : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
+  const moveCursor = useCallback((delta: number) => {
+    if (!activeItems.length) return;
+    setCursor((prev) => Math.max(0, Math.min(activeItems.length - 1, prev + delta)));
+  }, [activeItems.length]);
 
   // 최신 핸들러를 참조로 들고 있어야 키 이벤트가 오래된 값을 잡지 않는다
-  const handlersRef = useRef({ addTopmost, undoOne, clearAll, submit: async () => {} });
-  handlersRef.current.addTopmost = addTopmost;
+  const handlersRef = useRef({ addAtCursor, undoOne, clearAll, moveCursor, submit: async () => {} });
+  handlersRef.current.addAtCursor = addAtCursor;
+  handlersRef.current.moveCursor = moveCursor;
   handlersRef.current.undoOne = undoOne;
   handlersRef.current.clearAll = clearAll;
 
@@ -222,7 +257,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       const k = e.key.toLowerCase();
 
       // A: 맨 위 물품 한 개 담기
-      if (k === "a" || e.key === "ㅁ") { e.preventDefault(); handlersRef.current.addTopmost(); return; }
+      if (k === "a" || e.key === "ㅁ") { e.preventDefault(); handlersRef.current.addAtCursor(); return; }
+
+      // ↑ / ↓ : 담지 않고 선택 위치만 이동
+      if (e.key === "ArrowDown") { e.preventDefault(); handlersRef.current.moveCursor(1); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); handlersRef.current.moveCursor(-1); return; }
 
       // B: 반납 완료
       if (k === "b" || e.key === "ㅠ") { e.preventDefault(); handlersRef.current.submit(); return; }
@@ -339,8 +378,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          <b style={{ color: C.accentText }}>A</b> 맨 위 물품 한 개 담기 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
-          <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
+          <b style={{ color: C.accentText }}>A</b> 선택한 물품 한 개 담기 · <b style={{ color: C.accentText }}>↑↓</b> 담지 않고 이동 ·{" "}
+          <b style={{ color: C.accentText }}>B</b> 반납 완료 · <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
 
         {loading && !loaded ? (
@@ -357,34 +396,43 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               return (
                 <div key={g.name} style={{ border: `1px solid ${on ? C.accent : C.border}`, borderRadius: "12px", background: C.card, overflow: "hidden" }}>
                   <div
-                    onClick={() => setSelectedBorrower(on ? null : g.name)}
+                    onClick={() => { setSelectedBorrower(on ? null : g.name); setCursor(0); }}
                     style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", cursor: "pointer", background: on ? C.accentSoft : "transparent" }}
                   >
                     <div style={{ width: 32, height: 32, borderRadius: "9px", background: C.accentSoft, color: C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <User size={16} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "14px", fontWeight: 800 }}>{g.name}</div>
-                      <div style={{ fontSize: "11.5px", color: C.label }}>{g.items.length}종 · {g.qty}개 미반납</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "14px", fontWeight: 800 }}>{g.name}</span>
+                        {g.seats.map((sname) => (
+                          <span key={sname} style={{ fontSize: "10.5px", fontWeight: 800, color: C.warn, background: C.warnSoft, borderRadius: "999px", padding: "2px 8px" }}>
+                            📍 {sname}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
                     </div>
                     {on ? <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>선택됨</span> : null}
                   </div>
 
                   {on ? (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 10px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {activeItems.map((it) => {
+                      {activeItems.map((it, idx) => {
                         const picked = inCartQty(it);
                         const max = it.quantity || 1;
                         const done = picked >= max;
+                        const atCursor = idx === cursor;
                         return (
                           <div
                             key={`${it.sheetType}-${it.rowIndex}`}
-                            onClick={() => { if (!done) addOne(it); }}
+                            onClick={() => { setCursor(idx); if (!done) addOne(it); }}
                             style={{
                               display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
                               cursor: done ? "default" : "pointer",
-                              background: done ? C.successSoft : C.cardSub,
-                              border: `1px solid ${done ? C.success + "55" : "transparent"}`,
+                              background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
+                              border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
+                              boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
                             }}
                           >
                             <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
