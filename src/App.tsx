@@ -2840,7 +2840,7 @@ export default function App() {
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "adminReturn" ? (
-          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", width: "100%" }}>
             <AdminReturnPage
               scriptUrl={scriptUrl}
               connected={connected}
