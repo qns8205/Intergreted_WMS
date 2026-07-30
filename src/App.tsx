@@ -2799,7 +2799,62 @@ export default function App() {
 
       {/* ===== 2. 본문 메인 ===== */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {currentView === "scenario" && !isAdmin ? (
+        {isAdmin && !adminSection ? (
+          // 관리자 로그인 직후: 하위 메뉴 두 개를 가운데에 크게 보여준다
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "22px", width: "100%", maxWidth: "760px" }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: "20px", fontWeight: 800, color: "var(--text-main, #f1f5f9)", marginBottom: "6px" }}>
+                  {currentUser?.name ? `${currentUser.name}님, 무엇을 하시겠어요?` : "무엇을 하시겠어요?"}
+                </div>
+                <div style={{ fontSize: "13px", color: "var(--text-dim, #94a3b8)" }}>
+                  관리할 영역을 선택해주세요.
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px", width: "100%" }}>
+                {[
+                  {
+                    key: "rental" as const,
+                    icon: <Undo2 size={28} />,
+                    title: "대여 & 반납 관리",
+                    desc: "반납 처리 · 대여/반납 로그 · 좌석 배치도",
+                    view: "adminReturn",
+                  },
+                  {
+                    key: "items" as const,
+                    icon: <Package size={28} />,
+                    title: "물품 관리",
+                    desc: "공구 및 부품류 · 시나리오 물품 · 불량로그",
+                    view: "monitor",
+                  },
+                ].map((c) => (
+                  <button
+                    key={c.key}
+                    onClick={() => { setAdminSection(c.key); setCurrentView(c.view as any); }}
+                    style={{
+                      display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "10px",
+                      padding: "26px 24px", borderRadius: "18px", cursor: "pointer", textAlign: "left",
+                      border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+                      background: isLightMode ? "#ffffff" : "#151d30",
+                      color: "var(--text-main, #f1f5f9)",
+                      boxShadow: "0 4px 18px rgba(0,0,0,0.06)",
+                      transition: "transform 0.15s ease, border-color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.borderColor = "#2563eb"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#26324a"; }}
+                  >
+                    <div style={{ width: 52, height: 52, borderRadius: "14px", display: "flex", alignItems: "center", justifyContent: "center", background: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(37,99,235,0.16)", color: "#2563eb" }}>
+                      {c.icon}
+                    </div>
+                    <div style={{ fontSize: "17px", fontWeight: 800 }}>{c.title}</div>
+                    <div style={{ fontSize: "12.5px", color: "var(--text-dim, #94a3b8)", lineHeight: 1.6 }}>{c.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : currentView === "scenario" && !isAdmin ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)", fontSize: "14px" }}>
             시나리오 물품 관리는 관리자만 사용할 수 있습니다.
           </div>
