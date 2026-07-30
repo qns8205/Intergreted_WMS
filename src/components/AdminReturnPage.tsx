@@ -4,6 +4,7 @@ import {
   fetchUnreturnedItems, UnreturnedItem,
   postProcessReturn, fetchBorrowAppVersion,
   isVersionMismatchMessage, signalVersionOutdated,
+  sendReturnReminderDm,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 
@@ -146,6 +147,54 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       .filter((it) => (String(it.borrowerName || "").trim() || "(이름 없음)") === selectedBorrower)
       .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
   }, [items, selectedBorrower]);
+
+  // 반납이 늦은 사람 (7일 이상 / 2일 이상)
+  const overdue = useMemo(() => {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[] }>();
+
+    items.forEach((it) => {
+      const raw = String(it.borrowDate || "").trim();
+      if (!raw) return;
+      const t = Date.parse(raw.replace(" ", "T"));
+      if (isNaN(t)) return;
+      const d = Math.floor((now - t) / day);
+      if (d < 2) return;
+
+      const name = String(it.borrowerName || "").trim() || "(이름 없음)";
+      if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [] });
+      const g = map.get(name)!;
+      if (!g.email && it.email) g.email = it.email;
+      if (d > g.days) g.days = d;
+      g.qty += it.quantity || 1;
+      g.items.push(it);
+    });
+
+    const all = Array.from(map.values()).sort((a, b) => b.days - a.days || b.qty - a.qty);
+    return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 2 && g.days < 7) };
+  }, [items]);
+
+  const [dmSending, setDmSending] = useState<string | null>(null);
+
+  async function notifyBorrower(g: { name: string; email: string; days: number; items: UnreturnedItem[] }) {
+    if (!connected || !scriptUrl) { showToast("연동이 필요합니다.", "warn"); return; }
+    if (!window.confirm(`${g.name}님에게 반납 요청 DM을 보낼까요? (${g.days}일 경과)`)) return;
+    setDmSending(g.name);
+    try {
+      const res = await sendReturnReminderDm(scriptUrl, {
+        name: g.name,
+        email: g.email,
+        days: g.days,
+        items: g.items.map((it) => ({ label: it.itemLabel, location: it.location })),
+      });
+      showToast(res.message || (res.success ? "DM을 보냈습니다." : "DM 발송 실패"), res.success ? "ok" : "error");
+    } catch (e: any) {
+      showToast(`DM 발송 실패: ${e.message}`, "error");
+    } finally {
+      setDmSending(null);
+    }
+  }
 
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
@@ -381,6 +430,49 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           <b style={{ color: C.accentText }}>A</b> 선택한 물품 한 개 담기 · <b style={{ color: C.accentText }}>↑↓</b> 담지 않고 이동 ·{" "}
           <b style={{ color: C.accentText }}>B</b> 반납 완료 · <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
+
+        {/* 반납이 늦은 사람: 7일 이상 / 2일 이상 */}
+        {(overdue.severe.length > 0 || overdue.mild.length > 0) ? (
+          <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            {([
+              { list: overdue.severe, title: `7일 이상 미반납`, tone: C.error, toneSoft: C.errorSoft, note: "10종류 제한 페널티 대상" },
+              { list: overdue.mild, title: `2일 이상 미반납`, tone: C.warn, toneSoft: C.warnSoft, note: "" },
+            ] as const).filter((sec) => sec.list.length > 0).map((sec) => (
+              <div key={sec.title} style={{ border: `1px solid ${sec.tone}55`, background: sec.toneSoft, borderRadius: "12px", padding: "11px 13px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
+                  <span style={{ fontSize: "12.5px", fontWeight: 800, color: sec.tone }}>
+                    {sec.title} {sec.list.length}명
+                  </span>
+                  {sec.note ? <span style={{ fontSize: "11px", color: sec.tone, opacity: 0.85 }}>· {sec.note}</span> : null}
+                </div>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {sec.list.map((g) => (
+                    <button
+                      key={g.name}
+                      onClick={() => notifyBorrower(g)}
+                      disabled={dmSending === g.name}
+                      title={`${g.name} · ${g.days}일 경과 · ${g.qty}개 — 누르면 Slack DM으로 반납 요청`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "6px",
+                        padding: "6px 12px", borderRadius: "999px",
+                        cursor: dmSending === g.name ? "wait" : "pointer",
+                        border: `1px solid ${sec.tone}`, background: C.card, color: C.text,
+                        fontSize: "12px", fontWeight: 700, opacity: dmSending === g.name ? 0.6 : 1,
+                      }}
+                    >
+                      {g.name}
+                      <span style={{ fontWeight: 800, color: sec.tone }}>{g.days}일</span>
+                      <span style={{ fontWeight: 500, opacity: 0.75 }}>{g.qty}개</span>
+                    </button>
+                  ))}
+                </div>
+                <div style={{ fontSize: "10.5px", color: C.label, marginTop: "7px" }}>
+                  이름을 누르면 해당 대여자에게 Slack DM으로 반납 요청을 보냅니다.
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
 
         {loading && !loaded ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>불러오는 중...</div>
