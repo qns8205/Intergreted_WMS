@@ -45,7 +45,18 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     errorSoft: isLightMode ? "rgba(220,38,38,0.10)" : "rgba(248,113,113,0.14)",
   };
 
-  const [items, setItems] = useState<UnreturnedItem[]>([]);
+  // 지난번 목록을 먼저 그려 화면이 비어 보이지 않게 한다 (응답이 오면 교체)
+  const CACHE_KEY = "wms_unreturned_v1";
+  const [items, setItems] = useState<UnreturnedItem[]>(() => {
+    try {
+      const raw = sessionStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed as UnreturnedItem[];
+      }
+    } catch (e) { /* 무시 */ }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
@@ -59,8 +70,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (!connected || !scriptUrl) { setLoaded(true); return; }
     if (!silent) setLoading(true);
     try {
-      setItems(await fetchUnreturnedItems(scriptUrl));
+      const list = await fetchUnreturnedItems(scriptUrl);
+      setItems(list);
       setLoaded(true);
+      try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch (e) { /* 무시 */ }
     } catch (e: any) {
       showToast(`미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
     } finally {
@@ -271,8 +284,22 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
       if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
       showToast(res.message || `${cartTotal}개를 반납 처리했습니다.`, "ok");
+
+      // 서버 재조회를 기다리지 않고 화면에서 먼저 반영한다 (처리 직후 바로 다음 작업이 가능하도록).
+      const done = new Map(cart.map((c) => [c.key, c.qty]));
+      setItems((prev) =>
+        prev
+          .map((it) => {
+            const q = done.get(`${it.sheetType}:${it.rowIndex}`);
+            if (q === undefined) return it;
+            const left = (it.quantity || 1) - Number(q);
+            return left > 0 ? { ...it, quantity: left } : null;
+          })
+          .filter(Boolean) as UnreturnedItem[]
+      );
       setCart([]);
-      await load();
+      addHistoryRef.current = [];
+      load(true); // 정합성은 백그라운드로 맞춘다
     } catch (e: any) {
       showToast(`반납 처리 실패: ${e.message}`, "error");
     } finally {
