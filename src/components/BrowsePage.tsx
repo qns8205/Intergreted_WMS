@@ -726,6 +726,19 @@ export default function BrowsePage({
                 <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 130px", minWidth: 0 }}>
                   <option value="">전체 슬롯</option>{whSlots.map((s) => <option key={s} value={s}>{s}번</option>)}
                 </select>
+                <button
+                  onClick={() => { setWhErr(""); loadWarehouse(); }}
+                  disabled={whLoading}
+                  title="목록 새로고침"
+                  style={{
+                    ...inputStyle, flex: "0 0 auto", padding: "11px 14px", cursor: whLoading ? "wait" : "pointer",
+                    display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700,
+                    color: C.accentText, opacity: whLoading ? 0.6 : 1,
+                  }}
+                >
+                  <RotateCcw size={14} style={whLoading ? { animation: "bsp-spin 0.9s linear infinite" } : undefined} />
+                  새로고침
+                </button>
               </>
             }
           >
