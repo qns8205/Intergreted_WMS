@@ -954,3 +954,37 @@ export async function fetchBatchDetail(scriptUrl: string, batchId: string): Prom
   const data = await apiGet(scriptUrl, "getBatchDetail", { batchId });
   return (data.items || []) as BatchDetailItem[];
 }
+
+/* ══════════ 페널티 목록 ══════════ */
+export interface PenaltyEntry {
+  name: string;
+  max: number;      // 이 사람에게 적용되는 최대 대여 종류
+  reason?: string;
+  until?: string;   // 비어 있으면 해제할 때까지
+}
+
+export async function fetchPenalties(scriptUrl: string): Promise<PenaltyEntry[]> {
+  const data = await apiGet(scriptUrl, "getPenalties", {});
+  return (data.items || []) as PenaltyEntry[];
+}
+
+// 이름 가운데를 가린다 (고성민 → 고*민, 김민 → 김*)
+export function maskName(name: string): string {
+  const n = String(name || "").trim();
+  if (!n) return "";
+  if (n.length === 1) return n;
+  if (n.length === 2) return `${n[0]}*`;
+  return `${n[0]}${"*".repeat(n.length - 2)}${n[n.length - 1]}`;
+}
+
+/* ══════════ 랜딩 공지 ══════════ */
+export interface NoticeData { text: string; updatedAt?: string; author?: string }
+
+export async function fetchNotice(scriptUrl: string): Promise<NoticeData> {
+  const data = await apiGet(scriptUrl, "getNotice", {});
+  return (data.notice || { text: "" }) as NoticeData;
+}
+
+export async function saveNotice(scriptUrl: string, text: string, author: string): Promise<{ success: boolean; message?: string }> {
+  return apiPost(scriptUrl, "saveNotice", { text, author });
+}
