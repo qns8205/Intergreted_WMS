@@ -5,6 +5,7 @@ import {
   postProcessReturn, fetchBorrowAppVersion,
   isVersionMismatchMessage, signalVersionOutdated,
   sendReturnReminderDm,
+  fetchScenarioObjectsForAdmin, ScenarioObjectAdmin, postRecordBorrow, nowString,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 
@@ -176,6 +177,84 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   }, [items]);
 
   const [dmSending, setDmSending] = useState<string | null>(null);
+
+  /* ── 추가 대여 (반납하러 온 김에 더 빌려가는 경우) ── */
+  const [lendTarget, setLendTarget] = useState<{ name: string; email: string; floor?: string; unit?: string } | null>(null);
+  const [lendCatalog, setLendCatalog] = useState<ScenarioObjectAdmin[]>([]);
+  const [lendSearch, setLendSearch] = useState("");
+  const [lendCart, setLendCart] = useState<{ id: string; name: string; quantity: number; stock: number }[]>([]);
+  const [lendSubmitting, setLendSubmitting] = useState(false);
+
+  async function openLend(g: { name: string; items: UnreturnedItem[] }) {
+    const first = g.items[0];
+    setLendTarget({
+      name: g.name,
+      email: String(first?.email || ""),
+      floor: first?.floor,
+      unit: first?.unit,
+    });
+    setLendCart([]);
+    setLendSearch("");
+    if (!lendCatalog.length && connected && scriptUrl) {
+      try {
+        setLendCatalog(await fetchScenarioObjectsForAdmin(scriptUrl));
+      } catch (e: any) {
+        showToast(`물품 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      }
+    }
+  }
+
+  const lendFiltered = useMemo(() => {
+    const q = lendSearch.trim();
+    const base = q ? lendCatalog.filter((it) => smartMatch([it.name, it.id, it.rootSlot], q)) : lendCatalog;
+    return base.slice(0, 60);
+  }, [lendCatalog, lendSearch]);
+
+  function addLend(it: ScenarioObjectAdmin) {
+    const stock = Number(it.stock) || 0;
+    if (stock <= 0) { showToast("재고가 없는 물품입니다.", "warn"); return; }
+    setLendCart((prev) => {
+      const i = prev.findIndex((c) => c.id === it.id);
+      if (i === -1) return [...prev, { id: it.id, name: it.name, quantity: 1, stock }];
+      if (prev[i].quantity >= stock) return prev;
+      return prev.map((c, idx) => (idx === i ? { ...c, quantity: c.quantity + 1 } : c));
+    });
+  }
+
+  async function submitLend() {
+    if (!lendTarget || !lendCart.length) { showToast("대여할 물품을 담아주세요.", "warn"); return; }
+    setLendSubmitting(true);
+    try {
+      const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+      // 이메일에서 소속과 사번을 되짚는다 (cfgw-kr은 사번@cfgw-kr.com)
+      const email = lendTarget.email;
+      const isCfgw = /@cfgw-kr\.com$/i.test(email);
+      const res = await postRecordBorrow(scriptUrl, [{
+        itemType: "general",
+        borrowerName: lendTarget.name,
+        affiliation: isCfgw ? "cfgw" : (email ? "configds" : "other"),
+        employeeId: isCfgw ? email.split("@")[0] : "",
+        knownEmail: email || undefined,
+        borrowDate: nowString(),
+        borrowPurpose: "반납 처리 중 추가 대여",
+        borrowedItems: lendCart.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity })),
+        generalOption: "추가 물품 대여",
+        floor: lendTarget.floor,
+        unit: lendTarget.unit,
+      }], ver);
+
+      if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+      if (!res.success) { showToast(res.message || "대여 처리 실패", "error"); return; }
+      showToast(res.message || `${lendTarget.name}님에게 ${lendCart.length}종을 추가 대여했습니다.`, "ok");
+      setLendTarget(null);
+      setLendCart([]);
+      load(true);
+    } catch (e: any) {
+      showToast(`추가 대여 실패: ${e.message}`, "error");
+    } finally {
+      setLendSubmitting(false);
+    }
+  }
 
   async function notifyBorrower(g: { name: string; email: string; days: number; items: UnreturnedItem[] }) {
     if (!connected || !scriptUrl) { showToast("연동이 필요합니다.", "warn"); return; }
@@ -523,6 +602,18 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       </div>
                       <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
                     </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openLend(g); }}
+                      title={`${g.name}님에게 물품 추가 대여`}
+                      style={{
+                        flexShrink: 0, display: "flex", alignItems: "center", gap: "4px",
+                        padding: "5px 11px", borderRadius: "999px", cursor: "pointer",
+                        border: `1px solid ${C.accent}`, background: C.card, color: C.accentText,
+                        fontSize: "11px", fontWeight: 700,
+                      }}
+                    >
+                      + 대여
+                    </button>
                     {on ? <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>선택됨</span> : null}
                   </div>
 
@@ -588,6 +679,99 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </div>
         )}
       </div>
+
+      {/* 추가 대여 모달 */}
+      {lendTarget ? (
+        <div
+          onClick={() => !lendSubmitting && setLendTarget(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(560px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+              <Package size={17} style={{ color: C.accentText }} />
+              <span style={{ fontSize: "15px", fontWeight: 800, flex: 1 }}>추가 대여 — {lendTarget.name}</span>
+              <button onClick={() => setLendTarget(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={19} /></button>
+            </div>
+            <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "12px" }}>
+              {[lendTarget.floor, lendTarget.unit].filter(Boolean).join(" · ") || "위치 정보 없음"} · 대여 기록과 Slack 알림은 본인 명의로 남습니다.
+            </div>
+
+            <div style={{ position: "relative", marginBottom: "10px" }}>
+              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input
+                value={lendSearch}
+                onChange={(e) => setLendSearch(e.target.value)}
+                placeholder="물품명 · ID · 위치로 검색"
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", paddingLeft: "36px" }}
+              />
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: "10px", marginBottom: "12px" }}>
+              {lendFiltered.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "12.5px", color: C.label }}>
+                  {lendCatalog.length === 0 ? "물품 목록을 불러오는 중입니다..." : "검색 결과가 없습니다."}
+                </div>
+              ) : (
+                lendFiltered.map((it) => {
+                  const stock = Number(it.stock) || 0;
+                  const picked = lendCart.find((c) => c.id === it.id)?.quantity || 0;
+                  return (
+                    <div
+                      key={it.id}
+                      onClick={() => addLend(it)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "9px", padding: "9px 12px",
+                        borderBottom: `1px solid ${C.border}`, cursor: stock > 0 ? "pointer" : "not-allowed",
+                        opacity: stock > 0 ? 1 : 0.45,
+                        background: picked > 0 ? C.accentSoft : "transparent",
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                        <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id} · {it.rootSlot || "위치 없음"}</div>
+                      </div>
+                      <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 700, color: stock > 0 ? C.success : C.error }}>재고 {stock}</span>
+                      {picked > 0 ? <span style={{ flexShrink: 0, fontSize: "11.5px", fontWeight: 800, color: C.accentText }}>{picked}개</span> : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {lendCart.length > 0 ? (
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "10px", marginBottom: "12px", display: "flex", flexDirection: "column", gap: "6px", maxHeight: "150px", overflowY: "auto" }}>
+                {lendCart.map((c, idx) => (
+                  <div key={c.id} style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                    <button onClick={() => setLendCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: Math.max(0, x.quantity - 1) } : x)).filter((x) => x.quantity > 0))}
+                      style={{ width: 24, height: 24, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1 }}>−</button>
+                    <span style={{ minWidth: "34px", textAlign: "center", fontSize: "12.5px", fontWeight: 800 }}>{c.quantity}<span style={{ fontSize: "10px", color: C.label }}>/{c.stock}</span></span>
+                    <button onClick={() => setLendCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: Math.min(x.stock, x.quantity + 1) } : x)))}
+                      style={{ width: 24, height: 24, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1 }}>+</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <button
+              onClick={submitLend}
+              disabled={!lendCart.length || lendSubmitting}
+              style={{
+                width: "100%", padding: "14px", borderRadius: "12px", border: "none",
+                background: lendCart.length ? C.accent : C.border, color: "#fff",
+                fontSize: "14.5px", fontWeight: 800,
+                cursor: lendCart.length && !lendSubmitting ? "pointer" : "not-allowed",
+                opacity: lendSubmitting ? 0.7 : 1,
+              }}
+            >
+              {lendSubmitting ? "처리 중..." : `대여 처리하기 (${lendCart.reduce((n, c) => n + c.quantity, 0)}개)`}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* ── 오른쪽: 반납 장바구니 (화면 절반) ── */}
       <div style={{ width: "50%", flexShrink: 0, borderLeft: `1px solid ${C.border}`, background: C.card, display: "flex", flexDirection: "column", minHeight: 0 }}>
