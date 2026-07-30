@@ -1013,3 +1013,22 @@ export async function setBorrowLock(
 ): Promise<{ success: boolean; lock?: BorrowLock; message?: string }> {
   return apiPost(scriptUrl, "setBorrowLock", units !== undefined ? { locked, reason, units } : { locked, reason });
 }
+
+/* ══════════ 창고물품(공구 및 부품류) 대여로그 ══════════ */
+export interface WarehouseLogEntry {
+  rowIndex: number;
+  timestamp: string;
+  type: string;      // 대여 | 반납 | 소모
+  location: string;
+  name: string;
+  quantity: number;
+  user: string;
+  note: string;
+}
+
+export async function fetchWarehouseLogs(scriptUrl: string, recentDays?: number): Promise<WarehouseLogEntry[]> {
+  const params: Record<string, string> = {};
+  if (recentDays && recentDays > 0) params.recentDays = String(recentDays);
+  const data = await apiGet(scriptUrl, "getWarehouseLogs", params, { timeoutMs: 60000, retries: 1 });
+  return (data.items || []) as WarehouseLogEntry[];
+}
