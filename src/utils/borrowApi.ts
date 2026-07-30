@@ -991,7 +991,14 @@ export async function saveNotice(scriptUrl: string, text: string, author: string
 
 /* ══════════ 대여 잠금 ══════════ */
 // 관리자가 대여를 일시 중단할 수 있다. 반납은 계속 가능하다.
-export interface BorrowLock { locked: boolean; reason?: string; at?: string }
+export interface UnitLock { floor: string; unit: string; reason?: string }
+export interface BorrowLock { locked: boolean; reason?: string; at?: string; units?: UnitLock[] }
+
+// 층/유닛 비교용 정규화 (표기 차이에 흔들리지 않게)
+export function unitLockKey(floor?: string, unit?: string): string {
+  const norm = (v?: string) => String(v ?? "").toUpperCase().replace(/[\s()[\]{}_\-.,/]/g, "");
+  return `${norm(floor)}|${norm(unit)}`;
+}
 
 export async function fetchBorrowLock(scriptUrl: string): Promise<BorrowLock> {
   const data = await apiGet(scriptUrl, "getBorrowLock", {});
@@ -1001,7 +1008,8 @@ export async function fetchBorrowLock(scriptUrl: string): Promise<BorrowLock> {
 export async function setBorrowLock(
   scriptUrl: string,
   locked: boolean,
-  reason: string
+  reason: string,
+  units?: UnitLock[]
 ): Promise<{ success: boolean; lock?: BorrowLock; message?: string }> {
-  return apiPost(scriptUrl, "setBorrowLock", { locked, reason });
+  return apiPost(scriptUrl, "setBorrowLock", units !== undefined ? { locked, reason, units } : { locked, reason });
 }
