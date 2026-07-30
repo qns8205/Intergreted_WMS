@@ -696,7 +696,7 @@ export interface SeatOccupancyEntry {
   batchId: string;
   sheetType: string;
   shift: "day" | "night";
-  items: { name: string; qty: number; returned: boolean }[];
+  items: { name: string; qty: number; returned: boolean; rowIndex?: number; sheetType?: "scenario" | "general"; returnDate?: string }[];
   allReturned: boolean;
 }
 
