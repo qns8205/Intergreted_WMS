@@ -196,6 +196,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     }
   }
 
+  // 물품별 경과일 (대여일 기준)
+  const daysSince = (borrowDate?: string) => {
+    const raw = String(borrowDate || "").trim();
+    if (!raw) return null;
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+  };
+
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
   const cartTotal = cart.reduce((n, c) => n + c.qty, 0);
@@ -529,7 +538,26 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           >
                             <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</div>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                                <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                {(() => {
+                                  const d = daysSince(it.borrowDate);
+                                  if (d === null || d < 2) return null;
+                                  const severe = d >= 7;
+                                  return (
+                                    <span
+                                      title={`${it.borrowDate} 대여 · ${d}일 경과`}
+                                      style={{
+                                        flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
+                                        color: severe ? C.error : C.warn,
+                                        background: severe ? C.errorSoft : C.warnSoft,
+                                      }}
+                                    >
+                                      {severe ? `⚠ ${d}일` : `${d}일`}
+                                    </span>
+                                  );
+                                })()}
+                              </div>
                               {it.location ? (
                                 <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
                                   <MapPin size={9} /> {it.location}
