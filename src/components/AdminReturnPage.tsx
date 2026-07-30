@@ -284,11 +284,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     }
   }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull]);
 
-  // ↓ / ↑ : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
+  // P / O : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
   const moveCursor = useCallback((delta: number) => {
     if (!activeItems.length) return;
     setCursor((prev) => Math.max(0, Math.min(activeItems.length - 1, prev + delta)));
   }, [activeItems.length]);
+
+  // 커서가 화면 밖으로 나가지 않도록 따라간다
+  const cursorElRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    cursorElRef.current?.scrollIntoView({ block: "nearest" });
+  }, [cursor, selectedBorrower]);
 
   // 최신 핸들러를 참조로 들고 있어야 키 이벤트가 오래된 값을 잡지 않는다
   const handlersRef = useRef({ addAtCursor, undoOne, clearAll, moveCursor, submit: async () => {} });
@@ -317,9 +323,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       // A: 맨 위 물품 한 개 담기
       if (k === "a" || e.key === "ㅁ") { e.preventDefault(); handlersRef.current.addAtCursor(); return; }
 
-      // ↑ / ↓ : 담지 않고 선택 위치만 이동
-      if (e.key === "ArrowDown") { e.preventDefault(); handlersRef.current.moveCursor(1); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); handlersRef.current.moveCursor(-1); return; }
+      // P: 담지 않고 다음 물품으로 이동 (건너뛰기)
+      // O: 이전 물품으로 이동
+      // 화살표 키는 페이지가 함께 스크롤되어 쓰지 않는다.
+      if (k === "p" || e.key === "ㅔ") { e.preventDefault(); handlersRef.current.moveCursor(1); return; }
+      if (k === "o" || e.key === "ㅐ") { e.preventDefault(); handlersRef.current.moveCursor(-1); return; }
 
       // B: 반납 완료
       if (k === "b" || e.key === "ㅠ") { e.preventDefault(); handlersRef.current.submit(); return; }
@@ -436,8 +444,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          <b style={{ color: C.accentText }}>A</b> 선택한 물품 한 개 담기 · <b style={{ color: C.accentText }}>↑↓</b> 담지 않고 이동 ·{" "}
-          <b style={{ color: C.accentText }}>B</b> 반납 완료 · <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
+          <b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
+          <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
+          <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
 
         {/* 반납이 늦은 사람: 7일 이상 / 2일 이상 */}
@@ -527,6 +536,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                         return (
                           <div
                             key={`${it.sheetType}-${it.rowIndex}`}
+                            ref={atCursor ? cursorElRef : undefined}
                             onClick={() => { setCursor(idx); if (!done) addOne(it); }}
                             style={{
                               display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
