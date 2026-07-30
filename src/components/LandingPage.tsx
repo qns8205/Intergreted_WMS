@@ -43,7 +43,7 @@ function useNotice(scriptUrl: string, connected: boolean) {
 }
 
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "return" | "browse" | "mylookup" | "login") => void;
+  onNavigate: (view: "borrow" | "browse" | "login") => void;
   isLightMode: boolean;
   isMobile?: boolean;
   scriptUrl: string;
@@ -280,22 +280,10 @@ export default function LandingPage({
             desc: "SID 기반 대여와 일반 대여를 신청합니다. 신청 내역은 Slack에 자동 공유됩니다.",
           },
           {
-            key: "return" as const,
-            icon: <PackageCheck size={24} />,
-            title: "반납",
-            desc: "대여 중인 물품을 선택해 반납 처리합니다. 부분 수량 반납도 가능합니다.",
-          },
-          {
             key: "browse" as const,
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
             desc: "시나리오 물품과 공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
-          },
-          {
-            key: "mylookup" as const,
-            icon: <PackageOpen size={24} />,
-            title: "내 대여 조회",
-            desc: "내가 대여 중인 시나리오·공구 및 부품류와 위치를 확인합니다.",
           },
         ].map((c) => (
           <div
