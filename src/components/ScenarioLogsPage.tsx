@@ -8,6 +8,7 @@ import {
   fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
   isVersionMismatchMessage, signalVersionOutdated, postSwapBorrowItem,
+  fetchWarehouseLogs, WarehouseLogEntry,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -87,6 +88,35 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [historyLoading, setHistoryLoading] = useState(false);
   // 전체 기간 이력까지 다 받아왔는지 (검색 범위 안내용)
   const [historyComplete, setHistoryComplete] = useState(false);
+
+  // 분야 탭: 시나리오 물품 / 공구 및 부품류
+  const [category, setCategory] = useState<"scenario" | "warehouse">("scenario");
+  // 시나리오: 대여 | 반납, 공구: 대여 | 반납 | 소모
+  const [scenarioTab, setScenarioTab] = useState<"borrow" | "return">("borrow");
+  const [whTab, setWhTab] = useState<"대여" | "반납" | "소모">("대여");
+  const [whLogs, setWhLogs] = useState<WarehouseLogEntry[]>([]);
+  const [whLogsLoading, setWhLogsLoading] = useState(false);
+  const [whLogsLoaded, setWhLogsLoaded] = useState(false);
+
+  // 공구 탭을 처음 열 때 한 번만 불러온다
+  useEffect(() => {
+    if (category !== "warehouse" || whLogsLoaded || whLogsLoading) return;
+    if (!connected || !scriptUrl) { setWhLogsLoaded(true); return; }
+    setWhLogsLoading(true);
+    fetchWarehouseLogs(scriptUrl)
+      .then((list) => { setWhLogs(list); setWhLogsLoaded(true); })
+      .catch((e: any) => showToast(`공구 및 부품류 로그를 불러오지 못했습니다: ${e.message}`, "error"))
+      .finally(() => setWhLogsLoading(false));
+  }, [category, whLogsLoaded, whLogsLoading, connected, scriptUrl]);
+
+  const whFilteredLogs = useMemo(() => {
+    const q = search.trim();
+    return whLogs.filter((l) => {
+      if (l.type !== whTab) return false;
+      if (!q) return true;
+      return smartMatch([l.name, l.location, l.user, l.note], q);
+    });
+  }, [whLogs, whTab, search]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -236,8 +266,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       const t = Date.parse(String(v || "").trim().replace(" ", "T"));
       return isNaN(t) ? 0 : t;
     };
-    return Array.from(map.values()).sort((a, b) => ts(b.date) - ts(a.date));
-  }, [filtered]);
+    return Array.from(map.values())
+      // 시나리오 탭(대여/반납)에 맞는 묶음만 남긴다
+      .filter((g) => (scenarioTab === "return" ? g.isReturnGroup : !g.isReturnGroup))
+      .sort((a, b) => ts(b.date) - ts(a.date));
+  }, [filtered, scenarioTab]);
 
   // 물품별 보기: 현재 미반납(대여 중)인 항목만 물품 기준으로 묶는다.
   const byItemGroups = useMemo(() => {
@@ -564,30 +597,84 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         </div>
       ) : null}
 
+      {/* 분야 탭: 시나리오 물품 / 공구 및 부품류 */}
+      <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
+        {([["scenario", "🧩 시나리오 물품"], ["warehouse", "🔧 공구 및 부품류"]] as const).map(([v, label]) => {
+          const on = category === v;
+          return (
+            <button
+              key={v}
+              onClick={() => setCategory(v)}
+              style={{
+                flex: 1, padding: "11px", borderRadius: "12px", cursor: "pointer",
+                fontSize: "13.5px", fontWeight: 800,
+                border: `1px solid ${on ? C.accent : C.border}`,
+                background: on ? C.accentSoft : C.card,
+                color: on ? C.accentText : C.label,
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 하위 탭 */}
+      <div style={{ display: "flex", gap: "5px", marginBottom: "10px", flexWrap: "wrap" }}>
+        {category === "scenario"
+          ? ([["borrow", "대여"], ["return", "반납"]] as const).map(([v, label]) => {
+              const on = scenarioTab === v;
+              return (
+                <button key={v} onClick={() => setScenarioTab(v)}
+                  style={{ padding: "7px 16px", borderRadius: "999px", cursor: "pointer", fontSize: "12.5px", fontWeight: 700,
+                    border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accent : C.card, color: on ? "#fff" : C.label }}>
+                  {label}
+                </button>
+              );
+            })
+          : (["대여", "반납", "소모"] as const).map((v) => {
+              const on = whTab === v;
+              const n = whLogs.filter((l) => l.type === v).length;
+              return (
+                <button key={v} onClick={() => setWhTab(v)}
+                  style={{ padding: "7px 16px", borderRadius: "999px", cursor: "pointer", fontSize: "12.5px", fontWeight: 700,
+                    border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accent : C.card, color: on ? "#fff" : C.label }}>
+                  {v} {whLogsLoaded ? <span style={{ fontWeight: 500, opacity: 0.8 }}>{n}</span> : null}
+                </button>
+              );
+            })}
+      </div>
+
       {/* 필터 (스크롤해도 고정) */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "8px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", padding: "10px 0" }}>
         <div style={{ position: "relative", flex: "2 1 240px", minWidth: 0 }}>
           <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품 · 대여자 · SID · 목적 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", width: "100%" }} />
         </div>
+        {category === "scenario" ? (
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
           <option value="all">전체 상태</option>
           <option value="unreturned">미반납만</option>
           <option value="returned">반납완료만</option>
         </select>
+        ) : null}
+        {category === "scenario" ? (
         <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as any)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
           <option value="all">전체 유형</option>
           <option value="scenario">SID 대여</option>
           <option value="general">일반 대여</option>
         </select>
+        ) : null}
+        {category === "scenario" ? (
         <select value={borrowerFilter} onChange={(e) => setBorrowerFilter(e.target.value)} style={{ ...inputStyle, flex: "1 1 120px", minWidth: 0 }}>
           <option value="">전체 대여자</option>
           {borrowers.map((b) => <option key={b} value={b}>{b}</option>)}
         </select>
-        <button onClick={load} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
+        ) : null}
+        <button onClick={() => { if (category === "warehouse") { setWhLogsLoaded(false); } else { load(); } }} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
       </div>
       {/* 장기 체납자: 미반납 상태로 오래 지난 대여자를 맨 위에 모아 보여준다 */}
-      {loaded && overdueBorrowers.length > 0 ? (
+      {category === "scenario" && loaded && overdueBorrowers.length > 0 ? (
         <div style={{ marginBottom: "12px", border: `1px solid ${C.error}55`, background: C.errorSoft, borderRadius: "14px", padding: "12px 14px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "7px", marginBottom: "10px" }}>
             <AlertTriangle size={15} style={{ color: C.error }} />
@@ -626,7 +713,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       ) : null}
 
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
-        {loaded ? (
+        {category === "warehouse" ? (
+          whLogsLoaded ? `${whFilteredLogs.length}건 (최신순)` : ""
+        ) : loaded ? (
           <>
             {`${filtered.length} / ${logs.length}건 (최신순)`}
             {historyLoading ? (
@@ -640,7 +729,44 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         ) : ""}
       </div>
 
-      {loading && !loaded ? (
+      {/* 공구 및 부품류 로그 */}
+      {category === "warehouse" ? (
+        whLogsLoading && !whLogsLoaded ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
+        ) : whFilteredLogs.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
+            <Check size={36} style={{ color: C.border, marginBottom: "8px" }} />
+            <div>표시할 {whTab} 기록이 없습니다.</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {whFilteredLogs.slice(0, visibleCount).map((l) => {
+              const tone = l.type === "반납" ? C.success : l.type === "소모" ? C.warn : C.accentText;
+              const toneBg = l.type === "반납" ? C.successSoft : l.type === "소모" ? C.warnSoft : C.accentSoft;
+              return (
+                <div key={`${l.rowIndex}`} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card }}>
+                  <span style={{ fontSize: "11px", fontWeight: 800, color: tone, background: toneBg, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}>{l.type}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: "13.5px", fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {l.name}
+                      {l.location ? <span style={{ fontSize: "11px", color: C.warn, fontFamily: "monospace", marginLeft: "6px" }}>{l.location}</span> : null}
+                    </div>
+                    <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
+                      {l.timestamp}{l.user ? ` · ${l.user}` : ""}{l.note ? ` · ${l.note}` : ""}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: "13px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>{l.quantity}개</span>
+                </div>
+              );
+            })}
+            {whFilteredLogs.length > visibleCount ? (
+              <button onClick={() => setVisibleCount((v) => v + 30)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                더 보기 ({visibleCount} / {whFilteredLogs.length}건 표시 중)
+              </button>
+            ) : null}
+          </div>
+        )
+      ) : loading && !loaded ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
