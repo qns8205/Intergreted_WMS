@@ -3,7 +3,7 @@ import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
-import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown, PackageOpen } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown, PackageOpen, Plus } from "lucide-react";
 import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
@@ -14,9 +14,11 @@ interface Props {
   onAdjustStock?: (item: InventoryItem) => void;
   onManageSets?: () => void;
   onImageClick?: (url: string) => void;
+  // 랙/슬롯별로 새 물품을 추가할 때 (그 위치를 미리 채워 등록 화면을 연다)
+  onAddItem?: (presetLocation: string) => void;
 }
 
-export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onManageSets, onImageClick }: Props) {
+export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onManageSets, onImageClick, onAddItem }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
@@ -128,19 +130,37 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
             return (
               <section key={groupKey} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
                 {/* 그룹 헤더 */}
-                <button
+                <div
                   onClick={() => toggle(groupKey)}
                   style={{
                     width: "100%", display: "flex", alignItems: "center", gap: "10px", padding: "13px 16px",
                     background: C.cardSub, border: "none", borderBottom: isCollapsed ? "none" : `1px solid ${C.border}`,
-                    cursor: "pointer", color: C.text,
+                    cursor: "pointer", color: C.text, boxSizing: "border-box",
                   }}
                 >
                   {isCollapsed ? <ChevronRight size={17} style={{ color: C.label }} /> : <ChevronDown size={17} style={{ color: C.label }} />}
                   <span style={{ width: 30, height: 30, borderRadius: "8px", background: C.accentSoft, color: C.accentText, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: groupMode === "rack" ? "13px" : "10px", flexShrink: 0, fontFamily: groupMode === "slot" ? "monospace" : "inherit" }}>{groupMode === "rack" ? groupKey : <MapPin size={14} />}</span>
                   <span style={{ fontWeight: 800, fontSize: "15px", flex: 1, textAlign: "left", fontFamily: groupMode === "slot" ? "monospace" : "inherit" }}>{groupMode === "rack" ? `${groupKey}랙` : groupKey}</span>
                   <span style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "20px", padding: "3px 11px" }}>{items.length}개</span>
-                </button>
+                  {isAdmin && onAddItem ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation(); // 헤더 접기와 겹치지 않게
+                        // 랙 그룹이면 "A-" 까지, 슬롯 그룹이면 슬롯 값을 그대로 채워준다
+                        onAddItem(groupMode === "rack" ? `${groupKey}-` : groupKey);
+                      }}
+                      title={groupMode === "rack" ? `${groupKey}랙에 새 물품 추가` : `${groupKey}에 새 물품 추가`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "4px", flexShrink: 0,
+                        padding: "5px 11px", borderRadius: "8px", cursor: "pointer",
+                        border: `1px solid ${C.accent}`, background: C.card, color: C.accentText,
+                        fontSize: "11.5px", fontWeight: 700,
+                      }}
+                    >
+                      <Plus size={13} /> 물품 추가
+                    </button>
+                  ) : null}
+                </div>
 
                 {/* 물품 그리드 */}
                 {!isCollapsed ? (
