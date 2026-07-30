@@ -1,68 +1,45 @@
 import React, { useState, useEffect } from "react";
-import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, TrendingDown } from "lucide-react";
-import { fetchScenarioAllLogs, fetchScenarioObjectsForAdmin } from "../utils/borrowApi";
+import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { fetchNotice, NoticeData } from "../utils/borrowApi";
 
-// 가장 적게 대여된 물품: 랜딩 진입 때마다 무거운 전체 대장 조회를 반복하지 않도록
-// 모듈 레벨에서 5분간 캐시한다. 실패해도 조용히 숨긴다(랜딩 화면의 부가 정보일 뿐이므로).
-const bottomItemsCache: { key: string; at: number; items: [string, number][] } = { key: "", at: 0, items: [] };
+// 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
+const PENALTY_RULES: { label: string; limit: string }[] = [
+  { label: "오브젝트를 보관함에 넣지 않고 방치", limit: "10종류로 제한 (1일)" },
+  { label: "오브젝트를 분실", limit: "10종류로 제한 (7일)" },
+  { label: "1주 이상 연체", limit: "5종류로 제한 (7일)" },
+];
 
-type BottomItemsState = {
-  items: [string, number][];
-  loading: boolean;
-  failed: boolean;
-};
+// 관리자 공지: 랜딩 진입마다 다시 받지 않도록 3분 캐시한다.
+const noticeCache: { key: string; at: number; data: NoticeData } = { key: "", at: 0, data: { text: "" } };
 
-function useBottomItems(scriptUrl: string, connected: boolean): BottomItemsState {
-  const cached = bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000;
-  const [items, setItems] = useState<[string, number][]>(cached ? bottomItemsCache.items : []);
-  // 연동은 되어 있지만 아직 캐시가 없으면 곧바로 로딩 중 상태로 시작한다.
-  // → 카드가 나중에 "툭" 튀어나오지 않고, 랜딩 화면과 함께 스켈레톤으로 바로 보인다.
+function useNotice(scriptUrl: string, connected: boolean) {
+  const cached = noticeCache.key === scriptUrl && Date.now() - noticeCache.at < 3 * 60 * 1000;
+  const [notice, setNotice] = useState<NoticeData>(cached ? noticeCache.data : { text: "" });
   const [loading, setLoading] = useState(!!connected && !!scriptUrl && !cached);
-  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     if (!connected || !scriptUrl) { setLoading(false); return; }
-    if (bottomItemsCache.key === scriptUrl && Date.now() - bottomItemsCache.at < 5 * 60 * 1000) {
-      setItems(bottomItemsCache.items);
+    if (noticeCache.key === scriptUrl && Date.now() - noticeCache.at < 3 * 60 * 1000) {
+      setNotice(noticeCache.data);
       setLoading(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
-    setFailed(false);
-    (async () => {
-      try {
-        const [logs, catalog] = await Promise.all([
-          fetchScenarioAllLogs(scriptUrl),
-          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
-        ]);
-        const byItem: Record<string, number> = {};
-        // 카탈로그의 모든 물품을 먼저 0으로 깔아둔다 — 한 번도 대여된 적 없는 물품도 순위에 포함되도록.
-        catalog.forEach((it) => {
-          const nm = String(it.name || "").trim();
-          if (nm) byItem[nm] = 0;
-        });
-        logs.forEach((l) => {
-          const nm = String(l.itemName || "").trim();
-          if (!nm || nm === "(물품 미등록)") return;
-          byItem[nm] = (byItem[nm] || 0) + (l.quantity || 1);
-        });
-        // "가장 적게 대여된 물품" 랭킹에서 제외하도록 표시된 물품은 걸러낸다.
-        const excludedNames = new Set(catalog.filter((it) => it.excludeFromRanking).map((it) => String(it.name || "").trim()));
-        const bottom = Object.entries(byItem).filter(([name]) => !excludedNames.has(name)).sort((a, b) => a[1] - b[1]).slice(0, 20) as [string, number][];
-        bottomItemsCache.key = scriptUrl;
-        bottomItemsCache.at = Date.now();
-        bottomItemsCache.items = bottom;
-        if (!cancelled) { setItems(bottom); setLoading(false); }
-      } catch {
-        // 조용히 무시하되, 로딩 스켈레톤은 접어서 실패를 티내지 않는다(랜딩 화면의 부가 정보일 뿐이므로).
-        if (!cancelled) { setLoading(false); setFailed(true); }
-      }
-    })();
+    fetchNotice(scriptUrl)
+      .then((n) => {
+        if (cancelled) return;
+        noticeCache.key = scriptUrl;
+        noticeCache.at = Date.now();
+        noticeCache.data = n;
+        setNotice(n);
+      })
+      .catch(() => { /* 랜딩의 부가 정보이므로 실패는 조용히 숨긴다 */ })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [scriptUrl, connected]);
 
-  return { items, loading, failed };
+  return { notice, loading };
 }
 
 interface LandingPageProps {
@@ -93,25 +70,7 @@ export default function LandingPage({
   onOpenSetup,
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
-  const { items: bottomItems, loading: bottomLoading } = useBottomItems(scriptUrl, connected);
-  const [bottomPage, setBottomPage] = useState(0);
-  const bottomPageSize = isMobile ? 5 : 10;
-  const bottomSlideIntervalMs = 10000;
-  const bottomPageCount = Math.max(1, Math.ceil(bottomItems.length / bottomPageSize));
-
-  // 페이지가 여러 개면 몇 초마다 자동으로 다음 페이지로 슬라이드
-  useEffect(() => {
-    if (bottomPageCount <= 1) return;
-    const timer = setInterval(() => {
-      setBottomPage((p) => (p + 1) % bottomPageCount);
-    }, bottomSlideIntervalMs);
-    return () => clearInterval(timer);
-  }, [bottomPageCount, bottomSlideIntervalMs]);
-
-  // 목록이 바뀌어 페이지 수가 줄어들면 범위를 벗어나지 않도록 보정
-  useEffect(() => {
-    if (bottomPage >= bottomPageCount) setBottomPage(0);
-  }, [bottomPageCount, bottomPage]);
+  const { notice } = useNotice(scriptUrl, connected);
 
   return (
     <div
@@ -168,87 +127,62 @@ export default function LandingPage({
         >
           대여 · 반납 · 관리
         </h1>
-        {connected && (bottomLoading || bottomItems.length > 0) ? (
+        {/* 상단: 페널티 기준 안내 (항상 고정) */}
+        <div
+          style={{
+            marginTop: "4px",
+            padding: "12px 16px",
+            borderRadius: "14px",
+            border: `1px solid ${isLightMode ? "#fed7aa" : "#7c2d12"}`,
+            background: isLightMode ? "#fffbf5" : "#1a1410",
+            boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
+            maxWidth: "420px",
+            width: "100%",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#c2410c" : "#fdba74", marginBottom: "6px" }}>
+            <ShieldAlert size={14} />
+            대여 기간 페널티 안내
+          </div>
+          <div style={{ fontSize: "11.5px", color: isLightMode ? "#78716c" : "#a8a29e", lineHeight: 1.6, marginBottom: "9px" }}>
+            앞으로는 <b style={{ color: isLightMode ? "#c2410c" : "#fdba74" }}>사전 통보 없이</b> 아래 기준으로 대여 가능 종류가 제한될 수 있습니다.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {PENALTY_RULES.map((r) => (
+              <div key={r.label} style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "12px" }}>
+                <span style={{ flex: 1, minWidth: 0, color: isLightMode ? "#111827" : "#e2e8f0", lineHeight: 1.45 }}>{r.label}</span>
+                <span style={{ flexShrink: 0, fontWeight: 800, fontSize: "11px", color: isLightMode ? "#c2410c" : "#fdba74" }}>{r.limit}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 하단: 관리자가 작성한 공지 */}
+        {connected && notice.text ? (
           <div
             style={{
-              display: "inline-block",
-              textAlign: "left",
-              marginTop: "4px",
+              marginTop: "10px",
               padding: "12px 16px",
               borderRadius: "14px",
-              border: `1px solid ${isLightMode ? "#e2e8f0" : "#1e293b"}`,
-              background: isLightMode ? "#ffffff" : "#0f172a",
+              border: `1px solid ${isLightMode ? "#bfdbfe" : "#1e3a8a"}`,
+              background: isLightMode ? "#f5f9ff" : "#0f1729",
               boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
               maxWidth: "420px",
               width: "100%",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#475569" : "#94a3b8", marginBottom: "8px" }}>
-              <TrendingDown size={14} style={{ color: isLightMode ? "#2563eb" : "#60a5fa" }} />
-              가장 적게 대여된 물품
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd", marginBottom: "7px" }}>
+              <ClipboardList size={14} />
+              공지사항
+              {notice.updatedAt ? (
+                <span style={{ marginLeft: "auto", fontSize: "10.5px", fontWeight: 600, color: isLightMode ? "#94a3b8" : "#64748b" }}>
+                  {notice.updatedAt}{notice.author ? ` · ${notice.author}` : ""}
+                </span>
+              ) : null}
             </div>
-            {bottomLoading ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                {[0, 1, 2].map((i) => (
-                  <div
-                    key={i}
-                    style={{
-                      height: "13px",
-                      borderRadius: "6px",
-                      width: i === 0 ? "70%" : i === 1 ? "55%" : "62%",
-                      background: isLightMode ? "#e2e8f0" : "#1e293b",
-                      animation: "landingSkeletonPulse 1.2s ease-in-out infinite",
-                      animationDelay: `${i * 0.12}s`,
-                    }}
-                  />
-                ))}
-                <style>{`@keyframes landingSkeletonPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }`}</style>
-              </div>
-            ) : (
-              <>
-                <div style={{ position: "relative", overflow: "hidden" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      transform: `translateX(-${bottomPage * 100}%)`,
-                      transition: "transform 0.5s ease",
-                    }}
-                  >
-                    {Array.from({ length: bottomPageCount }).map((_, pageIdx) => (
-                      <div key={pageIdx} style={{ flex: "0 0 100%", display: "flex", flexDirection: "column", gap: "4px" }}>
-                        {bottomItems.slice(pageIdx * bottomPageSize, pageIdx * bottomPageSize + bottomPageSize).map(([name, qty]) => (
-                          <div key={name} style={{ display: "flex", justifyContent: "space-between", gap: "10px", fontSize: "12px" }}>
-                            <span style={{ color: isLightMode ? "#111827" : "#e2e8f0", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
-                            <span style={{ color: isLightMode ? "#64748b" : "#94a3b8", flexShrink: 0 }}>{qty}개</span>
-                          </div>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                {bottomPageCount > 1 ? (
-                  <div style={{ display: "flex", justifyContent: "center", gap: "5px", marginTop: "10px" }}>
-                    {Array.from({ length: bottomPageCount }).map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setBottomPage(i)}
-                        aria-label={`${i + 1}번째 페이지`}
-                        style={{
-                          width: i === bottomPage ? "14px" : "6px",
-                          height: "6px",
-                          borderRadius: "999px",
-                          border: "none",
-                          padding: 0,
-                          cursor: "pointer",
-                          background: i === bottomPage ? (isLightMode ? "#2563eb" : "#60a5fa") : (isLightMode ? "#cbd5e1" : "#334155"),
-                          transition: "all 0.3s ease",
-                        }}
-                      />
-                    ))}
-                  </div>
-                ) : null}
-              </>
-            )}
+            <div style={{ fontSize: "12.5px", color: isLightMode ? "#111827" : "#e2e8f0", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+              {notice.text}
+            </div>
           </div>
         ) : null}
       </div>
