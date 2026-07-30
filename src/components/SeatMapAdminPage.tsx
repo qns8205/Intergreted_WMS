@@ -5,6 +5,7 @@ import {
 import {
   SeatFloor, SeatMap, fetchSeatMap, saveSeatMap,
   SeatOccupancyEntry, fetchSeatOccupancy, DEFAULT_SEAT_MAP_DATA,
+  postProcessReturn, fetchBorrowAppVersion, isVersionMismatchMessage, signalVersionOutdated,
 } from "../utils/borrowApi";
 
 interface Props {
@@ -193,10 +194,50 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
     persist(floors.map((f) => (f.id === activeFloor.id ? { ...f, units: f.units.map((u) => (u.row === row && u.col === col ? { ...u, exempt: !u.exempt } : u)) } : f)));
   }
 
+  // 대여 기록 모달: 대여 / 반납 탭
+  const [occTab, setOccTab] = useState<"borrow" | "return">("borrow");
+  const [occReturning, setOccReturning] = useState(false);
+
+  function reloadOccupancy() {
+    if (!occModal || !connected || !scriptUrl) return;
+    setOccLoading(true);
+    fetchSeatOccupancy(scriptUrl, occModal.floor, occModal.unit, shift)
+      .then(setOccEntries)
+      .catch((e) => showToast(`조회 실패: ${e.message}`, "error"))
+      .finally(() => setOccLoading(false));
+  }
+
+  // 미반납 물품을 이 화면에서 바로 반납 처리한다.
+  async function returnFromSeat(item: { name: string; qty: number; rowIndex?: number; sheetType?: "scenario" | "general" }) {
+    if (!item.rowIndex || !item.sheetType) {
+      showToast("이 기록에는 반납에 필요한 정보가 없습니다. 대여/반납 대장에서 처리해주세요.", "warn");
+      return;
+    }
+    if (!window.confirm(`'${item.name}' ${item.qty}개를 반납 처리할까요?`)) return;
+    setOccReturning(true);
+    try {
+      const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+      const res = await postProcessReturn(
+        scriptUrl,
+        [{ sheetType: item.sheetType, rowIndex: item.rowIndex, quantity: item.qty }],
+        ver
+      );
+      if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+      if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
+      showToast(res.message || "반납 처리했습니다.", "ok");
+      reloadOccupancy();
+    } catch (e: any) {
+      showToast(`반납 처리 실패: ${e.message}`, "error");
+    } finally {
+      setOccReturning(false);
+    }
+  }
+
   function openOccupancy(unitLabel: string) {
     if (!activeFloor) return;
     const floorKey = activeFloor.name || activeFloor.id;
     setOccModal({ floor: floorKey, unit: unitLabel });
+    setOccTab("borrow");
     setOccLoading(true);
     if (connected && scriptUrl) {
       fetchSeatOccupancy(scriptUrl, floorKey, unitLabel, shift)
@@ -382,14 +423,31 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
               </div>
               <button onClick={() => setOccModal(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
+            {/* 대여 / 반납 탭 */}
+            <div style={{ display: "flex", gap: "6px", padding: "12px 20px 0" }}>
+              {([["borrow", "대여"], ["return", "반납"]] as const).map(([v, label]) => {
+                const on = occTab === v;
+                const n = occEntries.filter((e) => (v === "return" ? e.allReturned : !e.allReturned)).length;
+                return (
+                  <button key={v} onClick={() => setOccTab(v)}
+                    style={{ padding: "7px 16px", borderRadius: "999px", cursor: "pointer", fontSize: "12.5px", fontWeight: 700,
+                      border: `1px solid ${on ? C.accent : C.border}`, background: on ? C.accent : C.card, color: on ? "#fff" : C.label }}>
+                    {label} <span style={{ fontWeight: 500, opacity: 0.85 }}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+
             <div style={{ padding: "16px 20px" }}>
               {occLoading ? (
                 <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "12px" }}>불러오는 중...</div>
-              ) : occEntries.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>이 시프트에 이 유닛에서 대여한 기록이 없습니다.</div>
+              ) : occEntries.filter((e) => (occTab === "return" ? e.allReturned : !e.allReturned)).length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>
+                  이 시프트에 이 유닛의 {occTab === "return" ? "반납" : "미반납"} 기록이 없습니다.
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                  {occEntries.map((e, i) => (
+                  {occEntries.filter((e) => (occTab === "return" ? e.allReturned : !e.allReturned)).map((e, i) => (
                     <div key={i} style={{ padding: "12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 800, fontSize: "13.5px", color: C.text, flex: 1 }}>
@@ -412,10 +470,25 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                         <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
                           {e.items.map((it, j) => (
                             <div key={j} style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: C.text }}>
-                              <Package size={11} style={{ color: C.label, flexShrink: 0 }} /> {it.name} <span style={{ color: C.label }}>x{it.qty}</span>
-                              <span style={{ fontSize: "10px", fontWeight: 700, color: it.returned ? C.success : C.warn, marginLeft: "auto" }}>
-                                {it.returned ? "반납됨" : "미반납"}
+                              <Package size={11} style={{ color: C.label, flexShrink: 0 }} />
+                              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                {it.name} <span style={{ color: C.label }}>x{it.qty}</span>
                               </span>
+                              {it.returned ? (
+                                <span style={{ fontSize: "10px", fontWeight: 700, color: C.success, flexShrink: 0 }}>반납됨</span>
+                              ) : (
+                                <button
+                                  onClick={() => returnFromSeat(it)}
+                                  disabled={occReturning}
+                                  style={{
+                                    flexShrink: 0, padding: "3px 10px", borderRadius: "999px", cursor: occReturning ? "not-allowed" : "pointer",
+                                    border: `1px solid ${C.accent}`, background: C.accent, color: "#fff",
+                                    fontSize: "10.5px", fontWeight: 800, opacity: occReturning ? 0.6 : 1,
+                                  }}
+                                >
+                                  반납 처리
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
