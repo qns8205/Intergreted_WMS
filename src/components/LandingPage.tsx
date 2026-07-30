@@ -142,8 +142,9 @@ export default function LandingPage({
               borderRadius: "14px",
               border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
               background: isLightMode ? "#fef2f2" : "#1f1113",
-              maxWidth: "420px",
+              maxWidth: "480px",
               width: "100%",
+              textAlign: "left",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5", marginBottom: "5px" }}>
@@ -166,8 +167,9 @@ export default function LandingPage({
               borderRadius: "14px",
               border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
               background: isLightMode ? "#fef2f2" : "#1f1113",
-              maxWidth: "420px",
+              maxWidth: "480px",
               width: "100%",
+              textAlign: "left",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5", marginBottom: "6px" }}>
@@ -200,8 +202,9 @@ export default function LandingPage({
             border: `1px solid ${isLightMode ? "#fed7aa" : "#7c2d12"}`,
             background: isLightMode ? "#fffbf5" : "#1a1410",
             boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            maxWidth: "420px",
+            maxWidth: "480px",
             width: "100%",
+              textAlign: "left",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#c2410c" : "#fdba74", marginBottom: "6px" }}>
@@ -231,8 +234,9 @@ export default function LandingPage({
               border: `1px solid ${isLightMode ? "#bfdbfe" : "#1e3a8a"}`,
               background: isLightMode ? "#f5f9ff" : "#0f1729",
               boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-              maxWidth: "420px",
+              maxWidth: "480px",
               width: "100%",
+              textAlign: "left",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd", marginBottom: "7px" }}>
