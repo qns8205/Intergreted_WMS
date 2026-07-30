@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import AdminReturnPage from "./components/AdminReturnPage";
 import ItemSetManageModal from "./components/ItemSetManageModal";
@@ -168,18 +168,22 @@ export default function App() {
   async function openNoticeModal() {
     setNoticeModalOpen(true);
     try {
-      const n = await fetchNotice(scriptUrl);
-      setNoticeDraft(n.text || "");
-    } catch (e) { /* 기존 공지가 없으면 빈 값으로 시작 */ }
+      const list = await fetchNotices(scriptUrl);
+      setNoticeDrafts(list.length ? list : [{ title: "", text: "" }]);
+    } catch (e) {
+      setNoticeDrafts([{ title: "", text: "" }]);
+    }
   }
 
   async function submitNotice() {
     setNoticeSaving(true);
     try {
-      const res = await saveNotice(scriptUrl, noticeDraft, currentUser?.name || "관리자");
+      const items = noticeDrafts.filter((n) => (n.title || "").trim() || (n.text || "").trim());
+      const res = await saveNotices(scriptUrl, items, currentUser?.name || "관리자");
       if (res.success) {
-        showToast("공지를 저장했습니다. 랜딩 화면에 표시됩니다.", "ok");
+        showToast(items.length ? `공지 ${items.length}건을 저장했습니다.` : "공지를 모두 지웠습니다.", "ok");
         setNoticeModalOpen(false);
+        try { sessionStorage.removeItem("wms_notices_v1"); } catch (e) { /* 무시 */ }
       } else {
         showToast(res.message || "공지 저장에 실패했습니다.", "error");
       }
@@ -456,7 +460,7 @@ export default function App() {
 
   // 랜딩 공지 작성 (관리자 전용)
   const [noticeModalOpen, setNoticeModalOpen] = useState(false);
-  const [noticeDraft, setNoticeDraft] = useState("");
+  const [noticeDrafts, setNoticeDrafts] = useState<NoticeData[]>([]);
   const [noticeSaving, setNoticeSaving] = useState(false);
 
   // 구버전 감지: 처음 접속했을 때의 서버 버전을 기억해두고, 2분마다 서버의 현재 버전과 비교한다.
@@ -2073,22 +2077,62 @@ export default function App() {
         }}
       >
         <div style={{ fontSize: "15px", fontWeight: 800, marginBottom: "6px" }}>📢 공지 작성</div>
-        <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "12px", lineHeight: 1.6 }}>
-          첫 화면(랜딩) 하단에 표시됩니다. 비워두고 저장하면 공지가 사라집니다.
+        <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "14px", lineHeight: 1.6 }}>
+          첫 화면(랜딩)에 <b>제목만</b> 표시되고, 제목을 누르면 전체 내용이 뜹니다. 최대 {NOTICE_MAX}건까지 등록할 수 있습니다.
         </div>
-        <textarea
-          value={noticeDraft}
-          onChange={(e) => setNoticeDraft(e.target.value)}
-          placeholder="예) 8월 1일 창고 정리로 오전 대여가 중단됩니다."
-          style={{
-            width: "100%", minHeight: "140px", resize: "vertical", boxSizing: "border-box",
-            padding: "12px", borderRadius: "10px", fontSize: "13.5px", lineHeight: 1.6,
-            border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
-            background: isLightMode ? "#f8fafc" : "#0f172a",
-            color: isLightMode ? "#111827" : "#f1f5f9",
-            outline: "none",
-          }}
-        />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {noticeDrafts.map((n, idx) => (
+            <div key={idx} style={{ border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, borderRadius: "12px", padding: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                <span style={{ fontSize: "11.5px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd" }}>공지 {idx + 1}</span>
+                <button
+                  onClick={() => setNoticeDrafts((prev) => prev.filter((_, i) => i !== idx))}
+                  style={{ marginLeft: "auto", background: "transparent", border: "none", cursor: "pointer", fontSize: "11.5px", fontWeight: 700, color: "#dc2626" }}
+                >
+                  삭제
+                </button>
+              </div>
+              <input
+                value={n.title || ""}
+                onChange={(e) => setNoticeDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, title: e.target.value } : x)))}
+                placeholder="제목 — 예) 유닛별 전수조사 (31일 금 09:05~16:00)"
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: "9px", fontSize: "13px", fontWeight: 700, marginBottom: "8px",
+                  border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+                  background: isLightMode ? "#f8fafc" : "#0f172a",
+                  color: isLightMode ? "#111827" : "#f1f5f9", outline: "none",
+                }}
+              />
+              <textarea
+                value={n.text || ""}
+                onChange={(e) => setNoticeDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, text: e.target.value } : x)))}
+                placeholder="본문 — 줄바꿈은 그대로 표시됩니다."
+                style={{
+                  width: "100%", minHeight: "110px", resize: "vertical", boxSizing: "border-box",
+                  padding: "12px", borderRadius: "9px", fontSize: "13px", lineHeight: 1.6,
+                  border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+                  background: isLightMode ? "#f8fafc" : "#0f172a",
+                  color: isLightMode ? "#111827" : "#f1f5f9", outline: "none",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+
+        {noticeDrafts.length < NOTICE_MAX ? (
+          <button
+            onClick={() => setNoticeDrafts((prev) => [...prev, { title: "", text: "" }])}
+            style={{
+              width: "100%", marginTop: "10px", padding: "11px", borderRadius: "10px", cursor: "pointer",
+              fontSize: "12.5px", fontWeight: 700,
+              border: `1px dashed ${isLightMode ? "#cbd5e1" : "#334155"}`, background: "transparent",
+              color: isLightMode ? "#475569" : "#94a3b8",
+            }}
+          >
+            + 공지 추가 ({noticeDrafts.length} / {NOTICE_MAX})
+          </button>
+        ) : null}
         <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
           <button
             onClick={() => setNoticeModalOpen(false)}
