@@ -188,7 +188,6 @@ export default function App() {
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
   const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | null>(null);
-  const [rentLogTab, setRentLogTab] = useState<"warehouse" | "scenario">("scenario");
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
       const cached = localStorage.getItem("wms_cached_users");
@@ -2849,53 +2848,15 @@ export default function App() {
             isLightMode={isLightMode}
           />
         ) : currentView === "rent" ? (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            {/* 시나리오 / 창고 전환 탭 */}
-            <div style={{ display: "flex", gap: "8px", padding: "16px 24px 0", background: "var(--canvas-bg, #020617)" }}>
-              {[
-                { key: "scenario" as const, label: "시나리오 물품 대장" },
-                { key: "warehouse" as const, label: "공구 및 부품류 대장" },
-              ].map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setRentLogTab(t.key)}
-                  style={{
-                    padding: "10px 18px",
-                    borderRadius: "10px 10px 0 0",
-                    border: "none",
-                    borderBottom: rentLogTab === t.key ? "2px solid #2563eb" : "2px solid transparent",
-                    background: rentLogTab === t.key ? (isLightMode ? "rgba(37, 99, 235,0.08)" : "rgba(37, 99, 235,0.15)") : "transparent",
-                    color: rentLogTab === t.key ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
-                    fontSize: "14px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            {rentLogTab === "scenario" ? (
-              <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
-                <ScenarioLogsPage
-                  scriptUrl={scriptUrl}
-                  connected={connected}
-                  isLightMode={isLightMode}
-                  isAdmin={isAdmin}
-                  showToast={showToast}
-                />
-              </div>
-            ) : (
-              <RentLogsPage
-                rentLogs={rentLogs}
-                inventory={inventory}
-                onAddRentLog={handleAddRentLog}
-                onClose={() => setCurrentView("monitor")}
-                isLightMode={isLightMode}
-                isAdmin={isAdmin}
-                showToast={showToast}
-              />
-            )}
+          // 대여/반납 대장: 시나리오·공구 구분은 페이지 안의 분야 탭에서 처리한다
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+            <ScenarioLogsPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              isAdmin={isAdmin}
+              showToast={showToast}
+            />
           </div>
         ) : currentView === "__never_rent__" ? (
           <RentLogsPage
