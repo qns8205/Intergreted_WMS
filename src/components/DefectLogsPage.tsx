@@ -267,6 +267,10 @@ export default function DefectLogsPage({
     }
   };
 
+  // 파손자 (로봇/시나리오 오브젝트에만 기록한다)
+  const [culpritInput, setCulpritInput] = useState("");
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+
   const handleAddLogSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -307,11 +311,13 @@ export default function DefectLogsPage({
         actionTaken: actionTakenInput.trim(),
         photo: photoInput || undefined,
         itemCategory: itemCategory, // Pass category to Google Apps Script
+        culprit: itemCategory === "robot" ? culpritInput.trim() : "",
       });
 
       // Reset form fields
       setNoteInput("");
       setActionTakenInput("");
+      setCulpritInput("");
       setQtyInput(1);
       setPhotoInput("");
       setFormError(null);
@@ -414,8 +420,97 @@ export default function DefectLogsPage({
               입고 혹은 재고 이동 시 발생한 불량 현황을 실시간으로 등록하고 구글 시트에 즉시 동기화합니다.
             </p>
           </div>
+          <button
+            onClick={() => setAnalysisOpen(true)}
+            style={{
+              marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px",
+              padding: "9px 16px", borderRadius: "8px", cursor: "pointer",
+              border: `1px solid ${ACCENT}`, background: `${ACCENT}18`, color: "#a5b4fc",
+              fontSize: "13px", fontWeight: 700,
+            }}
+          >
+            📊 분석
+          </button>
         </div>
       </div>
+
+      {/* 불량 분석 */}
+      {analysisOpen ? (() => {
+        const norm = (v?: string) => String(v || "").trim();
+        const robotLogs = defectLogs; // 전체 로그 대상 (파손자 통계는 값이 있는 건만 집계)
+
+        const tally = (pick: (l: DefectLog) => string) => {
+          const m = new Map<string, { key: string; count: number; qty: number }>();
+          robotLogs.forEach((l) => {
+            const k = norm(pick(l));
+            if (!k) return;
+            if (!m.has(k)) m.set(k, { key: k, count: 0, qty: 0 });
+            const g = m.get(k)!;
+            g.count += 1;
+            g.qty += Number(l.qty) || 1;
+          });
+          return Array.from(m.values()).sort((a, b) => b.qty - a.qty || b.count - a.count);
+        };
+
+        const byCulprit = tally((l) => l.culprit || "");
+        const byType = tally((l) => l.defectType);
+        const byItem = tally((l) => l.name);
+        const unknown = robotLogs.filter((l) => !norm(l.culprit)).length;
+        const maxQty = (arr: { qty: number }[]) => Math.max(1, ...arr.map((x) => x.qty));
+
+        const Section = ({ title, rows, note }: { title: string; rows: { key: string; count: number; qty: number }[]; note?: string }) => (
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 800, color: TEXT_MAIN, marginBottom: "8px" }}>
+              {title} {note ? <span style={{ fontWeight: 500, fontSize: "11.5px", color: TEXT_DIM }}>{note}</span> : null}
+            </div>
+            {rows.length === 0 ? (
+              <div style={{ fontSize: "12px", color: TEXT_DIM, padding: "10px 0" }}>기록이 없습니다.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                {rows.slice(0, 10).map((r, i) => (
+                  <div key={r.key} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ width: "18px", fontSize: "11px", fontWeight: 800, color: i < 3 ? "#a5b4fc" : TEXT_DIM, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ flex: "0 0 130px", fontSize: "12.5px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</span>
+                    <div style={{ flex: 1, height: "8px", borderRadius: "999px", background: PANEL_BORDER, overflow: "hidden" }}>
+                      <div style={{ width: `${(r.qty / maxQty(rows)) * 100}%`, height: "100%", background: ACCENT, borderRadius: "999px" }} />
+                    </div>
+                    <span style={{ flexShrink: 0, fontSize: "11.5px", fontWeight: 800, color: TEXT_MAIN, minWidth: "62px", textAlign: "right" }}>
+                      {r.qty}개 <span style={{ fontWeight: 500, color: TEXT_DIM }}>({r.count}건)</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+        return (
+          <div
+            onClick={() => setAnalysisOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(620px, 100%)", maxHeight: "85vh", overflowY: "auto",
+                background: "var(--panel-bg, #1e293b)", border: `1px solid ${PANEL_BORDER}`, borderRadius: "16px", padding: "22px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                <span style={{ fontSize: "16px", fontWeight: 800, color: TEXT_MAIN, flex: 1 }}>📊 불량 분석</span>
+                <button onClick={() => setAnalysisOpen(false)} style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "16px" }}>✕</button>
+              </div>
+              <div style={{ fontSize: "12px", color: TEXT_DIM, marginBottom: "18px" }}>
+                전체 {defectLogs.length}건 · 파손자 미기재 {unknown}건
+              </div>
+
+              <Section title="파손자별" rows={byCulprit} note="(파손자가 기록된 건만)" />
+              <Section title="불량 유형별" rows={byType} />
+              <Section title="물품별" rows={byItem} />
+            </div>
+          </div>
+        );
+      })() : null}
 
       {/* 2. Stat Widgets */}
       <div
@@ -755,6 +850,27 @@ export default function DefectLogsPage({
               </div>
             </div>
 
+
+            {/* 파손자 — 로봇/시나리오 오브젝트일 때만 */}
+            {itemCategory === "robot" ? (
+              <div>
+                <label style={{ fontSize: "12.5px", display: "block", marginBottom: 6, fontWeight: 600 }}>🙋 파손자</label>
+                <input
+                  type="text"
+                  value={culpritInput}
+                  onChange={(e) => setCulpritInput(e.target.value)}
+                  placeholder="파손시킨 사람의 이름 (모르면 비워두세요)"
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    background: "var(--input-bg, #0f172a)", border: `1px solid ${PANEL_BORDER}`,
+                    color: TEXT_MAIN, padding: "10px 12px", borderRadius: "6px", fontSize: "13px", outline: "none",
+                  }}
+                />
+                <div style={{ fontSize: "11px", color: TEXT_DIM, marginTop: "5px", lineHeight: 1.5 }}>
+                  누적 기록은 상단 <b>분석</b> 버튼에서 확인할 수 있습니다.
+                </div>
+              </div>
+            ) : null}
 
             {/* 세부 사항 */}
             <div>
