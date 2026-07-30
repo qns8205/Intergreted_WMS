@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
-import { fetchNotice, NoticeData } from "../utils/borrowApi";
+import { fetchNotice, NoticeData, fetchBorrowLock, BorrowLock } from "../utils/borrowApi";
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
 const PENALTY_RULES: { label: string; limit: string }[] = [
@@ -71,6 +71,12 @@ export default function LandingPage({
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
   const { notice } = useNotice(scriptUrl, connected);
+  // 대여 잠금 상태 (관리자가 일시 중단한 경우 안내한다)
+  const [borrowLock, setBorrowLock] = useState<BorrowLock>({ locked: false });
+  useEffect(() => {
+    if (!connected || !scriptUrl) return;
+    fetchBorrowLock(scriptUrl).then(setBorrowLock).catch(() => { /* 조회 실패는 무시 */ });
+  }, [connected, scriptUrl]);
 
   return (
     <div
@@ -125,8 +131,32 @@ export default function LandingPage({
             color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
-          대여 · 반납 · 관리
+          공구 및 부품류 대여 · 반납 · 관리
         </h1>
+        {/* 대여 잠금 안내 */}
+        {connected && borrowLock.locked ? (
+          <div
+            style={{
+              marginTop: "4px",
+              padding: "12px 16px",
+              borderRadius: "14px",
+              border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
+              background: isLightMode ? "#fef2f2" : "#1f1113",
+              maxWidth: "420px",
+              width: "100%",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12.5px", fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5", marginBottom: "5px" }}>
+              <AlertTriangle size={14} />
+              대여가 일시 중단되었습니다
+            </div>
+            <div style={{ fontSize: "12px", color: isLightMode ? "#7f1d1d" : "#fecaca", lineHeight: 1.6 }}>
+              {borrowLock.reason ? <>사유: {borrowLock.reason}<br /></> : null}
+              반납은 정상적으로 가능합니다.
+            </div>
+          </div>
+        ) : null}
+
         {/* 상단: 페널티 기준 안내 (항상 고정) */}
         <div
           style={{
