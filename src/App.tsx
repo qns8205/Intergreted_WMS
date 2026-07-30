@@ -9,6 +9,7 @@ import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
 import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotice, saveNotice, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
+import AdminReturnPage from "./components/AdminReturnPage";
 import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
 import SidePanel from "./components/SidePanel";
@@ -46,6 +47,8 @@ import {
   ArrowLeft,
   ClipboardList,
   AlertTriangle,
+  Undo2,
+  Boxes,
 } from "lucide-react";
 
 const DEFAULT_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbweQRYbULpEEFjZuY_DT8QYY8uNb51M6oHAZIZaVbP37P2oVd8eoo-xY9WGNPLYQ2YR/exec";
@@ -159,6 +162,8 @@ export default function App() {
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
   const [versionMismatch, setVersionMismatch] = useState(false);
   const [publishingVersion, setPublishingVersion] = useState(false);
+  // 관리자 하위 메뉴: null(선택 화면) | items(물품 관리) | rental(대여 & 반납 관리)
+  const [adminSection, setAdminSection] = useState<"items" | "rental" | null>(null);
 
   async function openNoticeModal() {
     setNoticeModalOpen(true);
@@ -1674,12 +1679,8 @@ export default function App() {
             setBorrowIdentity(null);
             setBorrowKind(null);
             setCurrentView("borrow");
-          } else if (view === "return") {
-            setCurrentView("return");
           } else if (view === "browse") {
             setCurrentView("browse");
-          } else if (view === "mylookup") {
-            setCurrentView("mylookup");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
@@ -2231,119 +2232,106 @@ export default function App() {
             gap: 8,
           }}
         >
-          <button
-            onClick={() => setCurrentView("monitor")}
-            title={sidebarCollapsed ? "공구 및 부품류" : undefined}
-            style={{
-              width: "100%",
-              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 700,
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "monitor" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "monitor" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
-              display: "flex",
-              alignItems: "center",
-              gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "monitor" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
-            }}
-          >
-            <Package size={18} />
-            {!sidebarCollapsed && <span>공구 및 부품류</span>}
-          </button>
+          {(() => {
+            const navBtn = (view: string, icon: React.ReactNode, label: string) => (
+              <button
+                key={view}
+                onClick={() => setCurrentView(view as any)}
+                title={sidebarCollapsed ? label : undefined}
+                style={{
+                  width: "100%",
+                  padding: sidebarCollapsed ? "10px 0" : "9px 12px",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  background: currentView === view ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
+                  color: currentView === view ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: sidebarCollapsed ? 0 : 10,
+                  border: currentView === view ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                {icon}
+                {!sidebarCollapsed && <span>{label}</span>}
+              </button>
+            );
 
-          {isAdmin && (
-          <button
-            onClick={() => setCurrentView("scenario")}
-            title={sidebarCollapsed ? "시나리오 물품" : undefined}
-            style={{
-              width: "100%",
-              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 700,
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "scenario" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "scenario" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
-              display: "flex",
-              alignItems: "center",
-              gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "scenario" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
-            }}
-          >
-            <Grid size={18} />
-            {!sidebarCollapsed && <span>시나리오 물품</span>}
-          </button>
-          )}
+            // 관리자가 아니면 예전처럼 공구 및 부품류만 보인다
+            if (!isAdmin) return navBtn("monitor", <Package size={18} />, "공구 및 부품류");
 
-          {isAdmin && (
-          <button
-            onClick={() => setCurrentView("seatmap")}
-            title={sidebarCollapsed ? "좌석 배치도" : undefined}
-            style={{
-              width: "100%",
-              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 700,
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "seatmap" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "seatmap" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
-              display: "flex",
-              alignItems: "center",
-              gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "seatmap" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
-            }}
-          >
-            <LayoutGrid size={18} />
-            {!sidebarCollapsed && <span>좌석 배치도</span>}
-          </button>
-          )}
+            // 하위 메뉴를 고르지 않았으면 진입 버튼 두 개만 보여준다
+            if (!adminSection) {
+              const sectionBtn = (key: "items" | "rental", icon: React.ReactNode, label: string, desc: string) => (
+                <button
+                  key={key}
+                  onClick={() => {
+                    setAdminSection(key);
+                    setCurrentView(key === "items" ? "monitor" : "adminReturn");
+                  }}
+                  title={sidebarCollapsed ? label : undefined}
+                  style={{
+                    width: "100%", padding: sidebarCollapsed ? "12px 0" : "12px 14px", borderRadius: 10,
+                    display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 10, cursor: "pointer",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    border: `1px solid ${isLightMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.3)"}`,
+                    background: isLightMode ? "rgba(37,99,235,0.06)" : "rgba(37,99,235,0.12)",
+                    color: isLightMode ? "#23272f" : "#e8eaed",
+                    textAlign: "left",
+                  }}
+                >
+                  {icon}
+                  {!sidebarCollapsed && (
+                    <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontSize: 14, fontWeight: 800 }}>{label}</span>
+                      <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-dim, #94a3b8)" }}>{desc}</span>
+                    </span>
+                  )}
+                </button>
+              );
+              return (
+                <>
+                  {sectionBtn("rental", <Undo2 size={18} />, "대여 & 반납 관리", "반납 · 로그 · 좌석 배치도")}
+                  {sectionBtn("items", <Package size={18} />, "물품 관리", "공구 · 시나리오 · 불량로그")}
+                </>
+              );
+            }
 
-          <button
-            onClick={() => setCurrentView("rent")}
-            title={sidebarCollapsed ? "대여 & 반납" : undefined}
-            style={{
-              width: "100%",
-              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 700,
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "rent" ? (isLightMode ? "rgba(37, 99, 235, 0.08)" : "rgba(37, 99, 235, 0.15)") : "transparent",
-              color: currentView === "rent" ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
-              display: "flex",
-              alignItems: "center",
-              gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "rent" ? (isLightMode ? "1px solid rgba(37, 99, 235, 0.2)" : "1px solid rgba(37, 99, 235, 0.3)") : "1px solid transparent",
-            }}
-          >
-            <ClipboardList size={18} />
-            {!sidebarCollapsed && <span>대여 & 반납</span>}
-          </button>
+            // 하위 메뉴 안: 상단에 뒤로가기, 아래에 해당 메뉴 항목들
+            return (
+              <>
+                <button
+                  onClick={() => setAdminSection(null)}
+                  style={{
+                    width: "100%", padding: sidebarCollapsed ? "8px 0" : "7px 12px", borderRadius: 8,
+                    display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 8, cursor: "pointer",
+                    justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                    border: "1px solid transparent", background: "transparent",
+                    color: "var(--text-dim, #94a3b8)", fontSize: 12, fontWeight: 700, marginBottom: 4,
+                  }}
+                >
+                  <ArrowLeft size={15} />
+                  {!sidebarCollapsed && <span>{adminSection === "items" ? "물품 관리" : "대여 & 반납 관리"}</span>}
+                </button>
 
-          <button
-            onClick={() => setCurrentView("defect")}
-            title={sidebarCollapsed ? "불량로그" : undefined}
-            style={{
-              width: "100%",
-              padding: sidebarCollapsed ? "10px 0" : "9px 12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 700,
-              justifyContent: sidebarCollapsed ? "center" : "flex-start",
-              background: currentView === "defect" ? (isLightMode ? "rgba(225, 29, 72, 0.08)" : "rgba(244, 63, 94, 0.15)") : "transparent",
-              color: currentView === "defect" ? (isLightMode ? "#e11d48" : "#f43f5e") : "var(--text-dim, #94a3b8)",
-              display: "flex",
-              alignItems: "center",
-              gap: sidebarCollapsed ? 0 : 10,
-              border: currentView === "defect" ? (isLightMode ? "1px solid rgba(225, 29, 72, 0.2)" : "1px solid rgba(244, 63, 94, 0.3)") : "1px solid transparent",
-            }}
-          >
-            <AlertTriangle size={18} />
-            {!sidebarCollapsed && <span>불량로그</span>}
-          </button>
+                {adminSection === "items" ? (
+                  <>
+                    {navBtn("monitor", <Package size={18} />, "공구 및 부품류")}
+                    {navBtn("scenario", <Boxes size={18} />, "시나리오 물품")}
+                    {navBtn("defect", <AlertTriangle size={18} />, "불량로그")}
+                  </>
+                ) : (
+                  <>
+                    {navBtn("adminReturn", <Undo2 size={18} />, "반납")}
+                    {navBtn("rent", <ClipboardList size={18} />, "대여 & 반납 로그")}
+                    {navBtn("seatmap", <LayoutGrid size={18} />, "좌석 배치도")}
+                  </>
+                )}
+              </>
+            );
+          })()}
 
 
         </div>
@@ -2443,7 +2431,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "rent" ? "📋 대여 & 반납" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "adminReturn" ? "↩️ 반납 처리" : currentView === "rent" ? "📋 대여 & 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -2847,6 +2835,19 @@ export default function App() {
             onClose={() => setCurrentView("monitor")}
             isLightMode={isLightMode}
           />
+        ) : currentView === "adminReturn" && !isAdmin ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>
+            관리자만 접근할 수 있습니다.
+          </div>
+        ) : currentView === "adminReturn" ? (
+          <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+            <AdminReturnPage
+              scriptUrl={scriptUrl}
+              connected={connected}
+              isLightMode={isLightMode}
+              showToast={showToast}
+            />
+          </div>
         ) : currentView === "rent" ? (
           // 대여/반납 대장: 시나리오·공구 구분은 페이지 안의 분야 탭에서 처리한다
           <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
