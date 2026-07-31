@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin, Clock } from "lucide-react";
+import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin, Repeat } from "lucide-react";
 import {
   fetchUnreturnedItems, UnreturnedItem,
   postProcessReturn, fetchBorrowAppVersion,
   isVersionMismatchMessage, signalVersionOutdated,
   sendReturnReminderDm,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin, postRecordBorrow, nowString,
+  postSwapBorrowItem,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 
@@ -142,82 +143,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     ).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
   }, [items, search]);
 
-  // 물품별 경과일 (대여일 기준)
-  const daysSince = (borrowDate?: string) => {
-    const raw = String(borrowDate || "").trim();
-    if (!raw) return null;
-    const t = Date.parse(raw.replace(" ", "T"));
-    if (isNaN(t)) return null;
-    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
-  };
-
   const activeItems = useMemo(() => {
     if (!selectedBorrower) return [];
     return items
       .filter((it) => (String(it.borrowerName || "").trim() || "(이름 없음)") === selectedBorrower)
-      .sort((a, b) => {
-        const ta = Date.parse(String(a.borrowDate || "").replace(" ", "T"));
-        const tb = Date.parse(String(b.borrowDate || "").replace(" ", "T"));
-        const va = isNaN(ta) ? -Infinity : ta;
-        const vb = isNaN(tb) ? -Infinity : tb;
-        if (vb !== va) return vb - va; // 최근 대여가 위로
-        return String(a.location || "").localeCompare(String(b.location || ""));
-      });
+      .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
   }, [items, selectedBorrower]);
-
-  const parseTs = (borrowDate?: string) => {
-    const raw = String(borrowDate || "").trim();
-    if (!raw) return NaN;
-    return Date.parse(raw.replace(" ", "T"));
-  };
-
-  const formatGroupLabel = useCallback((borrowDate?: string) => {
-    const raw = String(borrowDate || "").trim();
-    if (!raw) return "대여 시각 정보 없음";
-    const t = parseTs(raw);
-    if (isNaN(t)) return raw;
-    const d = new Date(t);
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
-    return `${mm}/${dd} ${hh}:${mi}`;
-  }, []);
-
-  // 한 번의 대여도 일반/시나리오 시트에 초 단위로 갈려 기록될 수 있어,
-  // 2분 이내로 붙어 있는 시각은 같은 대여 묶음으로 본다.
-  const CLUSTER_MS = 2 * 60 * 1000;
-
-  interface TimeGroup {
-    key: string;
-    ts: number;
-    label: string;
-    days: number | null;
-    startIndex: number;   // activeItems 안에서의 시작 인덱스 (커서 계산용)
-    items: UnreturnedItem[];
-  }
-
-  const timeGroups = useMemo<TimeGroup[]>(() => {
-    const groups: TimeGroup[] = [];
-    activeItems.forEach((it, idx) => {
-      const t = parseTs(it.borrowDate);
-      const last = groups[groups.length - 1];
-      const same =
-        !!last &&
-        ((isNaN(t) && isNaN(last.ts)) ||
-          (!isNaN(t) && !isNaN(last.ts) && Math.abs(last.ts - t) <= CLUSTER_MS));
-      if (same) { last!.items.push(it); return; }
-      groups.push({
-        key: `${it.sheetType}-${it.rowIndex}-${idx}`,
-        ts: t,
-        label: formatGroupLabel(it.borrowDate),
-        days: daysSince(it.borrowDate),
-        startIndex: idx,
-        items: [it],
-      });
-    });
-    return groups;
-  }, [activeItems, formatGroupLabel]);
 
   // 반납이 늦은 사람 (7일 이상 / 2일 이상)
   const overdue = useMemo(() => {
@@ -247,6 +178,58 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   }, [items]);
 
   const [dmSending, setDmSending] = useState<string | null>(null);
+
+  /* ── 물품 교체 (반납하면서 다른 오브젝트로 대체) ── */
+  const [swapTarget, setSwapTarget] = useState<UnreturnedItem | null>(null);
+  const [swapItemId, setSwapItemId] = useState("");
+  const [swapQty, setSwapQty] = useState(1);
+  const [swapSearch, setSwapSearch] = useState("");
+  const [swapReason, setSwapReason] = useState("");
+  const [swapping, setSwapping] = useState(false);
+
+  async function openSwap(it: UnreturnedItem) {
+    setSwapTarget(it);
+    setSwapItemId("");
+    setSwapQty(it.quantity || 1);
+    setSwapSearch("");
+    setSwapReason("");
+    if (!lendCatalog.length && connected && scriptUrl) {
+      try {
+        setLendCatalog(await fetchScenarioObjectsForAdmin(scriptUrl));
+      } catch (e: any) {
+        showToast(`물품 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      }
+    }
+  }
+
+  async function submitSwap() {
+    if (!swapTarget) return;
+    if (!swapItemId) { showToast("교체할 물품을 선택해주세요.", "warn"); return; }
+    setSwapping(true);
+    try {
+      const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+      const res = await postSwapBorrowItem(scriptUrl, {
+        sheetType: swapTarget.sheetType as "scenario" | "general",
+        rowIndex: swapTarget.rowIndex,
+        newItemId: swapItemId,
+        newQuantity: swapQty,
+        reason: swapReason.trim(),
+      }, ver);
+      if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+      if (!res.success) { showToast(res.message || "물품 교체 실패", "error"); return; }
+      showToast(res.message || "물품을 교체했습니다.", "ok");
+      setSwapTarget(null);
+      // 교체된 행은 반납 처리되므로 담아둔 장바구니에서도 정리한다
+      const key = `${swapTarget.sheetType}:${swapTarget.rowIndex}`;
+      setCart((prev) => prev.filter((c) => c.key !== key));
+      addHistoryRef.current = addHistoryRef.current.filter((k) => k !== key);
+      await load();
+    } catch (e: any) {
+      showToast(`물품 교체 실패: ${e.message}`, "error");
+    } finally {
+      setSwapping(false);
+    }
+  }
 
   /* ── 추가 대여 (반납하러 온 김에 더 빌려가는 경우) ── */
   const [lendTarget, setLendTarget] = useState<{ name: string; email: string; floor?: string; unit?: string } | null>(null);
@@ -345,6 +328,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     }
   }
 
+  // 물품별 경과일 (대여일 기준)
+  const daysSince = (borrowDate?: string) => {
+    const raw = String(borrowDate || "").trim();
+    if (!raw) return null;
+    const t = Date.parse(raw.replace(" ", "T"));
+    if (isNaN(t)) return null;
+    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+  };
+
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
   const cartTotal = cart.reduce((n, c) => n + c.qty, 0);
@@ -423,14 +415,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       else setCursor(Math.min(idx + 1, activeItems.length - 1));
     }
   }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull]);
-
-  // 시각 묶음 전체를 한 번에 담는다 (그룹 헤더의 "모두 담기")
-  const addGroupAll = useCallback((groupItems: UnreturnedItem[]) => {
-    groupItems.forEach((it) => {
-      const need = (it.quantity || 1) - inCartQty(it);
-      for (let i = 0; i < need; i++) addOne(it);
-    });
-  }, [cart, addOne]);
 
   // P / O : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
   const moveCursor = useCallback((delta: number) => {
@@ -592,7 +576,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          <b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
+          <b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · <b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
           <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
@@ -688,102 +672,57 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
                   {on ? (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 10px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {timeGroups.map((g) => {
-                        const gTotal = g.items.reduce((n, it) => n + (it.quantity || 1), 0);
-                        const gPicked = g.items.reduce((n, it) => n + inCartQty(it), 0);
-                        const gDone = gPicked >= gTotal;
-                        const severe = g.days !== null && g.days >= 7;
-                        const late = g.days !== null && g.days >= 2;
-                        const tone = severe ? C.error : late ? C.warn : C.label;
-                        const toneSoft = severe ? C.errorSoft : late ? C.warnSoft : C.cardSub;
+                      {activeItems.map((it, idx) => {
+                        const picked = inCartQty(it);
+                        const max = it.quantity || 1;
+                        const done = picked >= max;
+                        const atCursor = idx === cursor;
                         return (
                           <div
-                            key={g.key}
+                            key={`${it.sheetType}-${it.rowIndex}`}
+                            ref={atCursor ? cursorElRef : undefined}
+                            onClick={() => { setCursor(idx); if (!done) addOne(it); }}
+                            onContextMenu={(e) => { e.preventDefault(); setCursor(idx); openSwap(it); }}
+                            title="우클릭하면 다른 물품으로 교체할 수 있습니다"
                             style={{
-                              border: `1px solid ${gDone ? C.success + "55" : C.border}`,
-                              borderRadius: "10px",
-                              overflow: "hidden",
-                              marginBottom: "2px",
+                              display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
+                              cursor: done ? "default" : "pointer",
+                              background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
+                              border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
+                              boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
                             }}
                           >
-                            {/* 대여 시각 헤더 */}
-                            <div
-                              style={{
-                                display: "flex", alignItems: "center", gap: "7px",
-                                padding: "7px 10px",
-                                background: gDone ? C.successSoft : toneSoft,
-                                borderBottom: `1px solid ${C.border}`,
-                              }}
-                            >
-                              <Clock size={12} style={{ color: tone, flexShrink: 0 }} />
-                              <span style={{ fontSize: "12px", fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>
-                                {g.label}
-                              </span>
-                              {late ? (
-                                <span style={{ fontSize: "10px", fontWeight: 800, color: tone, background: C.card, borderRadius: "999px", padding: "1px 7px" }}>
-                                  {severe ? `⚠ ${g.days}일 경과` : `${g.days}일 경과`}
-                                </span>
-                              ) : null}
-                              <span style={{ flex: 1 }} />
-                              <span style={{ fontSize: "10.5px", fontWeight: 700, color: gDone ? C.success : C.label, flexShrink: 0 }}>
-                                {g.items.length}종 · {gPicked}/{gTotal}개
-                              </span>
-                              {!gDone ? (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); addGroupAll(g.items); }}
-                                  title="이 시각에 대여한 물품 전체 담기"
-                                  style={{
-                                    flexShrink: 0, padding: "3px 9px", borderRadius: "999px",
-                                    border: `1px solid ${C.accent}`, background: C.card, color: C.accentText,
-                                    fontSize: "10.5px", fontWeight: 800, cursor: "pointer",
-                                  }}
-                                >
-                                  모두 담기
-                                </button>
-                              ) : (
-                                <Check size={13} style={{ color: C.success, flexShrink: 0 }} />
-                              )}
-                            </div>
-
-                            {/* 이 시각의 물품들 */}
-                            <div style={{ padding: "6px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                              {g.items.map((it, i) => {
-                                const idx = g.startIndex + i;
-                                const picked = inCartQty(it);
-                                const max = it.quantity || 1;
-                                const done = picked >= max;
-                                const atCursor = idx === cursor;
-                                return (
-                                  <div
-                                    key={`${it.sheetType}-${it.rowIndex}`}
-                                    ref={atCursor ? cursorElRef : undefined}
-                                    onClick={() => { setCursor(idx); if (!done) addOne(it); }}
-                                    style={{
-                                      display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
-                                      cursor: done ? "default" : "pointer",
-                                      background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
-                                      border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
-                                      boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
-                                    }}
-                                  >
-                                    <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
-                                    <div style={{ flex: 1, minWidth: 0 }}>
-                                      <span style={{ display: "block", fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        {it.itemLabel}
-                                      </span>
-                                      {it.location ? (
-                                        <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
-                                          <MapPin size={9} /> {it.location}
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                    <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
-                                      {picked} / {max}
+                            <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                                <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                {(() => {
+                                  const d = daysSince(it.borrowDate);
+                                  if (d === null || d < 2) return null;
+                                  const severe = d >= 7;
+                                  return (
+                                    <span
+                                      title={`${it.borrowDate} 대여 · ${d}일 경과`}
+                                      style={{
+                                        flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
+                                        color: severe ? C.error : C.warn,
+                                        background: severe ? C.errorSoft : C.warnSoft,
+                                      }}
+                                    >
+                                      {severe ? `⚠ ${d}일` : `${d}일`}
                                     </span>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })()}
+                              </div>
+                              {it.location ? (
+                                <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
+                                  <MapPin size={9} /> {it.location}
+                                </div>
+                              ) : null}
                             </div>
+                            <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
+                              {picked} / {max}
+                            </span>
                           </div>
                         );
                       })}
@@ -795,6 +734,101 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </div>
         )}
       </div>
+
+      {/* 물품 교체 모달 */}
+      {swapTarget ? (
+        <div
+          onClick={() => !swapping && setSwapTarget(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 4100, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(560px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+              <Repeat size={17} style={{ color: C.accentText }} />
+              <span style={{ fontSize: "15px", fontWeight: 800, flex: 1 }}>물품 교체</span>
+              <button onClick={() => setSwapTarget(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={19} /></button>
+            </div>
+
+            <div style={{ padding: "11px 13px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}`, marginBottom: "12px" }}>
+              <div style={{ fontSize: "10.5px", color: C.label, marginBottom: "3px" }}>기존 물품 (반납 처리됩니다)</div>
+              <div style={{ fontSize: "13px", fontWeight: 700 }}>{swapTarget.itemLabel}</div>
+              <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
+                {swapTarget.borrowerName}{swapTarget.location ? ` · ${swapTarget.location}` : ""}
+              </div>
+            </div>
+
+            <div style={{ position: "relative", marginBottom: "10px" }}>
+              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input
+                value={swapSearch}
+                onChange={(e) => setSwapSearch(e.target.value)}
+                placeholder="교체할 물품 검색 (이름 · ID · 위치)"
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", paddingLeft: "36px" }}
+              />
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: "10px", marginBottom: "12px" }}>
+              {lendCatalog.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "12.5px", color: C.label }}>물품 목록을 불러오는 중입니다...</div>
+              ) : (
+                lendCatalog
+                  .filter((it) => !swapSearch.trim() || smartMatch([it.name, it.id, it.rootSlot], swapSearch))
+                  .slice(0, 60)
+                  .map((it) => {
+                    const stock = Number(it.stock) || 0;
+                    const on = swapItemId === it.id;
+                    return (
+                      <div
+                        key={it.id}
+                        onClick={() => { if (stock > 0) { setSwapItemId(it.id); setSwapQty((q) => Math.min(q, stock) || 1); } }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: "9px", padding: "9px 12px",
+                          borderBottom: `1px solid ${C.border}`, cursor: stock > 0 ? "pointer" : "not-allowed",
+                          opacity: stock > 0 ? 1 : 0.45, background: on ? C.accentSoft : "transparent",
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "12.5px", fontWeight: 700, color: on ? C.accentText : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                          <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id} · {it.rootSlot || "위치 없음"}</div>
+                        </div>
+                        <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 700, color: stock > 0 ? C.success : C.error }}>재고 {stock}</span>
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+              <div style={{ flex: "0 0 110px" }}>
+                <div style={{ fontSize: "11.5px", fontWeight: 700, color: C.label, marginBottom: "5px" }}>수량</div>
+                <input type="number" min={1} value={swapQty}
+                  onChange={(e) => setSwapQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: "11.5px", fontWeight: 700, color: C.label, marginBottom: "5px" }}>사유 (선택)</div>
+                <input value={swapReason} onChange={(e) => setSwapReason(e.target.value)} placeholder="예: 파손으로 대체"
+                  style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} />
+              </div>
+            </div>
+
+            <button
+              onClick={submitSwap}
+              disabled={!swapItemId || swapping}
+              style={{
+                width: "100%", padding: "14px", borderRadius: "12px", border: "none",
+                background: swapItemId ? C.accent : C.border, color: "#fff",
+                fontSize: "14.5px", fontWeight: 800,
+                cursor: swapItemId && !swapping ? "pointer" : "not-allowed", opacity: swapping ? 0.7 : 1,
+              }}
+            >
+              {swapping ? "교체 중..." : "교체하기"}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* 추가 대여 모달 */}
       {lendTarget ? (
