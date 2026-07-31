@@ -7,6 +7,7 @@ import {
   sendReturnReminderDm,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin, postRecordBorrow, nowString,
   postSwapBorrowItem,
+  fetchWarehouseBorrowedItems, postWarehouseRentBulk,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 
@@ -20,8 +21,9 @@ interface Props {
 // 반납 장바구니 한 줄 = 특정 대여 행에서 몇 개를 반납할지
 interface ReturnCartLine {
   key: string;                       // sheetType:rowIndex
-  sheetType: "scenario" | "general";
-  rowIndex: number;
+  sheetType: "scenario" | "general" | "warehouse";
+  rowIndex: number;                  // 창고 물품은 목록 순번(전송에는 쓰지 않는다)
+  name?: string;                     // 창고 반납 전송용 품명
   borrower: string;
   itemLabel: string;
   location: string;
@@ -50,6 +52,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   // 지난번 목록을 먼저 그려 화면이 비어 보이지 않게 한다 (응답이 오면 교체)
   const CACHE_KEY = "wms_unreturned_v1";
+  // 분야: 시나리오·일반 / 공구 및 부품류 — 반납 처리 방식이 서로 달라 탭으로 나눈다
+  const [category, setCategory] = useState<"scenario" | "warehouse">("scenario");
+  const [whItems, setWhItems] = useState<UnreturnedItem[]>([]);
+  const [whLoaded, setWhLoaded] = useState(false);
+  const [whLoading, setWhLoading] = useState(false);
+
   const [items, setItems] = useState<UnreturnedItem[]>(() => {
     try {
       const raw = sessionStorage.getItem(CACHE_KEY);
@@ -88,6 +96,39 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   useEffect(() => { load(); }, [load]);
 
+  // 공구 및 부품류 미반납 목록 (탭을 처음 열 때 불러온다)
+  const loadWarehouse = useCallback(async (silent = false) => {
+    if (!connected || !scriptUrl) { setWhLoaded(true); return; }
+    if (!silent) setWhLoading(true);
+    try {
+      const list = await fetchWarehouseBorrowedItems(scriptUrl, "");
+      // 창고 목록은 행 번호가 없으므로 순번을 부여해 화면 키로만 쓴다
+      setWhItems(list.map((it: any, i: number) => ({ ...it, sheetType: "warehouse", rowIndex: i + 1 })) as UnreturnedItem[]);
+      setWhLoaded(true);
+    } catch (e: any) {
+      showToast(`공구 및 부품류 미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
+    } finally {
+      if (!silent) setWhLoading(false);
+    }
+  }, [connected, scriptUrl]);
+
+  useEffect(() => {
+    if (category === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
+  }, [category, whLoaded, whLoading, loadWarehouse]);
+
+  // 분야가 바뀌면 담아둔 내용과 선택을 비운다 (반납 방식이 달라 섞으면 안 된다)
+  useEffect(() => {
+    setCart([]);
+    addHistoryRef.current = [];
+    setSelectedBorrower(null);
+    setCursor(0);
+  }, [category]);
+
+  const activeSource = category === "warehouse" ? whItems : items;
+  const activeLoaded = category === "warehouse" ? whLoaded : loaded;
+  const activeLoading = category === "warehouse" ? whLoading : loading;
+  const reloadActive = (silent = false) => (category === "warehouse" ? loadWarehouse(silent) : load(silent));
+
   // 15초마다 자동 새로고침.
   // 다른 관리자가 처리한 내용이 바로 반영되도록 하되, 담아둔 장바구니와 선택은 유지한다.
   const submittingRef = useRef(false);
@@ -97,15 +138,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     const timer = window.setInterval(() => {
       if (submittingRef.current) return;      // 처리 중에는 건너뛴다
       if (document.hidden) return;            // 다른 탭을 보고 있으면 굳이 부르지 않는다
-      load(true);                             // 조용히 갱신 (로딩 표시 없음)
+      reloadActive(true);                     // 조용히 갱신 (로딩 표시 없음)
     }, 15000);
     return () => window.clearInterval(timer);
   }, [connected, scriptUrl, load]);
 
   // 자동 새로고침으로 사라진 행(다른 사람이 먼저 반납한 경우)은 장바구니에서 정리한다.
   useEffect(() => {
-    if (!loaded || !cart.length) return;
-    const alive = new Map(items.map((it) => [`${it.sheetType}:${it.rowIndex}`, it.quantity || 1]));
+    if (!activeLoaded || !cart.length) return;
+    const alive = new Map(activeSource.map((it) => [`${it.sheetType}:${it.rowIndex}`, it.quantity || 1]));
     let changed = false;
     const next = cart
       .map((c) => {
@@ -121,12 +162,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       addHistoryRef.current = addHistoryRef.current.filter((k) => alive.has(k));
       showToast("다른 곳에서 처리된 항목이 있어 장바구니를 갱신했습니다.", "info");
     }
-  }, [items, loaded]);
+  }, [activeSource, activeLoaded]);
 
   // 대여자별로 묶는다
   const borrowers = useMemo(() => {
     const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[] }>();
-    items.forEach((it) => {
+    activeSource.forEach((it) => {
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
       if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [] });
       const g = map.get(name)!;
@@ -141,14 +182,14 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       ? list.filter((g) => smartMatch([g.name, ...g.items.map((i) => i.itemLabel)], q))
       : list
     ).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
-  }, [items, search]);
+  }, [activeSource, search]);
 
   const activeItems = useMemo(() => {
     if (!selectedBorrower) return [];
-    return items
+    return activeSource
       .filter((it) => (String(it.borrowerName || "").trim() || "(이름 없음)") === selectedBorrower)
       .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
-  }, [items, selectedBorrower]);
+  }, [activeSource, selectedBorrower]);
 
   // 반납이 늦은 사람 (7일 이상 / 2일 이상)
   const overdue = useMemo(() => {
@@ -156,7 +197,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     const day = 24 * 60 * 60 * 1000;
     const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[] }>();
 
-    items.forEach((it) => {
+    activeSource.forEach((it) => {
       const raw = String(it.borrowDate || "").trim();
       if (!raw) return;
       const t = Date.parse(raw.replace(" ", "T"));
@@ -175,7 +216,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
     const all = Array.from(map.values()).sort((a, b) => b.days - a.days || b.qty - a.qty);
     return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 2 && g.days < 7) };
-  }, [items]);
+  }, [activeSource]);
 
   const [dmSending, setDmSending] = useState<string | null>(null);
 
@@ -350,8 +391,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (idx === -1) {
         return [...prev, {
           key,
-          sheetType: it.sheetType as "scenario" | "general",
+          sheetType: it.sheetType as "scenario" | "general" | "warehouse",
           rowIndex: it.rowIndex,
+          name: (it as any).name || it.itemLabel,
           borrower: String(it.borrowerName || "").trim() || "(이름 없음)",
           itemLabel: it.itemLabel,
           location: it.location || "",
@@ -512,19 +554,37 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (!window.confirm(`${cart.length}종 · 총 ${cartTotal}개를 반납 처리할까요?`)) return;
     setSubmitting(true);
     try {
-      const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
-      const res = await postProcessReturn(
-        scriptUrl,
-        cart.map((c) => ({ sheetType: c.sheetType, rowIndex: c.rowIndex, quantity: c.qty })),
-        ver
-      );
+      let res: { success: boolean; message?: string };
+      if (category === "warehouse") {
+        // 공구 및 부품류는 반납 로그를 쌓는 방식이라 별도 API를 쓴다
+        const bulk = await postWarehouseRentBulk(
+          scriptUrl,
+          cart.map((c) => ({
+            type: "반납" as const,
+            location: c.location,
+            name: c.name || c.itemLabel,
+            qty: c.qty,
+            user: c.borrower,
+            note: "관리자 반납 처리",
+          }))
+        );
+        res = { success: bulk.success, message: bulk.success ? `${cartTotal}개를 반납 처리했습니다.` : (bulk.error || "반납 처리 실패") };
+      } else {
+        const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+        res = await postProcessReturn(
+          scriptUrl,
+          cart.map((c) => ({ sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex, quantity: c.qty })),
+          ver
+        );
+      }
       if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
       if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
       showToast(res.message || `${cartTotal}개를 반납 처리했습니다.`, "ok");
 
       // 서버 재조회를 기다리지 않고 화면에서 먼저 반영한다 (처리 직후 바로 다음 작업이 가능하도록).
       const done = new Map(cart.map((c) => [c.key, c.qty]));
-      setItems((prev) =>
+      const applyLocal = category === "warehouse" ? setWhItems : setItems;
+      applyLocal((prev) =>
         prev
           .map((it) => {
             const q = done.get(`${it.sheetType}:${it.rowIndex}`);
@@ -536,7 +596,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       );
       setCart([]);
       addHistoryRef.current = [];
-      load(true); // 정합성은 백그라운드로 맞춘다
+      reloadActive(true); // 정합성은 백그라운드로 맞춘다
     } catch (e: any) {
       showToast(`반납 처리 실패: ${e.message}`, "error");
     } finally {
@@ -560,9 +620,31 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           <Undo2 size={19} style={{ color: C.accentText }} />
           <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>반납 처리</h1>
           <span style={{ fontSize: "11px", color: C.label }}>15초마다 자동 새로고침</span>
-          <button onClick={load} title="지금 새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
+          <button onClick={() => reloadActive()} title="지금 새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
             <RotateCcw size={14} />
           </button>
+        </div>
+
+        {/* 분야 탭 — 반납 처리 방식이 달라 분리해서 다룬다 */}
+        <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+          {([["scenario", "🧩 시나리오 물품"], ["warehouse", "🔧 공구 및 부품류"]] as const).map(([v, label]) => {
+            const on = category === v;
+            return (
+              <button
+                key={v}
+                onClick={() => setCategory(v)}
+                style={{
+                  flex: 1, padding: "10px", borderRadius: "11px", cursor: "pointer",
+                  fontSize: "13px", fontWeight: 800,
+                  border: `1px solid ${on ? C.accent : C.border}`,
+                  background: on ? C.accentSoft : C.card,
+                  color: on ? C.accentText : C.label,
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
 
         <div style={{ position: "relative", marginBottom: "12px" }}>
@@ -576,7 +658,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          <b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · <b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
+          {category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null}<b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
           <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
@@ -624,7 +706,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </div>
         ) : null}
 
-        {loading && !loaded ? (
+        {activeLoading && !activeLoaded ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>불러오는 중...</div>
         ) : borrowers.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
@@ -655,6 +737,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       </div>
                       <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
                     </div>
+                    {category === "scenario" ? (
                     <button
                       onClick={(e) => { e.stopPropagation(); openLend(g); }}
                       title={`${g.name}님에게 물품 추가 대여`}
@@ -667,6 +750,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                     >
                       + 대여
                     </button>
+                    ) : null}
                     {on ? <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>선택됨</span> : null}
                   </div>
 
@@ -682,8 +766,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                             key={`${it.sheetType}-${it.rowIndex}`}
                             ref={atCursor ? cursorElRef : undefined}
                             onClick={() => { setCursor(idx); if (!done) addOne(it); }}
-                            onContextMenu={(e) => { e.preventDefault(); setCursor(idx); openSwap(it); }}
-                            title="우클릭하면 다른 물품으로 교체할 수 있습니다"
+                            onContextMenu={(e) => {
+                              if (category === "warehouse") return; // 창고 물품은 교체 대상이 아니다
+                              e.preventDefault(); setCursor(idx); openSwap(it);
+                            }}
+                            title={category === "warehouse" ? undefined : "우클릭하면 다른 물품으로 교체할 수 있습니다"}
                             style={{
                               display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
                               cursor: done ? "default" : "pointer",
