@@ -43,14 +43,30 @@ export default function StockAdjustModal({
   const [history, setHistory] = useState<StockChangeRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  const showToastRef = React.useRef(showToast);
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
+
   useEffect(() => {
     if (!connected || !scriptUrl) return;
+    let isMounted = true;
     setHistoryLoading(true);
     fetchStockChangeHistory(scriptUrl, category, itemId)
-      .then(setHistory)
-      .catch((e) => showToast(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error"))
-      .finally(() => setHistoryLoading(false));
-  }, [scriptUrl, connected, category, itemId, showToast]);
+      .then((data) => {
+        if (isMounted) setHistory(data);
+      })
+      .catch((e) => {
+        if (isMounted) showToastRef.current(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error");
+      })
+      .finally(() => {
+        if (isMounted) setHistoryLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [scriptUrl, connected, category, itemId]);
 
   const parsed = parseInt(newStock, 10);
   const diff = !isNaN(parsed) ? parsed - currentStock : null;
