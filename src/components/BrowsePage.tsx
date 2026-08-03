@@ -12,12 +12,13 @@ import {
   saveIdentity, loadIdentity,
   saveBrowseCart, loadBrowseCart, saveWarehouseCart, loadWarehouseCart,
   DEMO_OBJECT_ITEMS,
+  fetchScenarioDefinition, ScenarioDefinition,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
 
 type Affiliation = "cfgw" | "configds" | "other";
-type Step = "identity" | "menu" | "scenario" | "warehouse" | "mylookup";
+type Step = "identity" | "menu" | "scenario" | "warehouse" | "mylookup" | "sid";
 type Kind = "scenario" | "warehouse";
 
 interface BrowsePageProps {
@@ -315,6 +316,27 @@ export default function BrowsePage({
     else setStep("menu");
   }
 
+  /* ── SID 열람: 시나리오 ID로 필요 물품 조회 ── */
+  const [sidInput, setSidInput] = useState("");
+  const [sidLoading, setSidLoading] = useState(false);
+  const [sidResult, setSidResult] = useState<ScenarioDefinition | null>(null);
+
+  async function runSidLookup() {
+    const sid = sidInput.trim();
+    if (!sid) { showToast("시나리오 ID를 입력해주세요.", "warn"); return; }
+    if (!connected || !scriptUrl) { showToast("연동이 필요합니다.", "warn"); return; }
+    setSidLoading(true);
+    try {
+      const def = await fetchScenarioDefinition(scriptUrl, sid);
+      setSidResult(def);
+      if (!def.found) showToast(`'${sid}' 시나리오를 찾지 못했습니다.`, "warn");
+    } catch (e: any) {
+      showToast(`SID 조회 실패: ${e.message}`, "error");
+    } finally {
+      setSidLoading(false);
+    }
+  }
+
   async function runMyLookup() {
     setMyLoading(true);
     try {
@@ -377,7 +399,8 @@ export default function BrowsePage({
 
   const headerTitle = step === "scenario" ? "시나리오 물품 열람"
     : step === "warehouse" ? "공구 및 부품류 열람"
-    : step === "mylookup" ? "내 대여 조회" : "열람 조회";
+    : step === "mylookup" ? "내 대여 조회"
+    : step === "sid" ? "SID 열람" : "열람 조회";
 
   /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
   const stepRef = useRef(step);
@@ -537,7 +560,8 @@ export default function BrowsePage({
         {step === "menu" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {[
-              { key: "scenario" as const, icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 열람", sub: "모든 시나리오 물품을 그리드로 보고 장바구니에 담습니다" },
+              { key: "sid" as const, icon: <Fingerprint size={22} />, color: C.warn, bg: C.warnSoft, title: "SID 열람", sub: "시나리오 ID로 필요한 물품과 보관 위치를 확인합니다" },
+              { key: "scenario" as const, icon: <Boxes size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 열람", sub: "모든 시나리오 물품을 그리드로 보고 장바구니에 담습니다" },
               { key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 및 부품류 열람", sub: "창고 재고를 랙·슬롯별로 보고 장바구니에 담습니다" },
             ].map((m) => (
               <div
@@ -763,6 +787,85 @@ export default function BrowsePage({
               );
             })}
           </ItemGrid>
+        ) : null}
+
+        {step === "sid" ? (
+          <div style={{ maxWidth: "820px", margin: "0 auto" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "14px" }}>
+              <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                <Fingerprint size={16} style={{ position: "absolute", left: "13px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+                <input
+                  value={sidInput}
+                  onChange={(e) => setSidInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") runSidLookup(); }}
+                  placeholder="시나리오 ID를 입력하세요 (예: S0001)"
+                  style={{ ...inputStyle, width: "100%", boxSizing: "border-box", paddingLeft: "40px" }}
+                />
+              </div>
+              <button
+                onClick={runSidLookup}
+                disabled={sidLoading}
+                style={{ padding: "12px 22px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", cursor: sidLoading ? "wait" : "pointer", fontSize: "14px", fontWeight: 800, whiteSpace: "nowrap" }}
+              >
+                {sidLoading ? "조회 중..." : "조회"}
+              </button>
+            </div>
+
+            {!sidResult ? (
+              <div style={{ textAlign: "center", padding: "56px 0", color: C.label, fontSize: "13px", lineHeight: 1.7 }}>
+                <Fingerprint size={34} style={{ opacity: 0.35, marginBottom: "10px" }} />
+                <div>시나리오 ID를 입력하면 필요한 물품과 보관 위치를 보여드립니다.</div>
+              </div>
+            ) : !sidResult.found ? (
+              <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
+                '{sidResult.sid}' 시나리오를 찾지 못했습니다.
+              </div>
+            ) : (
+              <div>
+                <div style={{ padding: "14px 16px", borderRadius: "12px", background: C.card, border: `1px solid ${C.border}`, marginBottom: "12px" }}>
+                  <div style={{ fontSize: "15px", fontWeight: 800, color: C.text, marginBottom: "4px" }}>{sidResult.sid}</div>
+                  {sidResult.highLevelKo || sidResult.highLevelEn ? (
+                    <div style={{ fontSize: "12.5px", color: C.label, lineHeight: 1.6 }}>
+                      {sidResult.highLevelKo || sidResult.highLevelEn}
+                    </div>
+                  ) : null}
+                  {sidResult.blocked ? (
+                    <div style={{ marginTop: "8px", fontSize: "12px", fontWeight: 700, color: C.error }}>
+                      ⚠ {sidResult.blockReason || "대여가 제한된 시나리오입니다."}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div style={{ fontSize: "12px", color: C.label, marginBottom: "8px" }}>
+                  필요 물품 {sidResult.items.length}종
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "10px" }}>
+                  {sidResult.items.map((it: any, i: number) => {
+                    const obj = sciItems.find((o) => o.id === it.id);
+                    return (
+                      <div key={`${it.id}-${i}`} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, padding: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <div
+                          onClick={() => { if (obj?.image) setModalUrl(getGoogleDriveImageUrl(obj.image)); }}
+                          style={{ height: "104px", borderRadius: "10px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: obj?.image ? "pointer" : "default" }}
+                        >
+                          {obj?.image
+                            ? <img src={getGoogleDriveImageUrl(obj.image)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            : <Boxes size={26} style={{ color: C.label, opacity: 0.45 }} />}
+                        </div>
+                        <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                        <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
+                          <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>📍 {obj?.rootSlot || "위치 없음"}</span>
+                          <span style={{ fontWeight: 800, color: C.accentText }}>x{it.quantity || 1}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         ) : null}
 
         {step === "mylookup" ? (
