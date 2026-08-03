@@ -65,7 +65,12 @@ export default function BrowsePage({
     errorSoft: "rgba(239, 68, 68, 0.12)",
   };
 
-  const [step, setStep] = useState<Step>(initialStep || "identity");
+  const [step, setStep] = useState<Step>(() => {
+    // 주소가 #/browse/sid 로 들어온 경우도 SID 단계로 시작한다
+    const slug = (typeof window !== "undefined" ? window.location.hash.split("/")[2] : "") || "";
+    if (slug === "sid") return "sid";
+    return initialStep || "identity";
+  });
   const [affiliation, setAffiliation] = useState<Affiliation>("cfgw");
   const [name, setName] = useState("");
   const [empId, setEmpId] = useState("");
