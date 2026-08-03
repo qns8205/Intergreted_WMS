@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
 import { fetchNotices, NoticeData, fetchBorrowLock, BorrowLock } from "../utils/borrowApi";
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
@@ -64,7 +64,7 @@ function readLockSeed(): BorrowLock {
 }
 
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "browse" | "mylookup" | "login") => void;
+  onNavigate: (view: "borrow" | "browse" | "mylookup" | "sid" | "login") => void;
   isLightMode: boolean;
   isMobile?: boolean;
   scriptUrl: string;
@@ -159,7 +159,7 @@ export default function LandingPage({
             color: isLightMode ? "#111827" : "#f1f5f9",
           }}
         >
-          대여 · 반납 · 관리
+          공구 및 부품류 대여 · 반납 · 관리
         </h1>
         {/* 대여 잠금 안내 */}
         {connected && borrowLock.locked ? (
@@ -362,6 +362,12 @@ export default function LandingPage({
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
             desc: "SID별 필요 물품과 시나리오 물품·공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+          },
+          {
+            key: "sid" as const,
+            icon: <Fingerprint size={24} />,
+            title: "SID 열람",
+            desc: "시나리오 ID로 필요한 물품과 보관 위치를 확인합니다.",
           },
           {
             key: "mylookup" as const,
