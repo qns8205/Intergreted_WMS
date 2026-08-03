@@ -66,6 +66,8 @@ export default function BrowsePage({
   };
 
   const [step, setStep] = useState<Step>(() => {
+    // 내 대여 조회는 항상 신원 입력부터 시작한다 (주소에 남은 이전 단계를 따르지 않는다)
+    if (purpose === "mylookup") return "identity";
     // 주소가 #/browse/sid 로 들어온 경우도 SID 단계로 시작한다
     const slug = (typeof window !== "undefined" ? window.location.hash.split("/")[2] : "") || "";
     if (slug === "sid") return "sid";
@@ -798,7 +800,7 @@ export default function BrowsePage({
 
         {step === "sid" ? (
           <div style={{ maxWidth: "820px", margin: "0 auto" }}>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "14px" }}>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "stretch" }}>
               <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
                 <Fingerprint size={16} style={{ position: "absolute", left: "13px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
                 <input
@@ -819,13 +821,14 @@ export default function BrowsePage({
             </div>
 
             {!sidResult ? (
-              <div style={{ textAlign: "center", padding: "56px 0", color: C.label, fontSize: "13px", lineHeight: 1.7 }}>
-                <Fingerprint size={34} style={{ opacity: 0.35, marginBottom: "10px" }} />
-                <div>시나리오 ID를 입력하면 필요한 물품과 보관 위치를 보여드립니다.</div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "12px", padding: "64px 20px", color: C.label, fontSize: "13.5px", lineHeight: 1.7, textAlign: "center" }}>
+                <Fingerprint size={38} style={{ opacity: 0.3 }} />
+                <div>시나리오 ID를 입력하면<br />필요한 물품과 보관 위치를 보여드립니다.</div>
               </div>
             ) : !sidResult.found ? (
-              <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
-                '{sidResult.sid}' 시나리오를 찾지 못했습니다.
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "56px 20px", color: C.label, fontSize: "13.5px", textAlign: "center" }}>
+                <Fingerprint size={34} style={{ opacity: 0.3 }} />
+                <div>'{sidResult.sid}' 시나리오를 찾지 못했습니다.</div>
               </div>
             ) : (
               <div>
