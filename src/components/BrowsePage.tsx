@@ -163,7 +163,8 @@ export default function BrowsePage({
   // step이 scenario/warehouse가 되면 (아직 미로드·비로딩일 때) 자동 로드.
   // 클릭 핸들러에서 직접 호출하지 않고 effect로 처리하여 클로저/중복호출 문제를 원천 차단.
   useEffect(() => {
-    if (step === "scenario" && !sciLoaded && !sciLoading) loadScenario();
+    // SID 열람에서도 물품 위치·사진을 붙이려면 시나리오 물품 목록이 필요하다
+    if ((step === "scenario" || step === "sid") && !sciLoaded && !sciLoading) loadScenario();
     if (step === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
   }, [step, sciLoaded, sciLoading, whLoaded, whLoading, loadScenario, loadWarehouse]);
 
@@ -394,6 +395,8 @@ export default function BrowsePage({
     if (step === "identity") return onBack();
     if (step === "menu") return setStep("identity");
     if (step === "mylookup" && purpose === "mylookup") return setStep("identity");
+    // SID 열람으로 바로 들어온 경우엔 메뉴가 아니라 이전 화면으로 나간다
+    if (step === "sid" && initialStep === "sid") return onBack();
     setStep("menu");
   }
 
@@ -560,7 +563,6 @@ export default function BrowsePage({
         {step === "menu" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {[
-              { key: "sid" as const, icon: <Fingerprint size={22} />, color: C.warn, bg: C.warnSoft, title: "SID 열람", sub: "시나리오 ID로 필요한 물품과 보관 위치를 확인합니다" },
               { key: "scenario" as const, icon: <Boxes size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 열람", sub: "모든 시나리오 물품을 그리드로 보고 장바구니에 담습니다" },
               { key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 및 부품류 열람", sub: "창고 재고를 랙·슬롯별로 보고 장바구니에 담습니다" },
             ].map((m) => (
@@ -842,7 +844,9 @@ export default function BrowsePage({
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "10px" }}>
                   {sidResult.items.map((it: any, i: number) => {
-                    const obj = sciItems.find((o) => o.id === it.id);
+                    // ID 표기(앞 0 유무)가 달라도 찾도록 6자리로 맞춰 비교한다
+                    const wantId = padSlot(String(it.id || "").trim());
+                    const obj = sciItems.find((o) => padSlot(String(o.id || "").trim()) === wantId);
                     return (
                       <div key={`${it.id}-${i}`} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, padding: "8px", display: "flex", flexDirection: "column", gap: "6px" }}>
                         <div
@@ -856,7 +860,9 @@ export default function BrowsePage({
                         <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
                         <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
-                          <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>📍 {obj?.rootSlot || "위치 없음"}</span>
+                          <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>
+                            📍 {obj?.rootSlot || (sciLoading ? "조회 중..." : (it.rootSlot || "위치 없음"))}
+                          </span>
                           <span style={{ fontWeight: 800, color: C.accentText }}>x{it.quantity || 1}</span>
                         </div>
                       </div>
