@@ -156,7 +156,7 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "sid" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
   // 서버(GAS)가 새 버전으로 재배포되면, 이미 열려 있던 탭은 구버전 상태로 남는다.
   // 최초 접속 시 버전을 기억해두고, 주기적으로 서버 버전과 비교해서 달라지면
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
@@ -630,13 +630,13 @@ export default function App() {
   // 조기에 지워버리는 문제를 막는다. (예: A 토스트 → 곧이어 B 토스트가 뜬 경우,
   // A의 2.8초 타이머가 나중에 발동해 B를 순식간에 지워버려 "경고가 안 뜬 것처럼" 보이는 버그)
   const toastTokenRef = useRef(0);
-  const showToast = useCallback((msg: string, type: "info" | "ok" | "warn" | "error" = "info") => {
+  const showToast = (msg: string, type: "info" | "ok" | "warn" | "error" = "info") => {
     const myToken = ++toastTokenRef.current;
     setToast({ msg, type });
     setTimeout(() => {
       if (toastTokenRef.current === myToken) setToast(null);
     }, 2800);
-  }, []);
+  };
 
   // 3-1. 모바일용 관리자 모드 시스템 활성화 지원
   useEffect(() => {
@@ -1687,6 +1687,8 @@ export default function App() {
             setCurrentView("browse");
           } else if (view === "mylookup") {
             setCurrentView("mylookup");
+          } else if (view === "sid") {
+            setCurrentView("sid");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
@@ -1781,7 +1783,7 @@ export default function App() {
     );
   }
 
-  if (currentView === "browse" || currentView === "mylookup") {
+  if (currentView === "browse" || currentView === "mylookup" || currentView === "sid") {
     return (
       <BrowsePage
         key={currentView}
@@ -1791,6 +1793,7 @@ export default function App() {
         onBack={() => setCurrentView("landing")}
         showToast={showToast}
         purpose={currentView === "mylookup" ? "mylookup" : "browse"}
+        initialStep={currentView === "sid" ? "sid" : undefined}
         onGoBorrow={({ identity, kind }) => {
           setBorrowIdentity(identity);
           setBorrowKind(kind);
@@ -2592,8 +2595,7 @@ export default function App() {
                     // 이 화면도 방금 발급된 버전 기준으로 다시 맞춘다.
                     baselineAppVersionRef.current = res.version || null;
                   } else {
-                    const errMsg = res.message || (res as any).error || "버전 발급에 실패했습니다. Apps Script 스크립트가 최신으로 배포되었는지 확인해 주세요.";
-                    showToast(errMsg, "error");
+                    showToast(res.message || "버전 발급에 실패했습니다.", "error");
                   }
                 } catch (e: any) {
                   showToast(`버전 발급 실패: ${e.message}`, "error");
