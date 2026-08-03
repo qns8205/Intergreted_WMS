@@ -156,7 +156,9 @@ function safeSetLocalStorage(key: string, value: string) {
    ============================================================ */
 export default function App() {
   // 1. 상태 선언
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "sid" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
+  // 열람 화면에 어느 단계로 들어갈지 (SID 열람 등)
+  const [browseInitialStep, setBrowseInitialStep] = useState<"sid" | null>(null);
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
   // 서버(GAS)가 새 버전으로 재배포되면, 이미 열려 있던 탭은 구버전 상태로 남는다.
   // 최초 접속 시 버전을 기억해두고, 주기적으로 서버 버전과 비교해서 달라지면
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
@@ -1684,11 +1686,15 @@ export default function App() {
             setBorrowKind(null);
             setCurrentView("borrow");
           } else if (view === "browse") {
+            setBrowseInitialStep(null);
             setCurrentView("browse");
           } else if (view === "mylookup") {
             setCurrentView("mylookup");
           } else if (view === "sid") {
-            setCurrentView("sid");
+            // SID 열람은 열람 화면의 하위 단계다. 주소를 먼저 맞춰두고 진입한다.
+            window.location.hash = "#/browse/sid";
+            setBrowseInitialStep("sid");
+            setCurrentView("browse");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
@@ -1783,7 +1789,7 @@ export default function App() {
     );
   }
 
-  if (currentView === "browse" || currentView === "mylookup" || currentView === "sid") {
+  if (currentView === "browse" || currentView === "mylookup") {
     return (
       <BrowsePage
         key={currentView}
@@ -1793,7 +1799,7 @@ export default function App() {
         onBack={() => setCurrentView("landing")}
         showToast={showToast}
         purpose={currentView === "mylookup" ? "mylookup" : "browse"}
-        initialStep={currentView === "sid" ? "sid" : undefined}
+        initialStep={browseInitialStep}
         onGoBorrow={({ identity, kind }) => {
           setBorrowIdentity(identity);
           setBorrowKind(kind);
