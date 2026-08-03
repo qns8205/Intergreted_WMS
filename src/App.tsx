@@ -1685,6 +1685,8 @@ export default function App() {
             setCurrentView("borrow");
           } else if (view === "browse") {
             setCurrentView("browse");
+          } else if (view === "mylookup") {
+            setCurrentView("mylookup");
           } else if (view === "login") {
             setLoginId("");
             setLoginPassword("");
