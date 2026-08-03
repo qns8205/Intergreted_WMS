@@ -64,7 +64,7 @@ function readLockSeed(): BorrowLock {
 }
 
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "browse" | "login") => void;
+  onNavigate: (view: "borrow" | "browse" | "mylookup" | "login") => void;
   isLightMode: boolean;
   isMobile?: boolean;
   scriptUrl: string;
@@ -361,7 +361,13 @@ export default function LandingPage({
             key: "browse" as const,
             icon: <ClipboardList size={24} />,
             title: "열람 조회",
-            desc: "시나리오 물품과 공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+            desc: "SID별 필요 물품과 시나리오 물품·공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
+          },
+          {
+            key: "mylookup" as const,
+            icon: <PackageOpen size={24} />,
+            title: "내 대여 조회",
+            desc: "내가 대여 중인 시나리오 물품·공구 및 부품류와 보관 위치를 확인합니다.",
           },
         ].map((c) => (
           <div
