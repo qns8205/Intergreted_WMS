@@ -1904,6 +1904,50 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         {/* ───────── Step 4-일반: 구분/목적/제출 ───────── */}
         {mode === "b4g" ? (
           <div>
+            {/* 마지막 단계에서도 담은 물품과 수량을 확인·수정할 수 있게 한다 */}
+            {cart.length > 0 ? (
+              <div style={{ marginBottom: "18px", border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "12px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "9px" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 800, color: C.text }}>담은 물품</span>
+                  <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>
+                    {cart.length}종 · {cart.reduce((n, c) => n + (c.quantity || 1), 0)}개
+                  </span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "220px", overflowY: "auto", borderTop: `1px solid ${C.border}`, paddingTop: "9px" }}>
+                  {cart.map((c, idx) => {
+                    const obj = objectItems.find((o) => o.id === c.id);
+                    const stock = Number(obj?.stock ?? 0);
+                    return (
+                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "13px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
+                          <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{c.id}{c.rootSlot ? ` · ${c.rootSlot}` : ""}</div>
+                        </div>
+                        <button
+                          onClick={() => setCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: Math.max(1, (x.quantity || 1) - 1) } : x)))}
+                          style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}
+                        >−</button>
+                        <span style={{ minWidth: "36px", textAlign: "center", fontSize: "13px", fontWeight: 800 }}>
+                          {c.quantity}<span style={{ fontSize: "10px", color: C.label, fontWeight: 600 }}>/{stock || "-"}</span>
+                        </span>
+                        <button
+                          onClick={() => {
+                            if (stock && (c.quantity || 1) >= stock) { showToast(`재고(${stock}개)를 초과할 수 없습니다.`, "warn"); return; }
+                            setCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: (x.quantity || 1) + 1 } : x)));
+                          }}
+                          style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}
+                        >+</button>
+                        <button
+                          onClick={() => setCart((prev) => prev.filter((_, i) => i !== idx))}
+                          style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                        ><X size={12} /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
             <label style={labelStyle}>대여 구분 <span style={{ fontWeight: 400, color: C.error, fontSize: "12px" }}>(필수)</span></label>
             <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
               <TypeCard small active={generalOption === "추가 물품 대여"} icon={<PlusCircle size={18} />} text="추가 물품 대여" onClick={() => setGeneralOption("추가 물품 대여")} C={C} />
@@ -2351,7 +2395,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", fontSize: "11.5px", color: C.label }}>
               <span>{whFiltered.length} / {whItems.length}개 물품</span>
-              <span>카드를 누르면 장바구니에 담깁니다</span>
+              <span>카드를 누를 때마다 1개씩 담깁니다</span>
             </div>
 
             {whLoading && !whLoaded ? (
@@ -2385,8 +2429,18 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         <span style={{ fontWeight: 700, color: isNaN(stockN) ? C.label : (soldOut ? C.error : C.success) }}>{isNaN(stockN) ? "N/A" : soldOut ? "재고 없음" : `재고 ${stockN}`}</span>
                       </div>
                       {inCart ? (
-                        <div style={{ height: "22px", borderRadius: "6px", background: C.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 800, color: C.accentText }}>
-                          담김 {cartQty}개
+                        <div style={{ display: "flex", gap: "4px" }}>
+                          <div style={{ flex: 1, height: "22px", borderRadius: "6px", background: C.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 800, color: C.accentText }}>
+                            담김 {cartQty}개
+                          </div>
+                          {/* 취소는 카드 클릭과 겹치지 않도록 이 버튼으로만 */}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setWhCart(whCart.filter((c) => c.rowIndex !== it.rowIndex)); }}
+                            title="담은 물품 빼기"
+                            style={{ flexShrink: 0, width: "26px", height: "22px", borderRadius: "6px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+                          >
+                            <X size={11} />
+                          </button>
                         </div>
                       ) : (
                         <div style={{ height: "22px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
@@ -3352,9 +3406,13 @@ function ItemPicker({
               <div
                 key={it.id}
                 onClick={(e) => {
-                  if (!inCart && soldOut) { showToast("재고가 없는 물품입니다.", "warn"); return; }
-                  if (!inCart && onFly) onFly(e.currentTarget.getBoundingClientRect());
-                  toggleItem(it);
+                  if (soldOut && !inCart) { showToast("재고가 없는 물품입니다.", "warn"); return; }
+                  // 누를 때마다 1개씩 늘린다 (재고 한도까지). 빼기는 아래 취소 버튼으로만.
+                  const cur = list.find((x) => x.id === it.id);
+                  if (cur && cur.quantity >= stock) { showToast(`재고(${stock}개)를 초과할 수 없습니다.`, "warn"); return; }
+                  if (onFly) onFly(e.currentTarget.getBoundingClientRect());
+                  if (!cur) toggleItem(it);
+                  else setList(list.map((x) => (x.id === it.id ? { ...x, quantity: x.quantity + 1 } : x)));
                 }}
                 style={{
                   border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
@@ -3380,15 +3438,30 @@ function ItemPicker({
                   <StockBadges stock={stock} rented={rented} C={C} />
                 </div>
 
-                <div style={{
-                  height: "26px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "11.5px", fontWeight: 800,
-                  background: inCart ? C.accentSoft : "transparent",
-                  border: inCart ? "none" : `1px solid ${C.border}`,
-                  color: inCart ? C.accentText : (soldOut ? C.label : C.accentText),
-                }}>
-                  {inCart ? "담김 · 누르면 제거" : soldOut ? "재고 없음" : "담기"}
-                </div>
+                {inCart ? (
+                  <div style={{ display: "flex", gap: "5px" }}>
+                    <div style={{ flex: 1, height: "26px", borderRadius: "8px", background: C.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11.5px", fontWeight: 800, color: C.accentText }}>
+                      담김 {list.find((x) => x.id === it.id)?.quantity || 0}개
+                    </div>
+                    {/* 취소는 이 버튼으로만 (카드 클릭은 담기 전용) */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setList(list.filter((x) => x.id !== it.id)); }}
+                      title="담은 물품 빼기"
+                      style={{ flexShrink: 0, width: "30px", height: "26px", borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontSize: "13px", fontWeight: 800 }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{
+                    height: "26px", borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: "11.5px", fontWeight: 800,
+                    border: `1px solid ${C.border}`,
+                    color: soldOut ? C.label : C.accentText,
+                  }}>
+                    {soldOut ? "재고 없음" : "담기"}
+                  </div>
+                )}
               </div>
             );
           })}
