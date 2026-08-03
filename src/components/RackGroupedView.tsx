@@ -188,9 +188,10 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                                   href={it.link}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  style={{ flex: isAdmin ? "0 0 auto" : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "9px", borderRadius: "9px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, fontSize: "12px", fontWeight: 700, textDecoration: "none" }}
+                                  title="새 탭에서 제품 링크 열기"
+                                  style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "9px", borderRadius: "9px", border: `1px solid ${C.accent}`, background: C.accentSoft, color: C.accentText, fontSize: "12px", fontWeight: 700, textDecoration: "none" }}
                                 >
-                                  <ExternalLink size={13} /> {isAdmin ? "" : "링크 열기"}
+                                  <ExternalLink size={13} /> 링크 열기
                                 </a>
                               ) : null}
                               {isAdmin ? (
