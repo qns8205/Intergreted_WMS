@@ -1689,6 +1689,9 @@ export default function App() {
             setBrowseInitialStep(null);
             setCurrentView("browse");
           } else if (view === "mylookup") {
+            // 이전에 SID 열람을 봤다면 주소가 #/browse/sid 로 남아 있으므로 먼저 정리한다
+            setBrowseInitialStep(null);
+            window.location.hash = "#/mylookup";
             setCurrentView("mylookup");
           } else if (view === "sid") {
             // SID 열람은 열람 화면의 하위 단계다. 주소를 먼저 맞춰두고 진입한다.
