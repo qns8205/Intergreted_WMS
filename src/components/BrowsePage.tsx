@@ -410,7 +410,7 @@ export default function BrowsePage({
   stepRef.current = step;
 
   // 슬라이딩 방향 추적 (렌더 중 동기 계산)
-  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenario: 2, warehouse: 2, mylookup: 2 };
+  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenario: 2, warehouse: 2, mylookup: 2, sid: 2 };
   const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
   const slideDirRef = useRef<"forward" | "back">("forward");
   const curStepOrder = STEP_ORDER[step] ?? 0;
@@ -437,7 +437,7 @@ export default function BrowsePage({
       const base = parts[1] || "";
       const slug = parts[2] || "";
       if (base !== "browse" && base !== "mylookup") { onBack(); return; }
-      const valid: Step[] = ["identity", "menu", "scenario", "warehouse", "mylookup"];
+      const valid: Step[] = ["identity", "menu", "scenario", "warehouse", "mylookup", "sid"];
       if (valid.includes(slug as Step) && slug !== stepRef.current) {
         suppressBrowseHash.current = true;
         setStep(slug as Step);
