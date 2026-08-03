@@ -2592,7 +2592,8 @@ export default function App() {
                     // 이 화면도 방금 발급된 버전 기준으로 다시 맞춘다.
                     baselineAppVersionRef.current = res.version || null;
                   } else {
-                    showToast(res.message || "버전 발급에 실패했습니다.", "error");
+                    const errMsg = res.message || (res as any).error || "버전 발급에 실패했습니다. Apps Script 스크립트가 최신으로 배포되었는지 확인해 주세요.";
+                    showToast(errMsg, "error");
                   }
                 } catch (e: any) {
                   showToast(`버전 발급 실패: ${e.message}`, "error");
