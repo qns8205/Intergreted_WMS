@@ -8,8 +8,10 @@ import {
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin, postRecordBorrow, nowString,
   postSwapBorrowItem,
   fetchWarehouseBorrowedItems, postWarehouseRentBulk,
+  fetchWarehouseInventory, WarehouseItem,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
+import { getGoogleDriveImageUrl } from "../utils/drive";
 
 interface Props {
   scriptUrl: string;
@@ -75,6 +77,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [cart, setCart] = useState<ReturnCartLine[]>([]);
   // 현재 선택 위치(하이라이트). A는 이 위치를 담고, ↑/↓로 위치만 옮길 수 있다.
   const [cursor, setCursor] = useState(0);
+  // A를 한 번 누르면 사진을 먼저 보여주고, 다시 누르면 담는다 (엉뚱한 물품을 담는 실수 방지)
+  const [preview, setPreview] = useState<{ key: string; item: UnreturnedItem } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
@@ -122,6 +126,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     addHistoryRef.current = [];
     setSelectedBorrower(null);
     setCursor(0);
+    setPreview(null);
   }, [category]);
 
   const activeSource = category === "warehouse" ? whItems : items;
@@ -219,6 +224,70 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   }, [activeSource]);
 
   const [dmSending, setDmSending] = useState<string | null>(null);
+
+  /* ── 공구 및 부품류 직접 대여 (관리자가 대신 처리) ── */
+  const [whLendOpen, setWhLendOpen] = useState(false);
+  const [whCatalog, setWhCatalog] = useState<WarehouseItem[]>([]);
+  const [whLendName, setWhLendName] = useState("");
+  const [whLendSearch, setWhLendSearch] = useState("");
+  const [whLendNote, setWhLendNote] = useState("");
+  const [whLendCart, setWhLendCart] = useState<{ rowIndex: number; location: string; name: string; quantity: number; stock: number }[]>([]);
+  const [whLendSubmitting, setWhLendSubmitting] = useState(false);
+
+  async function openWhLend() {
+    setWhLendOpen(true);
+    setWhLendCart([]);
+    setWhLendName("");
+    setWhLendSearch("");
+    setWhLendNote("");
+    if (!whCatalog.length && connected && scriptUrl) {
+      try {
+        setWhCatalog(await fetchWarehouseInventory(scriptUrl));
+      } catch (e: any) {
+        showToast(`공구 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      }
+    }
+  }
+
+  function addWhLend(it: WarehouseItem) {
+    const stock = Number(it.stock);
+    const cap = isNaN(stock) ? 999 : stock;
+    if (cap <= 0) { showToast("재고가 없는 물품입니다.", "warn"); return; }
+    setWhLendCart((prev) => {
+      const i = prev.findIndex((c) => c.rowIndex === it.rowIndex);
+      if (i === -1) return [...prev, { rowIndex: it.rowIndex, location: it.location, name: it.name, quantity: 1, stock: cap }];
+      if (prev[i].quantity >= cap) return prev;
+      return prev.map((c, idx) => (idx === i ? { ...c, quantity: c.quantity + 1 } : c));
+    });
+  }
+
+  async function submitWhLend() {
+    if (!whLendName.trim()) { showToast("대여자 성함을 입력해주세요.", "warn"); return; }
+    if (!whLendCart.length) { showToast("대여할 물품을 담아주세요.", "warn"); return; }
+    setWhLendSubmitting(true);
+    try {
+      const res = await postWarehouseRentBulk(
+        scriptUrl,
+        whLendCart.map((c) => ({
+          type: "대여" as const,
+          location: c.location,
+          name: c.name,
+          qty: c.quantity,
+          user: whLendName.trim(),
+          note: whLendNote.trim() || "관리자 직접 대여",
+        }))
+      );
+      if (!res.success) { showToast(res.error || "대여 처리 실패", "error"); return; }
+      showToast(`${whLendName.trim()}님에게 ${whLendCart.reduce((n, c) => n + c.quantity, 0)}개를 대여했습니다.`, "ok");
+      setWhLendOpen(false);
+      setWhLendCart([]);
+      loadWarehouse(true);
+    } catch (e: any) {
+      showToast(`대여 처리 실패: ${e.message}`, "error");
+    } finally {
+      setWhLendSubmitting(false);
+    }
+  }
 
   /* ── 물품 교체 (반납하면서 다른 오브젝트로 대체) ── */
   const [swapTarget, setSwapTarget] = useState<UnreturnedItem | null>(null);
@@ -438,6 +507,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (!selectedBorrower) { showToast("먼저 대여자를 선택해주세요.", "warn"); return; }
     if (!activeItems.length) return;
 
+    // 시나리오 물품은 사진 확인 단계를 한 번 거친다.
+    // (미리보기가 떠 있고 그 물품이 커서와 같으면 이번 A는 "담기"로 처리)
+    if (category === "scenario") {
+      const cur = activeItems[Math.min(cursor, activeItems.length - 1)];
+      const curKey = cur ? `${cur.sheetType}:${cur.rowIndex}` : "";
+      if (!preview || preview.key !== curKey) {
+        if (cur && !isFull(cur)) { setPreview({ key: curKey, item: cur }); return; }
+      }
+      setPreview(null);
+    }
+
     // 커서가 이미 다 찬 항목을 가리키면 다음 빈 항목으로 먼저 이동
     let idx = cursor;
     if (idx >= activeItems.length || isFull(activeItems[idx])) {
@@ -456,11 +536,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (next !== -1) setCursor(next);
       else setCursor(Math.min(idx + 1, activeItems.length - 1));
     }
-  }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull]);
+  }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull, category, preview]);
 
   // P / O : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
   const moveCursor = useCallback((delta: number) => {
     if (!activeItems.length) return;
+    setPreview(null); // 다른 물품으로 옮기면 미리보기는 닫는다
     setCursor((prev) => Math.max(0, Math.min(activeItems.length - 1, prev + delta)));
   }, [activeItems.length]);
 
@@ -619,6 +700,14 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
           <Undo2 size={19} style={{ color: C.accentText }} />
           <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>반납 처리</h1>
+          {category === "warehouse" ? (
+            <button
+              onClick={openWhLend}
+              style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 800, color: "#fff", background: C.accent, border: `1px solid ${C.accent}` }}
+            >
+              + 직접 대여
+            </button>
+          ) : null}
           <span style={{ fontSize: "11px", color: C.label }}>15초마다 자동 새로고침</span>
           <button onClick={() => reloadActive()} title="지금 새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
             <RotateCcw size={14} />
@@ -658,7 +747,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          {category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null}<b style={{ color: C.accentText }}>A</b> 한 개 담기 · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
+          {category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null}<b style={{ color: C.accentText }}>A</b> {category === "scenario" ? "사진 확인 → 한 번 더 눌러 담기" : "한 개 담기"} · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
           <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> 반납 완료 ·{" "}
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
@@ -821,6 +910,160 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </div>
         )}
       </div>
+
+      {/* 공구 및 부품류 직접 대여 — 실수로 닫히지 않도록 배경 클릭으로는 닫지 않는다 */}
+      {whLendOpen ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 4300, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+          <div style={{ width: "min(600px, 100%)", maxHeight: "86vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+              <Package size={17} style={{ color: C.accentText }} />
+              <span style={{ fontSize: "15px", fontWeight: 800, flex: 1 }}>공구 및 부품류 직접 대여</span>
+              <button onClick={() => setWhLendOpen(false)} title="닫기" style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={19} /></button>
+            </div>
+
+            <input
+              value={whLendName}
+              onChange={(e) => setWhLendName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
+              placeholder="대여자 성함 (필수)"
+              style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: "8px", fontWeight: 700 }}
+            />
+
+            <div style={{ position: "relative", marginBottom: "10px" }}>
+              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+              <input
+                value={whLendSearch}
+                onChange={(e) => setWhLendSearch(e.target.value)}
+                placeholder="물품명 · 위치로 검색"
+                style={{ ...inputStyle, width: "100%", boxSizing: "border-box", paddingLeft: "36px" }}
+              />
+            </div>
+
+            <div style={{ flex: 1, minHeight: "160px", overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: "10px", marginBottom: "12px" }}>
+              {whCatalog.length === 0 ? (
+                <div style={{ padding: "24px", textAlign: "center", fontSize: "12.5px", color: C.label }}>공구 목록을 불러오는 중입니다...</div>
+              ) : (
+                whCatalog
+                  .filter((it) => !whLendSearch.trim() || smartMatch([it.name, it.location, it.spec], whLendSearch))
+                  .slice(0, 60)
+                  .map((it) => {
+                    const stock = Number(it.stock);
+                    const soldOut = !isNaN(stock) && stock <= 0;
+                    const picked = whLendCart.find((c) => c.rowIndex === it.rowIndex)?.quantity || 0;
+                    return (
+                      <div
+                        key={it.rowIndex}
+                        onClick={() => addWhLend(it)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: "9px", padding: "9px 12px",
+                          borderBottom: `1px solid ${C.border}`, cursor: soldOut ? "not-allowed" : "pointer",
+                          opacity: soldOut ? 0.45 : 1, background: picked > 0 ? C.accentSoft : "transparent",
+                        }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                          <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace" }}>{it.location}</div>
+                        </div>
+                        <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 700, color: soldOut ? C.error : C.success }}>
+                          재고 {isNaN(stock) ? "N/A" : stock}
+                        </span>
+                        {picked > 0 ? <span style={{ flexShrink: 0, fontSize: "11.5px", fontWeight: 800, color: C.accentText }}>{picked}개</span> : null}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            {whLendCart.length > 0 ? (
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: "10px", marginBottom: "10px", display: "flex", flexDirection: "column", gap: "6px", maxHeight: "140px", overflowY: "auto" }}>
+                {whLendCart.map((c, idx) => (
+                  <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                    <button onClick={() => setWhLendCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: x.quantity - 1 } : x)).filter((x) => x.quantity > 0))}
+                      style={{ width: 24, height: 24, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1 }}>−</button>
+                    <span style={{ minWidth: "34px", textAlign: "center", fontSize: "12.5px", fontWeight: 800 }}>{c.quantity}<span style={{ fontSize: "10px", color: C.label }}>/{c.stock}</span></span>
+                    <button onClick={() => setWhLendCart((prev) => prev.map((x, i) => (i === idx ? { ...x, quantity: Math.min(x.stock, x.quantity + 1) } : x)))}
+                      style={{ width: 24, height: 24, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", lineHeight: 1 }}>+</button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            <input
+              value={whLendNote}
+              onChange={(e) => setWhLendNote(e.target.value)}
+              placeholder="목적 / 메모 (선택)"
+              style={{ ...inputStyle, width: "100%", boxSizing: "border-box", marginBottom: "12px" }}
+            />
+
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => setWhLendOpen(false)}
+                disabled={whLendSubmitting}
+                style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${C.border}`, background: "transparent", color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+              >
+                취소
+              </button>
+              <button
+                onClick={submitWhLend}
+                disabled={whLendSubmitting || !whLendCart.length || !whLendName.trim()}
+                style={{
+                  flex: 2, padding: "13px", borderRadius: "11px", border: "none",
+                  background: (whLendCart.length && whLendName.trim()) ? C.accent : C.border, color: "#fff",
+                  cursor: (whLendCart.length && whLendName.trim() && !whLendSubmitting) ? "pointer" : "not-allowed",
+                  fontSize: "14px", fontWeight: 800, opacity: whLendSubmitting ? 0.7 : 1,
+                }}
+              >
+                {whLendSubmitting ? "처리 중..." : `대여 처리하기 (${whLendCart.reduce((n, c) => n + c.quantity, 0)}개)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* A 1회: 사진 확인 → A 한 번 더: 담기 */}
+      {preview ? (
+        <div
+          onClick={() => setPreview(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 4200, background: "rgba(15,23,42,0.62)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(420px, 100%)", background: C.card, borderRadius: "18px", border: `2px solid ${C.accent}`, padding: "20px", textAlign: "center" }}
+          >
+            <div style={{ width: "100%", height: "230px", borderRadius: "12px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: "14px" }}>
+              {preview.item.image ? (
+                <img src={getGoogleDriveImageUrl(preview.item.image)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
+              ) : (
+                <div style={{ color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}>
+                  <Package size={34} style={{ opacity: 0.4 }} />
+                  등록된 사진이 없습니다
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: "15px", fontWeight: 800, color: C.text, marginBottom: "4px" }}>{preview.item.itemLabel}</div>
+            <div style={{ fontSize: "12px", color: C.label, marginBottom: "16px" }}>
+              {preview.item.location ? `📍 ${preview.item.location} · ` : ""}
+              {inCartQty(preview.item)} / {preview.item.quantity || 1}개 담김
+            </div>
+
+            <div style={{ display: "flex", gap: "9px" }}>
+              <button
+                onClick={() => setPreview(null)}
+                style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${C.border}`, background: "transparent", color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+              >
+                취소
+              </button>
+              <button
+                onClick={() => { const it = preview.item; setPreview(null); addOne(it); }}
+                style={{ flex: 2, padding: "13px", borderRadius: "11px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "14px", fontWeight: 800 }}
+              >
+                맞습니다 · 담기 (A)
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* 물품 교체 모달 */}
       {swapTarget ? (
