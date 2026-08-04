@@ -488,8 +488,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 선택한 대여자의 물품을 "같은 시각에 신청한 묶음"으로 나눈다.
   // 반납 도중 새 대여가 들어와도 어느 건이 언제 것인지 구분된다.
   const activeGroups = useMemo(() => {
-    const bucket = (it: UnreturnedItem) =>
-      String(it.borrowDateTime || it.borrowDate || "").trim().slice(0, 16) || "(시각 미상)";
+    // 신청시각(시:분)이 있으면 그걸로, 없으면 날짜만으로 묶는다
+    const bucket = (it: UnreturnedItem) => {
+      const raw = String(it.borrowDateTime || it.borrowDate || "").trim();
+      if (!raw) return "(시각 미상)";
+      return raw.length >= 16 ? raw.slice(0, 16) : raw;
+    };
 
     const map = new Map<string, { key: string; when: string; shift?: string; items: UnreturnedItem[] }>();
     activeItems.forEach((it) => {
@@ -1005,7 +1009,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           <div key={grp.key} style={{ marginBottom: "10px" }}>
                             {/* 신청 시각별 구분선 */}
                             <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "4px 2px 6px" }}>
-                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>🕘 {grp.when}</span>
+                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>
+                                🕘 {grp.when.length >= 16 ? grp.when : `${grp.when} (시각 정보 없음)`}
+                              </span>
                               <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{grp.items.length}종 · {grpQty}개</span>
                               <div style={{ flex: 1, height: "1px", background: C.border }} />
                             </div>
@@ -1057,11 +1063,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                           );
                                         })()}
                                       </div>
-                                      {it.location ? (
-                                        <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
-                                          <MapPin size={9} /> {it.location}
-                                        </div>
-                                      ) : null}
+                                      <div style={{ display: "flex", alignItems: "center", gap: "7px", marginTop: "2px", flexWrap: "wrap" }}>
+                                        {it.location ? (
+                                          <span style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px" }}>
+                                            <MapPin size={9} /> {it.location}
+                                          </span>
+                                        ) : null}
+                                        <span style={{ fontSize: "10.5px", color: C.label }}>
+                                          {String(it.borrowDateTime || it.borrowDate || "").trim() || "시각 미상"}
+                                        </span>
+                                        {it.shift ? (
+                                          <span style={{ fontSize: "9.5px", fontWeight: 800, borderRadius: "999px", padding: "1px 6px", color: it.shift === "night" ? "#6366f1" : C.warn, background: it.shift === "night" ? "rgba(99,102,241,0.14)" : C.warnSoft }}>
+                                            {it.shift === "night" ? "🌙" : "☀️"}
+                                          </span>
+                                        ) : null}
+                                      </div>
                                     </div>
                                     <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
                                       {picked} / {max}
