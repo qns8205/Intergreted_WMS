@@ -761,6 +761,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       );
       setCart([]);
       addHistoryRef.current = [];
+      setReborrowAfter(false); // 다음 처리에 실수로 이어지지 않도록 해제
       reloadActive(true); // 정합성은 백그라운드로 맞춘다
     } catch (e: any) {
       showToast(`반납 처리 실패: ${e.message}`, "error");
