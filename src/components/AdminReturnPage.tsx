@@ -509,8 +509,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       const t = Date.parse(v.replace(" ", "T"));
       return isNaN(t) ? 0 : t;
     };
-    // 오래된 신청부터 위로 (먼저 빌린 것을 먼저 정리하도록)
-    return Array.from(map.values()).sort((a, b) => ts(a.when) - ts(b.when));
+    // 최근 신청부터 위로 (가장 최근에 빌린 것이 맨 위에 보이도록)
+    return Array.from(map.values()).sort((a, b) => ts(b.when) - ts(a.when));
   }, [activeItems]);
 
   // 커서 인덱스는 묶음을 펼친 순서(= activeItems 정렬)와 맞춰야 한다
