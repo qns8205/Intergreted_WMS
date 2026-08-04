@@ -443,7 +443,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                 <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "12px" }}>불러오는 중...</div>
               ) : occEntries.filter((e) => (occTab === "return" ? e.allReturned : !e.allReturned)).length === 0 ? (
                 <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>
-                  이 시프트에 이 유닛의 {occTab === "return" ? "반납" : "미반납"} 기록이 없습니다.
+                  최근 3일간 이 시프트·유닛의 {occTab === "return" ? "반납" : "미반납"} 기록이 없습니다.
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
