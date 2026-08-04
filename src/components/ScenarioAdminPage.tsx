@@ -902,10 +902,13 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
           itemId={stockAdjustItem.id}
           itemLabel={stockAdjustItem.name}
           currentStock={stockAdjustItem.stock || 0}
+          currentRented={stockAdjustItem.rented || 0}
           showToast={showToast}
           onClose={() => setStockAdjustItem(null)}
           onSaved={(newStock) => {
             setItems((prev) => prev.map((it) => (it.rowIndex === stockAdjustItem.rowIndex ? { ...it, stock: newStock } : it)));
+            setLoaded(false); // 대여 중 수량까지 반영되도록 목록을 다시 받는다
+            setLoaded(false); // 대여 중 수량까지 반영되도록 목록을 다시 받는다
           }}
         />
       )}
