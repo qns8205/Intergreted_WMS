@@ -144,7 +144,9 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
         .wms-slot-highlight { animation: wms-slot-highlight-pulse 1.15s ease-out 2; }
       `}</style>
 
-      {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다. */}
+      {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다.
+          랙이 하나도 없으면 빈 여백만 남지 않도록 컨테이너 자체를 렌더링하지 않는다. */}
+      {racks.length > 0 ? (
       <div style={{ marginBottom: "10px" }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
           {racks.map((r) => {
@@ -188,6 +190,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {/* 상단 컨트롤 (스크롤해도 고정) */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", padding: "10px 0", borderRadius: "10px" }}>
