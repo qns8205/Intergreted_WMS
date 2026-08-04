@@ -1,9 +1,9 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useEffect } from "react";
 import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
-import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, LayoutGrid, Rows3, ArrowUpDown, PackageOpen, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, ArrowUpDown, PackageOpen, Plus } from "lucide-react";
 import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
@@ -34,44 +34,93 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
 
   const [search, setSearch] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [groupMode, setGroupMode] = useState<"rack" | "slot">("rack"); // 랙 단위 vs 슬롯(정확한 위치) 단위
+  // 슬롯(정확한 위치) 단위 그룹핑이 기본이자 유일한 방식이다. (랙 단위 그룹핑 제거)
+
+  // 헤더 랙 내비게이터: 어떤 랙이 펼쳐져 슬롯 목록을 보여주고 있는지
+  const [expandedRack, setExpandedRack] = useState<string | null>(null);
+
+  // 스크롤 이동 대상 그룹(슬롯)의 DOM 참조와, 방금 이동한 그룹을 잠깐 반짝여줄 하이라이트 키
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
 
   const groups = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((it) => {
-      if (q) {
-        if (!smartMatch([it.name, it.location, it.spec, it.keywords], q)) return;
-      }
-      let key: string;
-      if (groupMode === "rack") {
-        const { rack } = parseLocation(it.location);
-        key = rack || "미지정";
-      } else {
-        // 슬롯 단위: 정확한 위치(랙-슬롯) 하나하나를 그룹으로
-        key = (it.location || "").trim().toUpperCase() || "미지정";
-      }
+      // 슬롯 단위: 정확한 위치(랙-슬롯) 하나하나를 그룹으로
+      const key = (it.location || "").trim().toUpperCase() || "미지정";
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(it);
     });
-    // 랙/슬롯 이름 오름차순 정렬 (슬롯 단위는 랙-슬롯 순서 비교 함수 재사용)
-    const entries = Array.from(map.entries()).sort((a, b) =>
-      groupMode === "rack" ? a[0].localeCompare(b[0]) : compareRackSlot(a[0], b[0])
-    );
+    const entries = Array.from(map.entries()).sort((a, b) => compareRackSlot(a[0], b[0]));
     entries.forEach(([, items]) => items.sort((a, b) => compareRackSlot(a.location, b.location)));
     return entries;
-  }, [inventory, search, groupMode]);
+  }, [inventory]);
 
   const totalShown = groups.reduce((n, [, items]) => n + items.length, 0);
-  const allCollapsed = groups.length > 0 && groups.every(([rack]) => collapsed[rack]);
+  const allCollapsed = groups.length > 0 && groups.every(([key]) => collapsed[key]);
 
-  function toggle(rack: string) {
-    setCollapsed((p) => ({ ...p, [rack]: !p[rack] }));
+  // 헤더 랙 내비게이터용: 랙 목록과, 랙별 슬롯(정확한 위치) 목록
+  const racks = useMemo(() => {
+    const set = new Set<string>();
+    inventory.forEach((it) => {
+      const { rack } = parseLocation(it.location);
+      if (rack) set.add(rack);
+    });
+    return Array.from(set).sort();
+  }, [inventory]);
+
+  const slotsByRack = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    inventory.forEach((it) => {
+      const { rack } = parseLocation(it.location);
+      if (!rack) return;
+      const loc = (it.location || "").trim().toUpperCase();
+      if (!loc) return;
+      if (!map[rack]) map[rack] = [];
+      if (!map[rack].includes(loc)) map[rack].push(loc);
+    });
+    Object.keys(map).forEach((r) => map[r].sort(compareRackSlot));
+    return map;
+  }, [inventory]);
+
+  function toggle(key: string) {
+    setCollapsed((p) => ({ ...p, [key]: !p[key] }));
   }
   function toggleAll() {
     if (allCollapsed) setCollapsed({});
-    else { const next: Record<string, boolean> = {}; groups.forEach(([rack]) => (next[rack] = true)); setCollapsed(next); }
+    else { const next: Record<string, boolean> = {}; groups.forEach(([key]) => (next[key] = true)); setCollapsed(next); }
   }
+
+  // 특정 슬롯(위치)으로 스크롤 이동 + 잠깐 하이라이트. 접혀 있으면 먼저 펼친다.
+  function scrollToGroup(key: string) {
+    setCollapsed((prev) => (prev[key] ? { ...prev, [key]: false } : prev));
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    // 방금 펼쳐졌을 수 있으니 렌더가 반영된 다음 스크롤한다
+    window.setTimeout(() => {
+      groupRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    setHighlightKey(key);
+    highlightTimerRef.current = window.setTimeout(() => setHighlightKey(null), 2300);
+  }
+
+  // 검색어가 입력되면 목록을 걸러내는 대신, 첫 매칭 위치로 스크롤 + 하이라이트한다.
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) return;
+    const timer = window.setTimeout(() => {
+      const match = inventory.find((it) => smartMatch([it.name, it.location, it.spec, it.keywords], q));
+      if (!match) return;
+      const key = (match.location || "").trim().toUpperCase() || "미지정";
+      scrollToGroup(key);
+    }, 350);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, inventory]);
+
+  useEffect(() => {
+    return () => { if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current); };
+  }, []);
 
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "9px 12px 9px 34px", fontSize: "13px", borderRadius: "10px",
@@ -85,27 +134,66 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
 
   return (
     <div>
+      {/* 하이라이트 펄스 애니메이션 */}
+      <style>{`
+        @keyframes wms-slot-highlight-pulse {
+          0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); border-color: ${C.accent}; }
+          70% { box-shadow: 0 0 0 16px rgba(37,99,235,0); border-color: ${C.accent}; }
+          100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); }
+        }
+        .wms-slot-highlight { animation: wms-slot-highlight-pulse 1.15s ease-out 2; }
+      `}</style>
+
+      {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다. */}
+      <div style={{ marginBottom: "10px" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+          {racks.map((r) => {
+            const on = expandedRack === r;
+            return (
+              <button
+                key={r}
+                onClick={() => setExpandedRack(on ? null : r)}
+                style={{
+                  display: "flex", alignItems: "center", gap: "4px",
+                  padding: "7px 12px", borderRadius: "9px", cursor: "pointer",
+                  border: `1px solid ${on ? C.accent : C.border}`,
+                  background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
+                  fontSize: "12px", fontWeight: 800, fontFamily: "monospace",
+                }}
+              >
+                {r}랙 {on ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+            );
+          })}
+        </div>
+        {expandedRack ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px", padding: "10px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}` }}>
+            {(slotsByRack[expandedRack] || []).length === 0 ? (
+              <span style={{ fontSize: "11.5px", color: C.label }}>이 랙에는 등록된 물품이 없습니다.</span>
+            ) : (
+              (slotsByRack[expandedRack] || []).map((slot) => (
+                <button
+                  key={slot}
+                  onClick={() => { scrollToGroup(slot); setExpandedRack(null); }}
+                  style={{
+                    padding: "6px 10px", borderRadius: "7px", cursor: "pointer",
+                    border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                    fontSize: "11.5px", fontWeight: 700, fontFamily: "monospace",
+                  }}
+                >
+                  {slot}
+                </button>
+              ))
+            )}
+          </div>
+        ) : null}
+      </div>
+
       {/* 상단 컨트롤 (스크롤해도 고정) */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", padding: "10px 0", borderRadius: "10px" }}>
         <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
           <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색..." style={inputStyle} />
-        </div>
-        <div style={{ display: "flex", border: `1px solid ${C.border}`, borderRadius: "10px", overflow: "hidden", flexShrink: 0 }}>
-          <button
-            onClick={() => setGroupMode("rack")}
-            title="랙 단위로 그룹화"
-            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "9px 12px", border: "none", background: groupMode === "rack" ? C.accent : C.card, color: groupMode === "rack" ? "#fff" : C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
-          >
-            <LayoutGrid size={13} /> 랙 단위
-          </button>
-          <button
-            onClick={() => setGroupMode("slot")}
-            title="슬롯(정확한 위치) 단위로 그룹화"
-            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "9px 12px", border: "none", borderLeft: `1px solid ${C.border}`, background: groupMode === "slot" ? C.accent : C.card, color: groupMode === "slot" ? "#fff" : C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
-          >
-            <Rows3 size={13} /> 슬롯 단위
-          </button>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색... (해당 위치로 이동합니다)" style={inputStyle} />
         </div>
         <button onClick={toggleAll} style={{ padding: "9px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap" }}>
           {allCollapsed ? "모두 펼치기" : "모두 접기"}
@@ -115,20 +203,26 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
             <PackageOpen size={13} /> 세트 관리
           </button>
         ) : null}
-        <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{groups.length}개 {groupMode === "rack" ? "랙" : "슬롯"} · {totalShown}개 물품</span>
+        <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{groups.length}개 슬롯 · {totalShown}개 물품</span>
       </div>
 
       {groups.length === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
           <Package size={36} style={{ color: C.border, marginBottom: "8px" }} />
-          <div>{search ? "검색 결과가 없습니다." : "표시할 공구 및 부품류가 없습니다."}</div>
+          <div>표시할 공구 및 부품류가 없습니다.</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {groups.map(([groupKey, items]) => {
             const isCollapsed = !!collapsed[groupKey];
+            const isHighlighted = highlightKey === groupKey;
             return (
-              <section key={groupKey} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+              <section
+                key={groupKey}
+                ref={(el) => { groupRefs.current[groupKey] = el; }}
+                className={isHighlighted ? "wms-slot-highlight" : undefined}
+                style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}
+              >
                 {/* 그룹 헤더 */}
                 <div
                   onClick={() => toggle(groupKey)}
@@ -139,17 +233,16 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                   }}
                 >
                   {isCollapsed ? <ChevronRight size={17} style={{ color: C.label }} /> : <ChevronDown size={17} style={{ color: C.label }} />}
-                  <span style={{ width: 30, height: 30, borderRadius: "8px", background: C.accentSoft, color: C.accentText, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: groupMode === "rack" ? "13px" : "10px", flexShrink: 0, fontFamily: groupMode === "slot" ? "monospace" : "inherit" }}>{groupMode === "rack" ? groupKey : <MapPin size={14} />}</span>
-                  <span style={{ fontWeight: 800, fontSize: "15px", flex: 1, textAlign: "left", fontFamily: groupMode === "slot" ? "monospace" : "inherit" }}>{groupMode === "rack" ? `${groupKey}랙` : groupKey}</span>
+                  <span style={{ width: 30, height: 30, borderRadius: "8px", background: C.accentSoft, color: C.accentText, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "10px", flexShrink: 0, fontFamily: "monospace" }}><MapPin size={14} /></span>
+                  <span style={{ fontWeight: 800, fontSize: "15px", flex: 1, textAlign: "left", fontFamily: "monospace" }}>{groupKey}</span>
                   <span style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "20px", padding: "3px 11px" }}>{items.length}개</span>
                   {isAdmin && onAddItem ? (
                     <button
                       onClick={(e) => {
                         e.stopPropagation(); // 헤더 접기와 겹치지 않게
-                        // 랙 그룹이면 "A-" 까지, 슬롯 그룹이면 슬롯 값을 그대로 채워준다
-                        onAddItem(groupMode === "rack" ? `${groupKey}-` : groupKey);
+                        onAddItem(groupKey);
                       }}
-                      title={groupMode === "rack" ? `${groupKey}랙에 새 물품 추가` : `${groupKey}에 새 물품 추가`}
+                      title={`${groupKey}에 새 물품 추가`}
                       style={{
                         display: "flex", alignItems: "center", gap: "4px", flexShrink: 0,
                         padding: "5px 11px", borderRadius: "8px", cursor: "pointer",
