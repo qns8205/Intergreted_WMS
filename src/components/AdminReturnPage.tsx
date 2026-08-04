@@ -443,28 +443,30 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     }
   }
 
-  // 물품별 경과일 (대여일 기준)
-  const daysSince = (borrowDate?: string) => {
+  // 반납 기한: Day 대여는 다음날 10:00, Night 대여는 다음날 19:00까지.
+  // 그 시각을 지났으면 "지난 일수"를(당일이면 0) 돌려주고, 아직 기한 전이면 null.
+  const daysOverdue = (borrowDate?: string, shift?: string) => {
     const raw = String(borrowDate || "").trim();
     if (!raw) return null;
     const t = Date.parse(raw.replace(" ", "T"));
     if (isNaN(t)) return null;
-    return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
+    const b = new Date(t);
+    const isNight = shift === "night";
+    const deadline = new Date(b.getFullYear(), b.getMonth(), b.getDate() + 1, isNight ? 19 : 10, 0, 0, 0).getTime();
+    const now = Date.now();
+    if (now < deadline) return null; // 아직 기한 전
+    return Math.floor((now - deadline) / (24 * 60 * 60 * 1000));
   };
 
-  // 반납이 늦은 사람 (7일 이상 / 2일 이상)
+  // 반납이 늦은 사람 (기한 7일 이상 초과 / 기한 초과)
+  // 기한: Day는 다음날 10시, Night은 다음날 19시. 그 시각을 지나야 "연체"로 잡힌다.
   const overdue = useMemo(() => {
-    const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
     const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[]; day: number; night: number }>();
 
     activeSource.forEach((it) => {
-      const raw = String(it.borrowDate || "").trim();
-      if (!raw) return;
-      const t = Date.parse(raw.replace(" ", "T"));
-      if (isNaN(t)) return;
-      const d = Math.floor((now - t) / day);
-      if (d < 2) return;
+      const d = daysOverdue(it.borrowDate, it.shift);
+      if (d === null) return; // 아직 기한 전
 
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
       if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [], day: 0, night: 0 });
@@ -480,8 +482,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     const all = Array.from(map.values())
       .filter((g) => !exempt[g.name]) // 예외로 등록된 사람은 제외
       .sort((a, b) => b.days - a.days || b.qty - a.qty);
-    return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 2 && g.days < 7) };
+    return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 0 && g.days < 7) };
   }, [activeSource, exempt]);
+
 
   const [dmSending, setDmSending] = useState<string | null>(null);
 
@@ -904,8 +907,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         {(overdue.severe.length > 0 || overdue.mild.length > 0) ? (
           <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
             {([
-              { list: overdue.severe, title: `7일 이상 미반납`, tone: C.error, toneSoft: C.errorSoft, note: "10종류 제한 페널티 대상" },
-              { list: overdue.mild, title: `2일 이상 미반납`, tone: C.warn, toneSoft: C.warnSoft, note: "" },
+              { list: overdue.severe, title: `7일 이상 기한 초과`, tone: C.error, toneSoft: C.errorSoft, note: "10종류 제한 페널티 대상" },
+              { list: overdue.mild, title: `반납 기한 초과`, tone: C.warn, toneSoft: C.warnSoft, note: "Day 10시 · Night 19시" },
             ] as const).filter((sec) => sec.list.length > 0).map((sec) => (
               <div key={sec.title} style={{ border: `1px solid ${sec.tone}55`, background: sec.toneSoft, borderRadius: "12px", padding: "11px 13px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
@@ -1049,19 +1052,19 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
                                         <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
                                         {(() => {
-                                          const d = daysSince(it.borrowDate);
-                                          if (d === null || d < 2) return null;
+                                          const d = daysOverdue(it.borrowDate, it.shift);
+                                          if (d === null) return null;
                                           const severe = d >= 7;
                                           return (
                                             <span
-                                              title={`${it.borrowDate} 대여 · ${d}일 경과`}
+                                              title={`${it.borrowDate} 대여 (${it.shift === "night" ? "Night · 다음날 19시 기한" : "Day · 다음날 10시 기한"}) · 기한 ${d}일 초과`}
                                               style={{
                                                 flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
                                                 color: severe ? C.error : C.warn,
                                                 background: severe ? C.errorSoft : C.warnSoft,
                                               }}
                                             >
-                                              {severe ? `⚠ ${d}일` : `${d}일`}
+                                              {severe ? `⚠ ${d}일` : d === 0 ? "기한초과" : `${d}일`}
                                             </span>
                                           );
                                         })()}
