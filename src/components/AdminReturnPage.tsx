@@ -196,34 +196,36 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
   }, [activeSource, selectedBorrower]);
 
-  // 반납이 늦은 사람 (7일 이상 / 2일 이상)
-  const overdue = useMemo(() => {
-    const now = Date.now();
-    const day = 24 * 60 * 60 * 1000;
-    const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[] }>();
+  // 연체 예외 처리: 사유가 있어 독촉하지 않을 사람은 목록에서 제외한다.
+  // (장기 프로젝트 대여, 관리자 승인 보관 등)
+  const EXEMPT_KEY = "wms_overdue_exempt_v1";
+  const [exempt, setExempt] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(EXEMPT_KEY);
+      if (raw) return JSON.parse(raw) as Record<string, string>;
+    } catch (e) { /* 무시 */ }
+    return {};
+  });
 
-    activeSource.forEach((it) => {
-      const raw = String(it.borrowDate || "").trim();
-      if (!raw) return;
-      const t = Date.parse(raw.replace(" ", "T"));
-      if (isNaN(t)) return;
-      const d = Math.floor((now - t) / day);
-      if (d < 2) return;
+  function saveExempt(next: Record<string, string>) {
+    setExempt(next);
+    try { localStorage.setItem(EXEMPT_KEY, JSON.stringify(next)); } catch (e) { /* 무시 */ }
+  }
 
-      const name = String(it.borrowerName || "").trim() || "(이름 없음)";
-      if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [] });
-      const g = map.get(name)!;
-      if (!g.email && it.email) g.email = it.email;
-      if (d > g.days) g.days = d;
-      g.qty += it.quantity || 1;
-      g.items.push(it);
-    });
-
-    const all = Array.from(map.values()).sort((a, b) => b.days - a.days || b.qty - a.qty);
-    return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 2 && g.days < 7) };
-  }, [activeSource]);
-
-  const [dmSending, setDmSending] = useState<string | null>(null);
+  function toggleExempt(name: string) {
+    if (exempt[name]) {
+      if (!window.confirm(`${name}님을 예외에서 해제할까요? 다시 연체 목록에 표시됩니다.`)) return;
+      const next = { ...exempt };
+      delete next[name];
+      saveExempt(next);
+      showToast(`${name}님을 예외에서 해제했습니다.`, "ok");
+      return;
+    }
+    const reason = window.prompt(`${name}님을 연체 목록에서 제외합니다.\n\n사유를 입력해주세요. (예: 장기 프로젝트 대여 승인)`, "");
+    if (reason === null) return;
+    saveExempt({ ...exempt, [name]: reason.trim() || "사유 미기재" });
+    showToast(`${name}님을 연체 예외로 등록했습니다.`, "ok");
+  }
 
   /* ── 공구 및 부품류 직접 대여 (관리자가 대신 처리) ── */
   const [whLendOpen, setWhLendOpen] = useState(false);
@@ -446,6 +448,37 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (isNaN(t)) return null;
     return Math.floor((Date.now() - t) / (24 * 60 * 60 * 1000));
   };
+
+  // 반납이 늦은 사람 (7일 이상 / 2일 이상)
+  const overdue = useMemo(() => {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[] }>();
+
+    activeSource.forEach((it) => {
+      const raw = String(it.borrowDate || "").trim();
+      if (!raw) return;
+      const t = Date.parse(raw.replace(" ", "T"));
+      if (isNaN(t)) return;
+      const d = Math.floor((now - t) / day);
+      if (d < 2) return;
+
+      const name = String(it.borrowerName || "").trim() || "(이름 없음)";
+      if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [] });
+      const g = map.get(name)!;
+      if (!g.email && it.email) g.email = it.email;
+      if (d > g.days) g.days = d;
+      g.qty += it.quantity || 1;
+      g.items.push(it);
+    });
+
+    const all = Array.from(map.values())
+      .filter((g) => !exempt[g.name]) // 예외로 등록된 사람은 제외
+      .sort((a, b) => b.days - a.days || b.qty - a.qty);
+    return { severe: all.filter((g) => g.days >= 7), mild: all.filter((g) => g.days >= 2 && g.days < 7) };
+  }, [activeSource, exempt]);
+
+  const [dmSending, setDmSending] = useState<string | null>(null);
 
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
@@ -752,6 +785,34 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제)
         </div>
 
+        {/* 연체 예외로 등록된 사람 */}
+        {Object.keys(exempt).length > 0 ? (
+          <div style={{ marginBottom: "12px", border: `1px solid ${C.border}`, background: C.cardSub, borderRadius: "12px", padding: "10px 13px" }}>
+            <div style={{ fontSize: "11.5px", fontWeight: 800, color: C.label, marginBottom: "7px" }}>
+              연체 예외 {Object.keys(exempt).length}명 <span style={{ fontWeight: 500 }}>(연체 목록·DM 대상에서 제외)</span>
+            </div>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+              {Object.entries(exempt).map(([name, why]) => (
+                <button
+                  key={name}
+                  onClick={() => toggleExempt(name)}
+                  title={`${why}\n누르면 예외를 해제합니다`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "6px",
+                    padding: "5px 11px", borderRadius: "999px", cursor: "pointer",
+                    border: `1px solid ${C.border}`, background: C.card, color: C.label,
+                    fontSize: "11.5px", fontWeight: 700,
+                  }}
+                >
+                  {name}
+                  <span style={{ fontWeight: 500, opacity: 0.8, maxWidth: "140px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{why}</span>
+                  <X size={11} />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {/* 반납이 늦은 사람: 7일 이상 / 2일 이상 */}
         {(overdue.severe.length > 0 || overdue.mild.length > 0) ? (
           <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -771,8 +832,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                     <button
                       key={g.name}
                       onClick={() => notifyBorrower(g)}
+                      onContextMenu={(e) => { e.preventDefault(); toggleExempt(g.name); }}
                       disabled={dmSending === g.name}
-                      title={`${g.name} · ${g.days}일 경과 · ${g.qty}개 — 누르면 Slack DM으로 반납 요청`}
+                      title={`${g.name} · ${g.days}일 경과 · ${g.qty}개\n좌클릭: Slack DM으로 반납 요청\n우클릭: 연체 예외로 등록`}
                       style={{
                         display: "flex", alignItems: "center", gap: "6px",
                         padding: "6px 12px", borderRadius: "999px",
@@ -788,7 +850,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                   ))}
                 </div>
                 <div style={{ fontSize: "10.5px", color: C.label, marginTop: "7px" }}>
-                  이름을 누르면 해당 대여자에게 Slack DM으로 반납 요청을 보냅니다.
+                  이름을 누르면 Slack DM으로 반납 요청 · 우클릭하면 연체 예외로 등록합니다.
                 </div>
               </div>
             ))}
