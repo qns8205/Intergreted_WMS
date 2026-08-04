@@ -174,15 +174,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   // 대여자별로 묶는다
   const borrowers = useMemo(() => {
-    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[] }>();
+    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[]; day: number; night: number }>();
     activeSource.forEach((it) => {
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
-      if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [] });
+      if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [], day: 0, night: 0 });
       const g = map.get(name)!;
       g.items.push(it);
       g.qty += it.quantity || 1;
       const seat = [it.floor, it.unit].filter(Boolean).join(" · ");
       if (seat && !g.seats.includes(seat)) g.seats.push(seat);
+      if (it.shift === "night") g.night += it.quantity || 1;
+      else g.day += it.quantity || 1;
     });
     const list = Array.from(map.values());
     const q = search.trim();
@@ -483,6 +485,30 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   const [dmSending, setDmSending] = useState<string | null>(null);
 
+  // 선택한 대여자의 물품을 "같은 시각에 신청한 묶음"으로 나눈다.
+  // 반납 도중 새 대여가 들어와도 어느 건이 언제 것인지 구분된다.
+  const activeGroups = useMemo(() => {
+    const bucket = (it: UnreturnedItem) =>
+      String(it.borrowDateTime || it.borrowDate || "").trim().slice(0, 16) || "(시각 미상)";
+
+    const map = new Map<string, { key: string; when: string; shift?: string; items: UnreturnedItem[] }>();
+    activeItems.forEach((it) => {
+      const key = `${it.batchId || ""}|${bucket(it)}`;
+      if (!map.has(key)) map.set(key, { key, when: bucket(it), shift: it.shift, items: [] });
+      map.get(key)!.items.push(it);
+    });
+
+    const ts = (v: string) => {
+      const t = Date.parse(v.replace(" ", "T"));
+      return isNaN(t) ? 0 : t;
+    };
+    // 오래된 신청부터 위로 (먼저 빌린 것을 먼저 정리하도록)
+    return Array.from(map.values()).sort((a, b) => ts(a.when) - ts(b.when));
+  }, [activeItems]);
+
+  // 커서 인덱스는 묶음을 펼친 순서(= activeItems 정렬)와 맞춰야 한다
+  const flatItems = useMemo(() => activeGroups.flatMap((g) => g.items), [activeGroups]);
+
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
   const cartTotal = cart.reduce((n, c) => n + c.qty, 0);
@@ -541,12 +567,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 그 물품을 다 담았으면 커서를 "아직 안 찬 다음 항목"으로 옮긴다.
   const addAtCursor = useCallback(() => {
     if (!selectedBorrower) { showToast("먼저 대여자를 선택해주세요.", "warn"); return; }
-    if (!activeItems.length) return;
+    if (!flatItems.length) return;
 
     // 시나리오 물품은 사진 확인 단계를 한 번 거친다.
     // (미리보기가 떠 있고 그 물품이 커서와 같으면 이번 A는 "담기"로 처리)
     if (category === "scenario") {
-      const cur = activeItems[Math.min(cursor, activeItems.length - 1)];
+      const cur = flatItems[Math.min(cursor, flatItems.length - 1)];
       const curKey = cur ? `${cur.sheetType}:${cur.rowIndex}` : "";
       if (!preview || preview.key !== curKey) {
         if (cur && !isFull(cur)) { setPreview({ key: curKey, item: cur }); return; }
@@ -556,30 +582,30 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
     // 커서가 이미 다 찬 항목을 가리키면 다음 빈 항목으로 먼저 이동
     let idx = cursor;
-    if (idx >= activeItems.length || isFull(activeItems[idx])) {
-      const next = activeItems.findIndex((it, i) => i >= idx && !isFull(it));
-      idx = next !== -1 ? next : activeItems.findIndex((it) => !isFull(it));
+    if (idx >= flatItems.length || isFull(flatItems[idx])) {
+      const next = flatItems.findIndex((it, i) => i >= idx && !isFull(it));
+      idx = next !== -1 ? next : flatItems.findIndex((it) => !isFull(it));
       if (idx === -1) { showToast("이 대여자의 물품을 모두 담았습니다.", "info"); return; }
       setCursor(idx);
     }
 
-    const target = activeItems[idx];
+    const target = flatItems[idx];
     addOne(target);
 
     // 이번 한 개로 가득 찼다면 다음 미완료 항목으로 커서 이동
     if (inCartQty(target) + 1 >= (target.quantity || 1)) {
-      const next = activeItems.findIndex((it, i) => i > idx && !isFull(it));
+      const next = flatItems.findIndex((it, i) => i > idx && !isFull(it));
       if (next !== -1) setCursor(next);
-      else setCursor(Math.min(idx + 1, activeItems.length - 1));
+      else setCursor(Math.min(idx + 1, flatItems.length - 1));
     }
-  }, [selectedBorrower, activeItems, cursor, cart, addOne, isFull, category, preview]);
+  }, [selectedBorrower, flatItems, cursor, cart, addOne, isFull, category, preview]);
 
   // P / O : 담지 않고 커서만 옮긴다 (건너뛰고 싶은 물품이 있을 때)
   const moveCursor = useCallback((delta: number) => {
-    if (!activeItems.length) return;
+    if (!flatItems.length) return;
     setPreview(null); // 다른 물품으로 옮기면 미리보기는 닫는다
-    setCursor((prev) => Math.max(0, Math.min(activeItems.length - 1, prev + delta)));
-  }, [activeItems.length]);
+    setCursor((prev) => Math.max(0, Math.min(flatItems.length - 1, prev + delta)));
+  }, [flatItems.length]);
 
   // 커서가 화면 밖으로 나가지 않도록 따라간다
   const cursorElRef = useRef<HTMLDivElement | null>(null);
@@ -940,7 +966,19 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           </span>
                         ))}
                       </div>
-                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "3px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "11.5px", color: C.label }}>{g.items.length}종 · {g.qty}개 미반납</span>
+                        {g.day > 0 ? (
+                          <span style={{ fontSize: "10px", fontWeight: 800, color: C.warn, background: C.warnSoft, borderRadius: "999px", padding: "2px 8px" }}>
+                            ☀️ Day {g.day}
+                          </span>
+                        ) : null}
+                        {g.night > 0 ? (
+                          <span style={{ fontSize: "10px", fontWeight: 800, color: "#6366f1", background: "rgba(99,102,241,0.14)", borderRadius: "999px", padding: "2px 8px" }}>
+                            🌙 Night {g.night}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     {category === "scenario" ? (
                     <button
@@ -961,60 +999,85 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
                   {on ? (
                     <div style={{ borderTop: `1px solid ${C.border}`, padding: "8px 10px", display: "flex", flexDirection: "column", gap: "5px" }}>
-                      {activeItems.map((it, idx) => {
-                        const picked = inCartQty(it);
-                        const max = it.quantity || 1;
-                        const done = picked >= max;
-                        const atCursor = idx === cursor;
+                      {activeGroups.map((grp) => {
+                        // 이 묶음의 첫 물품이 flatItems에서 몇 번째인지 (커서 인덱스 계산용)
+                        const baseIdx = flatItems.findIndex((x) => `${x.sheetType}:${x.rowIndex}` === `${grp.items[0].sheetType}:${grp.items[0].rowIndex}`);
+                        const isNight = grp.shift === "night";
+                        const shiftTone = isNight ? "#6366f1" : C.warn;
+                        const shiftSoft = isNight ? "rgba(99,102,241,0.14)" : C.warnSoft;
+                        const grpQty = grp.items.reduce((n, x) => n + (x.quantity || 1), 0);
                         return (
-                          <div
-                            key={`${it.sheetType}-${it.rowIndex}`}
-                            ref={atCursor ? cursorElRef : undefined}
-                            onClick={() => { setCursor(idx); if (!done) addOne(it); }}
-                            onContextMenu={(e) => {
-                              if (category === "warehouse") return; // 창고 물품은 교체 대상이 아니다
-                              e.preventDefault(); setCursor(idx); openSwap(it);
-                            }}
-                            title={category === "warehouse" ? undefined : "우클릭하면 다른 물품으로 교체할 수 있습니다"}
-                            style={{
-                              display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
-                              cursor: done ? "default" : "pointer",
-                              background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
-                              border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
-                              boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
-                            }}
-                          >
-                            <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
-                                <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
-                                {(() => {
-                                  const d = daysSince(it.borrowDate);
-                                  if (d === null || d < 2) return null;
-                                  const severe = d >= 7;
-                                  return (
-                                    <span
-                                      title={`${it.borrowDate} 대여 · ${d}일 경과`}
-                                      style={{
-                                        flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
-                                        color: severe ? C.error : C.warn,
-                                        background: severe ? C.errorSoft : C.warnSoft,
-                                      }}
-                                    >
-                                      {severe ? `⚠ ${d}일` : `${d}일`}
-                                    </span>
-                                  );
-                                })()}
-                              </div>
-                              {it.location ? (
-                                <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
-                                  <MapPin size={9} /> {it.location}
-                                </div>
-                              ) : null}
+                          <div key={grp.key} style={{ marginBottom: "10px" }}>
+                            {/* 신청 시각별 구분선 */}
+                            <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "4px 2px 6px" }}>
+                              <span style={{ fontSize: "10.5px", fontWeight: 800, color: shiftTone, background: shiftSoft, borderRadius: "999px", padding: "2px 9px", flexShrink: 0 }}>
+                                {isNight ? "🌙 Night" : "☀️ Day"}
+                              </span>
+                              <span style={{ fontSize: "11.5px", fontWeight: 700, color: C.text }}>{grp.when}</span>
+                              <span style={{ fontSize: "10.5px", color: C.label }}>{grp.items.length}종 · {grpQty}개</span>
+                              <div style={{ flex: 1, height: "1px", background: C.border }} />
                             </div>
-                            <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
-                              {picked} / {max}
-                            </span>
+
+                            <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+                              {grp.items.map((it, j) => {
+                                const idx = baseIdx + j;
+                                const picked = inCartQty(it);
+                                const max = it.quantity || 1;
+                                const done = picked >= max;
+                                const atCursor = idx === cursor;
+                                return (
+                                  <div
+                                    key={`${it.sheetType}-${it.rowIndex}`}
+                                    ref={atCursor ? cursorElRef : undefined}
+                                    onClick={() => { setCursor(idx); if (!done) addOne(it); }}
+                                    onContextMenu={(e) => {
+                                      if (category === "warehouse") return;
+                                      e.preventDefault(); setCursor(idx); openSwap(it);
+                                    }}
+                                    title={category === "warehouse" ? undefined : "우클릭하면 다른 물품으로 교체할 수 있습니다"}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
+                                      cursor: done ? "default" : "pointer",
+                                      background: atCursor ? C.accentSoft : done ? C.successSoft : C.cardSub,
+                                      border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : "transparent"}`,
+                                      boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : "none",
+                                    }}
+                                  >
+                                    <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                                        <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                        {(() => {
+                                          const d = daysSince(it.borrowDate);
+                                          if (d === null || d < 2) return null;
+                                          const severe = d >= 7;
+                                          return (
+                                            <span
+                                              title={`${it.borrowDate} 대여 · ${d}일 경과`}
+                                              style={{
+                                                flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
+                                                color: severe ? C.error : C.warn,
+                                                background: severe ? C.errorSoft : C.warnSoft,
+                                              }}
+                                            >
+                                              {severe ? `⚠ ${d}일` : `${d}일`}
+                                            </span>
+                                          );
+                                        })()}
+                                      </div>
+                                      {it.location ? (
+                                        <div style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px", marginTop: "1px" }}>
+                                          <MapPin size={9} /> {it.location}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
+                                      {picked} / {max}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         );
                       })}
