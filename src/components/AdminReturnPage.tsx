@@ -488,11 +488,14 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 선택한 대여자의 물품을 "같은 시각에 신청한 묶음"으로 나눈다.
   // 반납 도중 새 대여가 들어와도 어느 건이 언제 것인지 구분된다.
   const activeGroups = useMemo(() => {
-    // 신청시각(시:분)이 있으면 그걸로, 없으면 날짜만으로 묶는다
+    // 시:분이 들어 있으면 분 단위까지, 없으면 날짜만으로 묶는다.
+    // (형식이 "2026-07-22 23:41:33", "7/22/2026 23:41:33" 등으로 섞여 있어 길이로 판단하지 않는다)
     const bucket = (it: UnreturnedItem) => {
       const raw = String(it.borrowDateTime || it.borrowDate || "").trim();
       if (!raw) return "(시각 미상)";
-      return raw.length >= 16 ? raw.slice(0, 16) : raw;
+      const m = raw.match(/^(.*?)[\sT](\d{1,2}):(\d{2})/);
+      if (!m) return raw;
+      return `${m[1]} ${m[2].padStart(2, "0")}:${m[3]}`;
     };
 
     const map = new Map<string, { key: string; when: string; shift?: string; items: UnreturnedItem[] }>();
@@ -1010,7 +1013,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                             {/* 신청 시각별 구분선 */}
                             <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "4px 2px 6px" }}>
                               <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>
-                                🕘 {grp.when.length >= 16 ? grp.when : `${grp.when} (시각 정보 없음)`}
+                                🕘 {/\d{1,2}:\d{2}/.test(grp.when) ? grp.when : `${grp.when} (시각 정보 없음)`}
                               </span>
                               <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{grp.items.length}종 · {grpQty}개</span>
                               <div style={{ flex: 1, height: "1px", background: C.border }} />
