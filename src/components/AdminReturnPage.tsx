@@ -9,6 +9,7 @@ import {
   postSwapBorrowItem,
   fetchWarehouseBorrowedItems, postWarehouseRentBulk,
   fetchWarehouseInventory, WarehouseItem,
+  postRecordBorrow as postBorrow,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import { getGoogleDriveImageUrl } from "../utils/drive";
@@ -80,6 +81,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // A를 한 번 누르면 사진을 먼저 보여주고, 다시 누르면 담는다 (엉뚱한 물품을 담는 실수 방지)
   const [preview, setPreview] = useState<{ key: string; item: UnreturnedItem } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 반납 후 곧바로 같은 물품을 다시 대여할지 (대여일 갱신 목적)
+  const [reborrowAfter, setReborrowAfter] = useState(false);
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
 
@@ -693,12 +696,60 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       }
       if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
       if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
-      showToast(res.message || `${cartTotal}개를 반납 처리했습니다.`, "ok");
+      // 반납 후 재대여: 같은 사람·같은 물품을 새 대여일로 다시 기록한다
+      if (reborrowAfter) {
+        try {
+          const byBorrower: Record<string, typeof cart> = {};
+          cart.forEach((c) => { (byBorrower[c.borrower] ||= []).push(c); });
+
+          for (const who of Object.keys(byBorrower)) {
+            const lines = byBorrower[who];
+            if (category === "warehouse") {
+              await postWarehouseRentBulk(
+                scriptUrl,
+                lines.map((c) => ({
+                  type: "대여" as const,
+                  location: c.location,
+                  name: c.name || c.itemLabel,
+                  qty: c.qty,
+                  user: who,
+                  note: "반납 후 재대여 (대여일 갱신)",
+                }))
+              );
+            } else {
+              // 원래 대여 기록에서 이메일·위치를 가져와 Slack 태깅과 좌석 정보를 유지한다
+              const src = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === lines[0].key);
+              const ver2 = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+              await postBorrow(scriptUrl, [{
+                itemType: "general",
+                borrowerName: who,
+                affiliation: "",
+                employeeId: "",
+                knownEmail: src?.email || undefined,
+                borrowDate: nowString(),
+                borrowPurpose: "반납 후 재대여 (대여일 갱신)",
+                generalOption: "재대여",
+                borrowedItems: lines.map((c) => {
+                  const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
+                  return { id: item?.itemId || "", name: item?.itemName || c.itemLabel, quantity: c.qty };
+                }).filter((x) => x.id),
+                floor: src?.floor,
+                unit: src?.unit,
+              }], ver2);
+            }
+          }
+          showToast(`${cartTotal}개를 반납 후 다시 대여했습니다. (대여일 갱신)`, "ok");
+        } catch (reErr: any) {
+          showToast(`반납은 완료했지만 재대여에 실패했습니다: ${reErr.message}`, "warn");
+        }
+      } else {
+        showToast(res.message || `${cartTotal}개를 반납 처리했습니다.`, "ok");
+      }
 
       // 서버 재조회를 기다리지 않고 화면에서 먼저 반영한다 (처리 직후 바로 다음 작업이 가능하도록).
       const done = new Map(cart.map((c) => [c.key, c.qty]));
       const applyLocal = category === "warehouse" ? setWhItems : setItems;
-      applyLocal((prev) =>
+      if (!reborrowAfter) applyLocal((prev) =>
         prev
           .map((it) => {
             const q = done.get(`${it.sheetType}:${it.rowIndex}`);
@@ -1363,6 +1414,25 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}` }}>
+          <label
+            style={{
+              display: "flex", alignItems: "center", gap: "9px", padding: "10px 12px", marginBottom: "10px",
+              borderRadius: "10px", cursor: "pointer",
+              border: `1px solid ${reborrowAfter ? C.accent : C.border}`,
+              background: reborrowAfter ? C.accentSoft : "transparent",
+            }}
+          >
+            <input type="checkbox" checked={reborrowAfter} onChange={(e) => setReborrowAfter(e.target.checked)} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ fontSize: "12.5px", fontWeight: 800, color: reborrowAfter ? C.accentText : C.text }}>
+                반납 후 재대여 (대여일 갱신)
+              </span>
+              <span style={{ display: "block", fontSize: "10.5px", color: C.label, marginTop: "2px", lineHeight: 1.5 }}>
+                실물은 그대로 두고 대여 기록만 오늘로 새로 남깁니다.
+              </span>
+            </span>
+          </label>
+
           <button
             onClick={submitReturn}
             disabled={!cart.length || submitting}
@@ -1373,7 +1443,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               opacity: submitting ? 0.7 : 1,
             }}
           >
-            {submitting ? "처리 중..." : `반납 처리하기 (${cartTotal}개) · B`}
+            {submitting ? "처리 중..." : reborrowAfter ? `반납 후 재대여 (${cartTotal}개) · B` : `반납 처리하기 (${cartTotal}개) · B`}
           </button>
         </div>
       </div>
