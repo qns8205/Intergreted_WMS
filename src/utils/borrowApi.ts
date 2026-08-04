@@ -55,6 +55,8 @@ export interface UnreturnedItem {
   submitDisplay?: string;
   borrowPurpose: string;
   email: string;
+  borrowDateTime?: string; // 시간까지 포함한 대여 시각 (묶음 정렬용)
+  shift?: "day" | "night"; // 대여 시각 기준 주간/야간
   batchId: string;
   floor?: string; // 대여 시 입력한 층수 (대여위치기록 시트에서 배치ID로 조회)
   unit?: string;  // 대여 시 입력한 유닛
