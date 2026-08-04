@@ -467,7 +467,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           targets.forEach((e) => { (byBorrower[e.borrowerName] ||= []).push(e); });
           for (const b of Object.keys(byBorrower)) {
             const res = await reBorrowScenarioLogs(scriptUrl, byBorrower[b], appVersion);
-            if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+            if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); setReborrowModalOpen(false); return; }
             if (res.success) ok += byBorrower[b].length;
             else showToast(`${b} 재대여 실패: ${res.message}`, "error");
           }
@@ -483,16 +483,18 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             employeeId: reborrowTargetAffiliation === "cfgw" ? empId : "",
             affiliation: reborrowTargetAffiliation,
           });
-          if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+          if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); setReborrowModalOpen(false); return; }
           if (res.success) ok += targets.length;
           else showToast(`재대여 실패: ${res.message}`, "error");
         }
         if (ok) showToast(`${ok}건을 ${reborrowSameName ? "동일 조건으로" : `${reborrowTargetName.trim()}님 명의로`} 다시 대여 신청했습니다.`, "ok");
       } else { showToast("데모 모드: 실제 재대여는 연동 시 동작합니다.", "info"); }
       setReborrowModalOpen(false);
+      setSel({});
+      setReborrowing(false);      // 목록 재조회를 기다리며 "처리 중"으로 남지 않게 먼저 푼다
       await load();
     } catch (e: any) { showToast(`재대여 실패: ${e.message}`, "error"); }
-    finally { setReborrowing(false); }
+    finally { setReborrowing(false); setReborrowModalOpen(false); }
   }
 
   const inputStyle: React.CSSProperties = {
