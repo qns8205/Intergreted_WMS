@@ -12,6 +12,7 @@ interface Props {
   itemId: string;
   itemLabel: string;
   currentStock: number;
+  currentRented?: number; // 시나리오 물품의 "대여 중" 수량 (있을 때만 편집 가능)
   managerName?: string;
   showToast: (msg: string, type: "ok" | "error" | "warn" | "info") => void;
   onClose: () => void;
@@ -20,7 +21,7 @@ interface Props {
 
 export default function StockAdjustModal({
   scriptUrl, connected, isLightMode, category, rowIndex, itemId, itemLabel, currentStock,
-  managerName = "", showToast, onClose, onSaved,
+  currentRented, managerName = "", showToast, onClose, onSaved,
 }: Props) {
   const C = {
     overlay: "rgba(0,0,0,0.6)",
@@ -38,38 +39,27 @@ export default function StockAdjustModal({
   };
 
   const [newStock, setNewStock] = useState(String(currentStock));
+  // 대여 중 수량 편집은 시나리오 물품에서만 지원한다 (창고물품 시트에는 해당 열이 없다)
+  const canEditRented = category === "scenario" && currentRented !== undefined;
+  const [newRented, setNewRented] = useState(String(currentRented ?? 0));
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [history, setHistory] = useState<StockChangeRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
-  const showToastRef = React.useRef(showToast);
-  useEffect(() => {
-    showToastRef.current = showToast;
-  }, [showToast]);
-
   useEffect(() => {
     if (!connected || !scriptUrl) return;
-    let isMounted = true;
     setHistoryLoading(true);
     fetchStockChangeHistory(scriptUrl, category, itemId)
-      .then((data) => {
-        if (isMounted) setHistory(data);
-      })
-      .catch((e) => {
-        if (isMounted) showToastRef.current(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error");
-      })
-      .finally(() => {
-        if (isMounted) setHistoryLoading(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [scriptUrl, connected, category, itemId]);
+      .then(setHistory)
+      .catch((e) => showToast(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error"))
+      .finally(() => setHistoryLoading(false));
+  }, [scriptUrl, connected, category, itemId, showToast]);
 
   const parsed = parseInt(newStock, 10);
   const diff = !isNaN(parsed) ? parsed - currentStock : null;
+  const parsedRented = parseInt(newRented, 10);
+  const rentedDiff = canEditRented && !isNaN(parsedRented) ? parsedRented - (currentRented ?? 0) : null;
 
   async function handleSubmit() {
     if (isNaN(parsed) || parsed < 0) { 
@@ -80,20 +70,26 @@ export default function StockAdjustModal({
       showToast("재고 변경 사유를 입력해주세요.", "warn"); 
       return; 
     }
-    if (parsed === currentStock) { 
-      showToast("현재 재고와 동일합니다. 값을 변경해주세요.", "warn"); 
-      return; 
+    if (canEditRented && (isNaN(parsedRented) || parsedRented < 0)) {
+      showToast("대여 중 수량을 올바르게 입력해주세요.", "warn");
+      return;
+    }
+    if (parsed === currentStock && (!canEditRented || parsedRented === (currentRented ?? 0))) {
+      showToast("변경된 값이 없습니다.", "warn");
+      return;
     }
 
     setSubmitting(true);
     try {
       if (connected && scriptUrl) {
-        const res = await adjustStock(scriptUrl, { 
-          category, 
-          rowIndex, 
-          newStock: parsed, 
-          reason: reason.trim(), 
-          manager: managerName 
+        const res = await adjustStock(scriptUrl, {
+          category,
+          rowIndex,
+          id: itemId,
+          newStock: parsed,
+          ...(canEditRented ? { newRented: parsedRented } : {}),
+          reason: reason.trim(),
+          manager: managerName
         });
         if (!res.success) { 
           showToast(res.message || "재고 변경에 실패했습니다.", "error"); 
@@ -146,10 +142,40 @@ export default function StockAdjustModal({
           </div>
 
           {diff !== null && diff !== 0 ? (
-            <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: diff > 0 ? C.success : C.error, marginBottom: "14px" }}>
-              {diff > 0 ? `+${diff}` : diff}개 변경됩니다
+            <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: diff > 0 ? C.success : C.error, marginBottom: "10px" }}>
+              재고 {diff > 0 ? `+${diff}` : diff}개 변경됩니다
             </div>
           ) : null}
+
+          {canEditRented ? (
+            <>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "10px" }}>
+                <div style={{ flex: 1, padding: "10px 12px", background: C.cardSub, borderRadius: "10px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>현재 대여 중</div>
+                  <div style={{ fontSize: "18px", fontWeight: 800, color: C.text, marginTop: "2px" }}>{currentRented ?? 0}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", color: C.label }}>→</div>
+                <div style={{ flex: 1, padding: "10px 12px", background: C.accentSoft, borderRadius: "10px" }}>
+                  <label style={{ fontSize: "11px", color: C.label, fontWeight: 700, display: "block", textAlign: "center" }}>새 대여 중</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={newRented}
+                    onChange={(e) => setNewRented(e.target.value)}
+                    style={{ width: "100%", border: "none", background: "transparent", outline: "none", fontSize: "18px", fontWeight: 800, color: C.text, textAlign: "center" }}
+                  />
+                </div>
+              </div>
+              {rentedDiff !== null && rentedDiff !== 0 ? (
+                <div style={{ textAlign: "center", fontSize: "12px", fontWeight: 700, color: rentedDiff > 0 ? C.success : C.error, marginBottom: "10px" }}>
+                  대여 중 {rentedDiff > 0 ? `+${rentedDiff}` : rentedDiff}개 변경됩니다
+                </div>
+              ) : null}
+              <div style={{ fontSize: "11px", color: C.label, lineHeight: 1.6, marginBottom: "14px" }}>
+                대여 중 수량은 대여·반납 기록과 별개로 직접 고칩니다. 실사 결과가 기록과 어긋날 때만 사용해주세요.
+              </div>
+            </>
+          ) : <div style={{ marginBottom: "4px" }} />}
 
           <label style={{ fontSize: "12px", fontWeight: 700, color: C.label, display: "block", marginBottom: "6px" }}>변경 사유 *</label>
           <textarea
