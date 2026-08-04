@@ -174,17 +174,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   // 대여자별로 묶는다
   const borrowers = useMemo(() => {
-    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[]; day: number; night: number }>();
+    const map = new Map<string, { name: string; items: UnreturnedItem[]; qty: number; seats: string[] }>();
     activeSource.forEach((it) => {
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
-      if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [], day: 0, night: 0 });
+      if (!map.has(name)) map.set(name, { name, items: [], qty: 0, seats: [] });
       const g = map.get(name)!;
       g.items.push(it);
       g.qty += it.quantity || 1;
       const seat = [it.floor, it.unit].filter(Boolean).join(" · ");
       if (seat && !g.seats.includes(seat)) g.seats.push(seat);
-      if (it.shift === "night") g.night += it.quantity || 1;
-      else g.day += it.quantity || 1;
     });
     const list = Array.from(map.values());
     const q = search.trim();
@@ -458,7 +456,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const overdue = useMemo(() => {
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
-    const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[] }>();
+    const map = new Map<string, { name: string; email: string; days: number; qty: number; items: UnreturnedItem[]; day: number; night: number }>();
 
     activeSource.forEach((it) => {
       const raw = String(it.borrowDate || "").trim();
@@ -469,11 +467,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (d < 2) return;
 
       const name = String(it.borrowerName || "").trim() || "(이름 없음)";
-      if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [] });
+      if (!map.has(name)) map.set(name, { name, email: String(it.email || ""), days: d, qty: 0, items: [], day: 0, night: 0 });
       const g = map.get(name)!;
       if (!g.email && it.email) g.email = it.email;
       if (d > g.days) g.days = d;
       g.qty += it.quantity || 1;
+      if (it.shift === "night") g.night += it.quantity || 1;
+      else g.day += it.quantity || 1;
       g.items.push(it);
     });
 
@@ -925,7 +925,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                     >
                       {g.name}
                       <span style={{ fontWeight: 800, color: sec.tone }}>{g.days}일</span>
-                      <span style={{ fontWeight: 500, opacity: 0.75 }}>{g.qty}개</span>
+                      {/* 주간/야간 구성을 색으로 구분해 어느 시프트 물품인지 바로 보이게 한다 */}
+                      {g.day > 0 ? (
+                        <span style={{ fontSize: "10px", fontWeight: 800, color: C.warn, background: C.warnSoft, borderRadius: "999px", padding: "1px 7px" }}>
+                          ☀️{g.day}
+                        </span>
+                      ) : null}
+                      {g.night > 0 ? (
+                        <span style={{ fontSize: "10px", fontWeight: 800, color: "#6366f1", background: "rgba(99,102,241,0.16)", borderRadius: "999px", padding: "1px 7px" }}>
+                          🌙{g.night}
+                        </span>
+                      ) : null}
                     </button>
                   ))}
                 </div>
@@ -966,19 +976,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           </span>
                         ))}
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "3px", flexWrap: "wrap" }}>
-                        <span style={{ fontSize: "11.5px", color: C.label }}>{g.items.length}종 · {g.qty}개 미반납</span>
-                        {g.day > 0 ? (
-                          <span style={{ fontSize: "10px", fontWeight: 800, color: C.warn, background: C.warnSoft, borderRadius: "999px", padding: "2px 8px" }}>
-                            ☀️ Day {g.day}
-                          </span>
-                        ) : null}
-                        {g.night > 0 ? (
-                          <span style={{ fontSize: "10px", fontWeight: 800, color: "#6366f1", background: "rgba(99,102,241,0.14)", borderRadius: "999px", padding: "2px 8px" }}>
-                            🌙 Night {g.night}
-                          </span>
-                        ) : null}
-                      </div>
+                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
                     </div>
                     {category === "scenario" ? (
                     <button
@@ -1002,19 +1000,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       {activeGroups.map((grp) => {
                         // 이 묶음의 첫 물품이 flatItems에서 몇 번째인지 (커서 인덱스 계산용)
                         const baseIdx = flatItems.findIndex((x) => `${x.sheetType}:${x.rowIndex}` === `${grp.items[0].sheetType}:${grp.items[0].rowIndex}`);
-                        const isNight = grp.shift === "night";
-                        const shiftTone = isNight ? "#6366f1" : C.warn;
-                        const shiftSoft = isNight ? "rgba(99,102,241,0.14)" : C.warnSoft;
                         const grpQty = grp.items.reduce((n, x) => n + (x.quantity || 1), 0);
                         return (
                           <div key={grp.key} style={{ marginBottom: "10px" }}>
                             {/* 신청 시각별 구분선 */}
                             <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "4px 2px 6px" }}>
-                              <span style={{ fontSize: "10.5px", fontWeight: 800, color: shiftTone, background: shiftSoft, borderRadius: "999px", padding: "2px 9px", flexShrink: 0 }}>
-                                {isNight ? "🌙 Night" : "☀️ Day"}
-                              </span>
-                              <span style={{ fontSize: "11.5px", fontWeight: 700, color: C.text }}>{grp.when}</span>
-                              <span style={{ fontSize: "10.5px", color: C.label }}>{grp.items.length}종 · {grpQty}개</span>
+                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>🕘 {grp.when}</span>
+                              <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{grp.items.length}종 · {grpQty}개</span>
                               <div style={{ flex: 1, height: "1px", background: C.border }} />
                             </div>
 
