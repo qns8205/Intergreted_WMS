@@ -54,7 +54,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   };
 
   // 지난번 목록을 먼저 그려 화면이 비어 보이지 않게 한다 (응답이 오면 교체)
-  const CACHE_KEY = "wms_unreturned_v1";
+  const CACHE_KEY = "wms_unreturned_v2"; // 시각·시프트 필드 추가로 버전 상향
   // 분야: 시나리오·일반 / 공구 및 부품류 — 반납 처리 방식이 서로 달라 탭으로 나눈다
   const [category, setCategory] = useState<"scenario" | "warehouse">("scenario");
   const [whItems, setWhItems] = useState<UnreturnedItem[]>([]);
