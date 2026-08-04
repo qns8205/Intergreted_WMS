@@ -520,8 +520,8 @@ export interface StockChangeRecord {
 // 현재 재고를 직접 변경. 사유(reason)는 필수이며, 변경 이력이 별도 시트에 남는다.
 export async function adjustStock(
   scriptUrl: string,
-  payload: { category: "inventory" | "scenario"; rowIndex: number; newStock: number; reason: string; manager?: string }
-): Promise<{ success: boolean; message?: string; warning?: string; oldStock?: number; newStock?: number; diff?: number }> {
+  payload: { category: "inventory" | "scenario"; rowIndex: number; newStock: number; newRented?: number; reason: string; manager?: string; id?: string }
+): Promise<{ success: boolean; message?: string; warning?: string; oldStock?: number; newStock?: number; diff?: number; oldRented?: number; newRented?: number; rentedChanged?: boolean }> {
   return apiPost(scriptUrl, "adjustStock", payload);
 }
 
