@@ -731,7 +731,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 generalOption: "재대여",
                 borrowedItems: lines.map((c) => {
                   const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
-                  return { id: item?.itemId || "", name: item?.itemName || c.itemLabel, quantity: c.qty };
+                  // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
+                  // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
+                  return { id: item?.itemId || "", name: item?.itemName || "", quantity: c.qty };
                 }).filter((x) => x.id),
                 floor: src?.floor,
                 unit: src?.unit,
