@@ -3,7 +3,7 @@ import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
-import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, ArrowUpDown, PackageOpen, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, ArrowUpDown, PackageOpen, Plus, Trash2 } from "lucide-react";
 import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
@@ -12,13 +12,14 @@ interface Props {
   isAdmin: boolean;
   onEditItem: (item: InventoryItem) => void;
   onAdjustStock?: (item: InventoryItem) => void;
+  onDeleteItem?: (item: InventoryItem) => void;
   onManageSets?: () => void;
   onImageClick?: (url: string) => void;
   // 랙/슬롯별로 새 물품을 추가할 때 (그 위치를 미리 채워 등록 화면을 연다)
   onAddItem?: (presetLocation: string) => void;
 }
 
-export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onManageSets, onImageClick, onAddItem }: Props) {
+export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onDeleteItem, onManageSets, onImageClick, onAddItem }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
@@ -30,6 +31,8 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     accentText: isLightMode ? "#111827" : "#f1f5f9",
     warn: isLightMode ? "#b45309" : "#fbbf24",
     warnSoft: "rgba(245,158,11,0.12)",
+    error: isLightMode ? "#dc2626" : "#f87171",
+    errorSoft: isLightMode ? "rgba(220,38,38,0.10)" : "rgba(248,113,113,0.14)",
   };
 
   const [search, setSearch] = useState("");
@@ -302,6 +305,15 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "9px", borderRadius: "9px", border: "none", background: C.accentSoft, color: C.accentText, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
                               >
                                 <ArrowUpDown size={13} /> 재고 변경
+                              </button>
+                            ) : null}
+                            {isAdmin && onDeleteItem ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); onDeleteItem(it); }}
+                                title={`${it.name} 삭제`}
+                                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "5px", padding: "9px", borderRadius: "9px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}
+                              >
+                                <Trash2 size={13} /> 삭제
                               </button>
                             ) : null}
                           </div>
