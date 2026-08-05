@@ -11,6 +11,7 @@ import {
   Plus,
   MapPin,
   ChevronRight,
+  ChevronDown,
   Check,
   ImageOff,
   User,
@@ -20,8 +21,9 @@ import {
   Camera,
   Upload,
   Trash2,
+  Pencil,
 } from "lucide-react";
-import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage } from "../utils/drive";
+import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage, parseLocation } from "../utils/drive";
 import { smartMatch } from "../utils/search";
 import { parseDateString, compareDatesDescending } from "../utils/date";
 import {
@@ -209,6 +211,13 @@ export default function MobileViewPage({
   // 파손자 (로봇/시나리오 오브젝트일 때만 기록)
   const [defCulprit, setDefCulprit] = useState("");
   const [warehouseTab, setWarehouseTab] = useState<"list" | "register">("list");
+
+  // --- 공구 및 부품류 목록: PC RackGroupedView와 동일한 랙 내비게이터 + 슬롯 그룹 + 검색 스크롤/하이라이트 ---
+  const [whExpandedRack, setWhExpandedRack] = useState<string | null>(null);
+  const [whCollapsed, setWhCollapsed] = useState<Record<string, boolean>>({});
+  const [whHighlightKey, setWhHighlightKey] = useState<string | null>(null);
+  const whGroupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const whHighlightTimerRef = useRef<number | null>(null);
 
   /* ---------- 시나리오 물품 탭 (공구 및 부품류 탭과 동일한 구조) ---------- */
   const [scenarioTab, setScenarioTab] = useState<"list" | "register">("list");
@@ -465,6 +474,89 @@ export default function MobileViewPage({
     );
     return [...base].sort((a, b) => compareRackSlot(a.location, b.location));
   }, [inventory, searchQuery]);
+
+  // ---------- 등록 탭(목록 보기): PC RackGroupedView와 동일하게 슬롯 단위로 묶는다 ----------
+  const whGroups = useMemo(() => {
+    const map = new Map<string, InventoryItem[]>();
+    inventory.forEach((item) => {
+      const key = (item.location || "").trim().toUpperCase() || "미지정";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
+    });
+    return Array.from(map.entries()).sort((a, b) => compareRackSlot(a[0], b[0]));
+  }, [inventory]);
+
+  const whRacks = useMemo(() => {
+    const set = new Set<string>();
+    inventory.forEach((item) => {
+      const { rack } = parseLocation(item.location);
+      if (rack) set.add(rack);
+    });
+    return Array.from(set).sort();
+  }, [inventory]);
+
+  const whSlotsByRack = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    inventory.forEach((item) => {
+      const { rack } = parseLocation(item.location);
+      if (!rack) return;
+      const loc = (item.location || "").trim().toUpperCase();
+      if (!loc) return;
+      if (!map[rack]) map[rack] = [];
+      if (!map[rack].includes(loc)) map[rack].push(loc);
+    });
+    Object.keys(map).forEach((r) => map[r].sort(compareRackSlot));
+    return map;
+  }, [inventory]);
+
+  // 특정 슬롯으로 스크롤 이동 + 잠깐 하이라이트. 접혀 있으면 먼저 펼친다.
+  const scrollToWhGroup = (key: string) => {
+    setWhCollapsed((prev) => (prev[key] ? { ...prev, [key]: false } : prev));
+    if (whHighlightTimerRef.current) window.clearTimeout(whHighlightTimerRef.current);
+    window.setTimeout(() => {
+      whGroupRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    setWhHighlightKey(key);
+    whHighlightTimerRef.current = window.setTimeout(() => setWhHighlightKey(null), 2300);
+  };
+
+  // 등록 탭(목록 보기)에서 검색어가 바뀌면, 목록을 걸러내는 대신 첫 매칭 위치로 스크롤+하이라이트한다.
+  useEffect(() => {
+    if (!(mode === "등록" && warehouseTab === "list")) return;
+    const q = searchQuery.trim();
+    if (!q) return;
+    const timer = window.setTimeout(() => {
+      const match = inventory.find((item) => smartMatch([item.name, item.location, item.spec, item.keywords], q));
+      if (!match) return;
+      const key = (match.location || "").trim().toUpperCase() || "미지정";
+      scrollToWhGroup(key);
+    }, 350);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, mode, warehouseTab, inventory]);
+
+  // 목록 행에서 바로 편집 화면으로 (상세보기를 거치지 않는 빠른 편집)
+  const quickEditItem = (item: InventoryItem) => {
+    setSelectedItem(item);
+    setEditName(item.name || "");
+    setEditLocation(item.location || "");
+    setEditLink(item.link || "N/A");
+    setEditPhoto(item.photo || "");
+    setEditStock(item.stock === null ? "" : String(item.stock));
+    setEditSpec(item.spec || "");
+    setEditNote(item.note || "");
+    setEditManager(item.manager && item.manager !== "관리자" ? item.manager : defaultManagerName);
+    const base = window.location.hash.split("/")[1] || "monitor";
+    window.location.hash = `#/${base}/edit-inventory`;
+  };
+
+  // 랙 내비게이터에서 슬롯을 골라 "새 물품 등록"으로 — 위치를 미리 채워준다
+  const startRegisterAtLocation = (loc: string) => {
+    setRegIsCustomLoc(true);
+    setRegCustomLocation(loc);
+    setWarehouseTab("register");
+    setWhExpandedRack(null);
+  };
 
   // ---------- 불량 탭: 불량 로그 검색 ----------
   const filteredDefectLogs = useMemo(() => {
@@ -918,6 +1010,12 @@ export default function MobileViewPage({
         @keyframes mvpSheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         @keyframes mvpFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes mvpToastIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+        @keyframes mvpWhHighlight {
+          0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); border-color: ${ACCENT}; }
+          70% { box-shadow: 0 0 0 12px rgba(37,99,235,0); border-color: ${ACCENT}; }
+          100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); }
+        }
+        .mvp-wh-highlight { animation: mvpWhHighlight 1.15s ease-out 2; }
         ::-webkit-scrollbar { width: 0px; height: 0px; }
       `}</style>
 
@@ -1173,6 +1271,8 @@ export default function MobileViewPage({
                     ? "품목명, 위치, 규격으로 검색"
                     : mode === "반납"
                     ? "품목명, 위치, 대여자 이름으로 검색"
+                    : mode === "등록"
+                    ? "물품명·위치·규격 검색 (해당 위치로 이동)"
                     : "제품명, 불량 유형, 상세 내용으로 검색"
                 }
                 value={searchQuery}
@@ -1499,7 +1599,7 @@ export default function MobileViewPage({
                   color: warehouseTab === "list" ? BG : TEXT_DIM,
                 }}
               >
-                📋 목록 보기 ({filteredInventory.length})
+                📋 목록 보기 ({inventory.length})
               </button>
               <button
                 className="mvp-btn"
@@ -1519,54 +1619,154 @@ export default function MobileViewPage({
             </div>
 
             {warehouseTab === "list" ? (
-              filteredInventory.length === 0 ? (
-                <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
-                  <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
-                  등록된 공구 및 부품류가 없습니다.
-                </div>
-              ) : (
-                filteredInventory.map((item, idx) => {
-                  const hasImage = !!item.photo;
-                  const imageUrl = hasImage ? getGoogleDriveImageUrl(item.photo) : "";
-                  const stockLabel = item.stock === null || item.stock === "N/A" ? "N/A" : `${item.stock}개`;
-                  return (
-                    <div
-                      key={`wh-${item.rowIndex}-${idx}`}
-                      className="mvp-card"
-                      onClick={() => openItemDetail(item)}
-                      style={{
-                        background: CARD_BG,
-                        border: `1px solid ${BORDER}`,
-                        borderRadius: "16px",
-                        padding: "10px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "12px",
-                        cursor: "pointer",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: "48px", height: "48px", borderRadius: "10px", overflow: "hidden", flexShrink: 0,
-                          background: isLightMode ? "#f1f5f9" : "#0f172a", display: "flex", alignItems: "center", justifyContent: "center",
-                        }}
-                      >
-                        {hasImage ? (
-                          <img src={imageUrl} alt={item.name} referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        ) : (
-                          <Package size={20} style={{ opacity: 0.3 }} />
-                        )}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: "14px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
-                        <div style={{ fontSize: "12px", color: TEXT_DIM, marginTop: "2px" }}>{item.location} · 재고 {stockLabel}</div>
-                      </div>
-                      <ChevronRight size={16} color={TEXT_DIM} />
+              <>
+                {/* 랙 내비게이터 — 랙을 누르면 슬롯 목록이 펼쳐지고, 슬롯을 고르면 그 위치로 스크롤+하이라이트 */}
+                {whRacks.length > 0 ? (
+                  <div style={{ marginBottom: "10px" }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {whRacks.map((r) => {
+                        const on = whExpandedRack === r;
+                        return (
+                          <button
+                            key={r}
+                            className="mvp-btn"
+                            onClick={() => setWhExpandedRack(on ? null : r)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: "4px",
+                              padding: "8px 12px", borderRadius: "9px",
+                              border: `1px solid ${on ? ACCENT : BORDER}`,
+                              background: on ? ACCENT : CARD_BG, color: on ? "#fff" : TEXT_MAIN,
+                              fontSize: "12.5px", fontWeight: 800, fontFamily: "monospace",
+                            }}
+                          >
+                            {r}랙 {on ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                          </button>
+                        );
+                      })}
                     </div>
-                  );
-                })
-              )
+                    {whExpandedRack ? (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px", padding: "10px", borderRadius: "10px", background: isLightMode ? "#f1f5f9" : "#111827", border: `1px solid ${BORDER}` }}>
+                        {(whSlotsByRack[whExpandedRack] || []).map((slot) => (
+                          <button
+                            key={slot}
+                            className="mvp-btn"
+                            onClick={() => { scrollToWhGroup(slot); setWhExpandedRack(null); }}
+                            style={{
+                              padding: "7px 11px", borderRadius: "7px",
+                              border: `1px solid ${BORDER}`, background: CARD_BG, color: TEXT_MAIN,
+                              fontSize: "12px", fontWeight: 700, fontFamily: "monospace",
+                            }}
+                          >
+                            {slot}
+                          </button>
+                        ))}
+                        {isAdmin ? (
+                          <button
+                            className="mvp-btn"
+                            onClick={() => startRegisterAtLocation(`${whExpandedRack}-`)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: "4px",
+                              padding: "7px 11px", borderRadius: "7px",
+                              border: `1px solid ${ACCENT}`, background: "rgba(37,99,235,0.1)", color: ACCENT_LIGHT,
+                              fontSize: "12px", fontWeight: 700,
+                            }}
+                          >
+                            <Plus size={12} /> 이 랙에 새 슬롯
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {whGroups.length === 0 ? (
+                  <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
+                    <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
+                    등록된 공구 및 부품류가 없습니다.
+                  </div>
+                ) : (
+                  whGroups.map(([groupKey, items]) => {
+                    const isCollapsed = !!whCollapsed[groupKey];
+                    const isHighlighted = whHighlightKey === groupKey;
+                    return (
+                      <div
+                        key={groupKey}
+                        ref={(el) => { whGroupRefs.current[groupKey] = el; }}
+                        className={isHighlighted ? "mvp-wh-highlight" : undefined}
+                        style={{ border: `1px solid ${BORDER}`, borderRadius: "14px", background: CARD_BG, overflow: "hidden", marginBottom: "10px" }}
+                      >
+                        <div
+                          onClick={() => setWhCollapsed((p) => ({ ...p, [groupKey]: !p[groupKey] }))}
+                          style={{
+                            display: "flex", alignItems: "center", gap: "8px", padding: "11px 13px",
+                            background: isLightMode ? "#f8fafc" : "#111827",
+                            borderBottom: isCollapsed ? "none" : `1px solid ${BORDER}`,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {isCollapsed ? <ChevronRight size={15} color={TEXT_DIM} /> : <ChevronDown size={15} color={TEXT_DIM} />}
+                          <MapPin size={13} color={ACCENT_LIGHT} />
+                          <span style={{ fontWeight: 800, fontSize: "13.5px", flex: 1, fontFamily: "monospace", color: TEXT_MAIN }}>{groupKey}</span>
+                          <span style={{ fontSize: "11px", fontWeight: 700, color: ACCENT_LIGHT, background: "rgba(37,99,235,0.12)", borderRadius: "20px", padding: "2px 9px" }}>{items.length}개</span>
+                        </div>
+
+                        {!isCollapsed ? (
+                          <div style={{ padding: "8px" }}>
+                            {items.map((item, idx) => {
+                              const hasImage = !!item.photo;
+                              const imageUrl = hasImage ? getGoogleDriveImageUrl(item.photo) : "";
+                              const stockLabel = item.stock === null || item.stock === "N/A" ? "N/A" : `${item.stock}개`;
+                              return (
+                                <div
+                                  key={`wh-${item.rowIndex}-${idx}`}
+                                  className="mvp-card"
+                                  onClick={() => openItemDetail(item)}
+                                  style={{
+                                    display: "flex", alignItems: "center", gap: "10px",
+                                    padding: "8px", borderRadius: "12px", cursor: "pointer",
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      width: "42px", height: "42px", borderRadius: "9px", overflow: "hidden", flexShrink: 0,
+                                      background: isLightMode ? "#f1f5f9" : "#0f172a", display: "flex", alignItems: "center", justifyContent: "center",
+                                    }}
+                                  >
+                                    {hasImage ? (
+                                      <img src={imageUrl} alt={item.name} referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                    ) : (
+                                      <Package size={18} style={{ opacity: 0.3 }} />
+                                    )}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: "13.5px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                                    <div style={{ fontSize: "11.5px", color: TEXT_DIM, marginTop: "2px" }}>재고 {stockLabel}{item.spec ? ` · ${item.spec}` : ""}</div>
+                                  </div>
+                                  {isAdmin ? (
+                                    <button
+                                      className="mvp-btn"
+                                      onClick={(e) => { e.stopPropagation(); quickEditItem(item); }}
+                                      title="바로 편집"
+                                      style={{
+                                        flexShrink: 0, width: 34, height: 34, borderRadius: "9px",
+                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                        border: `1px solid ${BORDER}`, background: isLightMode ? "#f1f5f9" : "#0f172a", color: TEXT_DIM,
+                                      }}
+                                    >
+                                      <Pencil size={14} />
+                                    </button>
+                                  ) : null}
+                                  <ChevronRight size={15} color={TEXT_DIM} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                )}
+              </>
             ) : (
           <form onSubmit={handleRegisterItemSubmit} style={{ display: "flex", flexDirection: "column", gap: "15px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
