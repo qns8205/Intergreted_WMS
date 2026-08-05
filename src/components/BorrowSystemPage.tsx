@@ -21,6 +21,7 @@ import {
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
+import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 
 /* ══════════════════════════════ 타입 ══════════════════════════════ */
 
@@ -141,6 +142,17 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const qtyNoticeShownRef = useRef(false); // 이미 한도 이상 보유 시 (이름 입력 직후 차단)
   const [typeOverflowModal, setTypeOverflowModal] = useState<{ current: number; adding: number; max: number } | null>(null); // 장바구니 담다가 한도 초과 시 (제출 직전 차단)
   const [overdueReminderModal, setOverdueReminderModal] = useState<{ id: string; name: string; quantity: number; borrowDate: string; hoursAgo: number }[] | null>(null); // 48시간 넘게 미반납 중인 물품 확인창
+  // 깨질 위험 / 화재 위험 / 특정 업체 request용으로 표시된 물품이 장바구니에 있을 때,
+  // 마지막(확인) 단계로 넘어가기 직전 한 번 더 확인시키는 팝업.
+  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string }[]; proceedMode: Mode } | null>(null);
+
+  // 마지막 확인 단계(targetMode)로 넘어가기 전에 위험/request 물품이 있는지 검사하고,
+  // 있으면 모달을 띄워 확인을 받은 뒤에만 진행한다.
+  function goToFinalStep(targetMode: Mode, picked: { id: string; name: string }[]) {
+    const hazards = collectHazardItems(objectItems, picked);
+    if (hazards.length > 0) { setHazardModal({ items: hazards, proceedMode: targetMode }); return; }
+    setMode(targetMode);
+  }
   const [verifying, setVerifying] = useState(false);
   const [itemType, setItemType] = useState<"scenario" | "general">("scenario");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -645,7 +657,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (failed) { showToast(`${failed.sid} 조회에 실패해 Scenario 시트 등록 여부를 확인할 수 없습니다. 다시 시도해주세요.`, "error"); return; }
     // 15종류 한도를 넘기면 확인 화면으로 넘어가지 못하게 여기서 바로 막는다.
     if (scenarioTypeOverflow) { setTypeOverflowModal(scenarioTypeOverflow); return; }
-    setMode("b4s");
+    const flatPicked: { id: string; name: string }[] = [];
+    sidCart.forEach((e) => (e.scenario?.items || []).forEach((it) => flatPicked.push({ id: it.id, name: it.name })));
+    goToFinalStep("b4s", flatPicked);
   }
 
   async function handleBorrowSubmit() {
@@ -1896,7 +1910,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <ItemPicker list={cart} setList={setCart} search={itemSearch} setSearch={setItemSearch} cat={itemCat} setCat={setItemCat} sub={itemSub} setSub={setItemSub} C={C} isLightMode={isLightMode} objectItems={objectItems} itemsLoaded={itemsLoaded} categories={categories} subsOf={subsOf} matchesFilters={matchesFilters} showToast={showToast} setImageModalUrl={setImageModalUrl} onFly={flyToCart} />
             <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
               <button onClick={() => setMode("b2")} style={secondaryBtn}>이전</button>
-              <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } if (generalTypeOverflow) { setTypeOverflowModal(generalTypeOverflow); return; } setMode("b4g"); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
+              <button onClick={() => { if (cart.length === 0) { showToast("물품을 하나 이상 선택해주세요.", "warn"); return; } if (generalTypeOverflow) { setTypeOverflowModal(generalTypeOverflow); return; } goToFinalStep("b4g", cart); }} style={primaryBtn}>다음 단계 <ChevronRight size={15} /></button>
             </div>
           </div>
         ) : null}
@@ -3071,6 +3085,15 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </button>
           </div>
         </div>
+      ) : null}
+
+      {/* 깨질 위험 / 화재 위험 / 특정 업체 request용 물품 확인 (확인 후 마지막 단계로 진행) */}
+      {hazardModal ? (
+        <HazardConfirmModal
+          items={hazardModal.items}
+          C={C}
+          onConfirm={() => { const target = hazardModal.proceedMode; setHazardModal(null); setMode(target); }}
+        />
       ) : null}
 
       {/* 기타 소속 성함 미입력 경고 모달 */}
