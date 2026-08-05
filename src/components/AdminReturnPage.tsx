@@ -32,6 +32,9 @@ interface ReturnCartLine {
   location: string;
   max: number;                       // 이 행에서 반납 가능한 최대 수량
   qty: number;                       // 담은 수량
+  // 공구 및 부품류 전용: 재고로 돌려놓을지(반납), 다 써서 재고에서 빼버릴지(소모).
+  // 시나리오/일반 물품에는 해당 개념이 없어 항상 undefined.
+  disposition?: "반납" | "소모";
 }
 
 export default function AdminReturnPage({ scriptUrl, connected, isLightMode, showToast }: Props) {
@@ -540,6 +543,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           location: it.location || "",
           max,
           qty: 1,
+          disposition: (it.sheetType as string) === "warehouse" ? "반납" : undefined,
         }];
       }
       if (prev[idx].qty >= max) return prev; // 대여 수량을 넘길 수 없다
@@ -700,28 +704,44 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     );
   }
 
+  // 공구 및 부품류 한정: 재고로 돌려놓을지(반납) 다 써서 뺄지(소모) 전환
+  function toggleDisposition(key: string) {
+    setCart((prev) =>
+      prev.map((c) => (c.key === key ? { ...c, disposition: c.disposition === "소모" ? "반납" : "소모" } : c))
+    );
+  }
+
   const submitReturnRef = useRef<() => Promise<void>>();
 
   async function submitReturn() {
     if (!cart.length) { showToast("반납할 물품을 담아주세요.", "warn"); return; }
-    if (!window.confirm(`${cart.length}종 · 총 ${cartTotal}개를 반납 처리할까요?`)) return;
+    const consumeTotal = cart.filter((c) => c.disposition === "소모").reduce((n, c) => n + c.qty, 0);
+    const confirmMsg = consumeTotal > 0
+      ? `${cart.length}종 · 총 ${cartTotal}개를 처리할까요? (그중 소모 ${consumeTotal}개는 재고로 돌아가지 않습니다)`
+      : `${cart.length}종 · 총 ${cartTotal}개를 반납 처리할까요?`;
+    if (!window.confirm(confirmMsg)) return;
     setSubmitting(true);
     try {
       let res: { success: boolean; message?: string };
       if (category === "warehouse") {
-        // 공구 및 부품류는 반납 로그를 쌓는 방식이라 별도 API를 쓴다
+        // 공구 및 부품류는 반납 로그를 쌓는 방식이라 별도 API를 쓴다.
+        // 줄마다 disposition("반납"/"소모")을 따로 지정할 수 있어, 파손·소진된 물품은
+        // 재고로 돌아가지 않도록 "소모"로 보낼 수 있다.
         const bulk = await postWarehouseRentBulk(
           scriptUrl,
           cart.map((c) => ({
-            type: "반납" as const,
+            type: (c.disposition === "소모" ? "소모" : "반납") as "반납" | "소모",
             location: c.location,
             name: c.name || c.itemLabel,
             qty: c.qty,
             user: c.borrower,
-            note: "관리자 반납 처리",
+            note: c.disposition === "소모" ? "관리자 반납 중 소모 처리" : "관리자 반납 처리",
           }))
         );
-        res = { success: bulk.success, message: bulk.success ? `${cartTotal}개를 반납 처리했습니다.` : (bulk.error || "반납 처리 실패") };
+        const doneMsg = consumeTotal > 0
+          ? `${cartTotal}개를 처리했습니다. (소모 ${consumeTotal}개 포함)`
+          : `${cartTotal}개를 반납 처리했습니다.`;
+        res = { success: bulk.success, message: bulk.success ? doneMsg : (bulk.error || "반납 처리 실패") };
       } else {
         const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
         res = await postProcessReturn(
@@ -1356,11 +1376,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       {/* 추가 대여 모달 */}
       {lendTarget ? (
         <div
-          onClick={() => !lendSubmitting && setLendTarget(null)}
+          // 담아둔 물품이 날아가면 곤란하므로, 다른 모달들과 달리 배경 클릭으로는 닫지 않는다.
+          // 닫으려면 우측 상단 X 버튼을 눌러야 한다.
           style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
         >
           <div
-            onClick={(e) => e.stopPropagation()}
             style={{ width: "min(560px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
@@ -1481,6 +1501,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       {c.borrower}{c.location ? ` · ${c.location}` : ""}
                     </div>
                   </div>
+                  {c.sheetType === "warehouse" ? (
+                    <button
+                      onClick={() => toggleDisposition(c.key)}
+                      title="반납(재고 복구) / 소모(재고에서 제외) 전환"
+                      style={{
+                        flexShrink: 0, padding: "5px 9px", borderRadius: "7px", cursor: "pointer",
+                        border: `1px solid ${c.disposition === "소모" ? C.warn : C.border}`,
+                        background: c.disposition === "소모" ? C.warnSoft : C.card,
+                        color: c.disposition === "소모" ? C.warn : C.label,
+                        fontSize: "11px", fontWeight: 800, whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.disposition === "소모" ? "🔥 소모" : "반납"}
+                    </button>
+                  ) : null}
                   <button onClick={() => changeQty(c.key, -1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>−</button>
                   <span style={{ minWidth: "34px", textAlign: "center", fontSize: "13px", fontWeight: 800 }}>{c.qty}<span style={{ fontSize: "10.5px", color: C.label, fontWeight: 600 }}>/{c.max}</span></span>
                   <button onClick={() => changeQty(c.key, 1)} disabled={c.qty >= c.max} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: c.qty >= c.max ? C.label : C.text, cursor: c.qty >= c.max ? "not-allowed" : "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>+</button>
