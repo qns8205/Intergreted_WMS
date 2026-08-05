@@ -2292,6 +2292,48 @@ export default function MobileViewPage({
                   </span>
                 </label>
 
+                {/* 깨질 위험 */}
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.fragile ? AMBER : BORDER}`, background: sciForm.fragile ? "rgba(245,158,11,0.1)" : CARD_BG }}>
+                  <input type="checkbox" checked={!!sciForm.fragile}
+                    onChange={(e) => setSciForm((f) => ({ ...f, fragile: e.target.checked }))} />
+                  <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.fragile ? AMBER : TEXT_MAIN }}>
+                    🔺 깨질 위험이 있는 물품
+                  </span>
+                </label>
+
+                {/* 화재 위험 */}
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.fireRisk ? DANGER : BORDER}`, background: sciForm.fireRisk ? "rgba(239,68,68,0.1)" : CARD_BG }}>
+                  <input type="checkbox" checked={!!sciForm.fireRisk}
+                    onChange={(e) => setSciForm((f) => ({ ...f, fireRisk: e.target.checked }))} />
+                  <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.fireRisk ? DANGER : TEXT_MAIN }}>
+                    🔥 화재 위험이 있는 물품
+                  </span>
+                </label>
+
+                {/* 특정 업체 request용 물품 — 체크하면 업체명 입력창이 나타난다 */}
+                <div style={{ padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.requestFor !== undefined ? ACCENT : BORDER}`, background: CARD_BG }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <input
+                      type="checkbox"
+                      checked={sciForm.requestFor !== undefined}
+                      onChange={(e) => setSciForm((f) => ({ ...f, requestFor: e.target.checked ? "" : undefined }))}
+                    />
+                    <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.requestFor !== undefined ? ACCENT_LIGHT : TEXT_MAIN }}>
+                      📌 특정 업체 request용 물품
+                    </span>
+                  </label>
+                  {sciForm.requestFor !== undefined ? (
+                    <input
+                      className="mvp-input"
+                      type="text"
+                      value={sciForm.requestFor}
+                      onChange={(e) => setSciForm((f) => ({ ...f, requestFor: e.target.value }))}
+                      placeholder="업체명을 입력하세요 (예: OO전자)"
+                      style={{ ...inputBaseStyle, marginTop: "9px" }}
+                    />
+                  ) : null}
+                </div>
+
                 <div style={{ display: "flex", gap: "8px" }}>
                   {sciEditing ? (
                     <button type="button" onClick={handleSciDelete} disabled={sciSaving}
