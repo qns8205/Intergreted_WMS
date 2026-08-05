@@ -47,6 +47,18 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
 
+  // 슬롯(위치) 하나에 있는 물품들의 "대표 서브카테고리"(규격) — 다수결로 정한다.
+  function dominantSubcategory(items: InventoryItem[]): string {
+    const counts = new Map<string, number>();
+    items.forEach((it) => {
+      const s = (it.spec || "").trim() || "미분류";
+      counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    let best = "미분류", bestN = 0;
+    counts.forEach((n, s) => { if (n > bestN) { best = s; bestN = n; } });
+    return best;
+  }
+
   const groups = useMemo(() => {
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((it) => {
@@ -55,10 +67,35 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(it);
     });
-    const entries = Array.from(map.entries()).sort((a, b) => compareRackSlot(a[0], b[0]));
+    const entries = Array.from(map.entries());
     entries.forEach(([, items]) => items.sort((a, b) => compareRackSlot(a.location, b.location)));
+    // 같은 랙 안에서는 서브카테고리(규격)가 같은 슬롯끼리 나란히 붙도록 정렬한다.
+    // (랙이 다르면 랙 우선, 같은 랙이면 서브카테고리, 그다음 슬롯 번호 순)
+    entries.sort((a, b) => {
+      const rackA = parseLocation(a[0]).rack || "";
+      const rackB = parseLocation(b[0]).rack || "";
+      if (rackA !== rackB) return rackA.localeCompare(rackB);
+      const subA = dominantSubcategory(a[1]);
+      const subB = dominantSubcategory(b[1]);
+      if (subA !== subB) return subA.localeCompare(subB, "ko");
+      return compareRackSlot(a[0], b[0]);
+    });
     return entries;
   }, [inventory]);
+
+  // 화면에 그릴 때 "여기서부터 새 (랙, 서브카테고리) 묶음이 시작된다"를 미리 계산해둔다.
+  // 이 지점마다 구분 라벨을 하나씩 띄워서 어떤 서브카테고리끼리 묶였는지 보여준다.
+  const groupClusterInfo = useMemo(() => {
+    let prevKey = "";
+    return groups.map(([groupKey, items]) => {
+      const rack = parseLocation(groupKey).rack || "미지정";
+      const subcat = dominantSubcategory(items);
+      const clusterKey = `${rack}::${subcat}`;
+      const isNewCluster = clusterKey !== prevKey;
+      prevKey = clusterKey;
+      return { rack, subcat, isNewCluster };
+    });
+  }, [groups]);
 
   const totalShown = groups.reduce((n, [, items]) => n + items.length, 0);
   const allCollapsed = groups.length > 0 && groups.every(([key]) => collapsed[key]);
@@ -219,16 +256,26 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {groups.map(([groupKey, items]) => {
+          {groups.map(([groupKey, items], idx) => {
             const isCollapsed = !!collapsed[groupKey];
             const isHighlighted = highlightKey === groupKey;
+            const cluster = groupClusterInfo[idx];
             return (
-              <section
-                key={groupKey}
-                ref={(el) => { groupRefs.current[groupKey] = el; }}
-                className={isHighlighted ? "wms-slot-highlight" : undefined}
-                style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}
-              >
+              <React.Fragment key={groupKey}>
+                {cluster?.isNewCluster ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "6px 2px -6px" }}>
+                    <span style={{ fontSize: "11px", fontWeight: 800, color: C.label, fontFamily: "monospace" }}>{cluster.rack}랙</span>
+                    <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "3px 10px" }}>
+                      🏷 {cluster.subcat}
+                    </span>
+                    <div style={{ flex: 1, height: "1px", background: C.border }} />
+                  </div>
+                ) : null}
+                <section
+                  ref={(el) => { groupRefs.current[groupKey] = el; }}
+                  className={isHighlighted ? "wms-slot-highlight" : undefined}
+                  style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", boxShadow: "var(--shadow-sm)" }}
+                >
                 {/* 그룹 헤더 */}
                 <div
                   onClick={() => toggle(groupKey)}
@@ -323,6 +370,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
                   </div>
                 ) : null}
               </section>
+              </React.Fragment>
             );
           })}
         </div>
