@@ -12,6 +12,9 @@ export interface ObjectItem {
   stock: number;
   rented: number;
   excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
+  fragile?: boolean;   // 깨질 위험 (M열)
+  fireRisk?: boolean;  // 화재 위험 (N열)
+  requestFor?: string; // 특정 업체 request용 물품 — 업체명 (O열, 빈 값이면 해당 없음)
 }
 
 export interface ScenarioItem {
@@ -435,6 +438,9 @@ export interface ScenarioObjectAdmin {
   stock: number;
   rented: number;
   excludeFromRanking?: boolean; // "가장 적게 대여된 물품" 랭킹에서 제외
+  fragile?: boolean;   // 깨질 위험 (M열)
+  fireRisk?: boolean;  // 화재 위험 (N열)
+  requestFor?: string; // 특정 업체 request용 물품 — 업체명 (O열, 빈 값이면 해당 없음)
 }
 
 export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
