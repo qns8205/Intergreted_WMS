@@ -512,7 +512,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
               </div>
               {!isNew ? <div style={{ fontSize: "11px", color: C.label, marginTop: "8px" }}>재고 열에 수식이 걸려 있으면 재고 값은 무시됩니다. 대여 중({editing.rented ?? 0})은 자동 계산됩니다.</div> : null}
 
-              <div style={{ marginTop: "16px" }}>
+              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
                 <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: C.text }}>
                   <input
                     type="checkbox"
@@ -522,6 +522,47 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                   />
                   "가장 적게 대여된 물품" 랭킹에서 이 물품 제외
                 </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: editing.fragile ? C.warn : C.text }}>
+                  <input
+                    type="checkbox"
+                    checked={!!editing.fragile}
+                    onChange={(e) => setEditing((p) => (p ? { ...p, fragile: e.target.checked } : p))}
+                    style={{ width: 16, height: 16, accentColor: C.warn }}
+                  />
+                  🔺 깨질 위험이 있는 물품
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: editing.fireRisk ? C.error : C.text }}>
+                  <input
+                    type="checkbox"
+                    checked={!!editing.fireRisk}
+                    onChange={(e) => setEditing((p) => (p ? { ...p, fireRisk: e.target.checked } : p))}
+                    style={{ width: 16, height: 16, accentColor: C.error }}
+                  />
+                  🔥 화재 위험이 있는 물품
+                </label>
+
+                <div>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: editing.requestFor !== undefined ? C.accentText : C.text }}>
+                    <input
+                      type="checkbox"
+                      // undefined = 체크 안 함 / "" 이상 문자열 = 체크됨 (빈 값이어도 "체크는 됐지만 업체명 미입력" 상태로 구분)
+                      checked={editing.requestFor !== undefined}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, requestFor: e.target.checked ? "" : undefined } : p))}
+                      style={{ width: 16, height: 16, accentColor: C.accent }}
+                    />
+                    📌 특정 업체 request용 물품
+                  </label>
+                  {editing.requestFor !== undefined ? (
+                    <input
+                      value={editing.requestFor}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, requestFor: e.target.value } : p))}
+                      placeholder="업체명을 입력하세요 (예: OO전자)"
+                      style={{ ...inputStyle, marginTop: "8px" }}
+                    />
+                  ) : null}
+                </div>
               </div>
             </div>
             <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: "10px", position: "sticky", bottom: 0, background: C.card }}>
