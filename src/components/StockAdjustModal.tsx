@@ -54,7 +54,11 @@ export default function StockAdjustModal({
       .then(setHistory)
       .catch((e) => showToast(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error"))
       .finally(() => setHistoryLoading(false));
-  }, [scriptUrl, connected, category, itemId, showToast]);
+    // showToast는 매 렌더링마다 새로 만들어지는 함수라 의존성에 넣으면 렌더될 때마다
+    // 이력을 다시 불러와 깜빡이게 된다. 조회 조건(scriptUrl/connected/category/itemId)이
+    // 바뀔 때만 다시 불러오면 되므로 의도적으로 뺐다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptUrl, connected, category, itemId]);
 
   const parsed = parseInt(newStock, 10);
   const diff = !isNaN(parsed) ? parsed - currentStock : null;
