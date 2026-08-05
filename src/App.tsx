@@ -2926,6 +2926,7 @@ export default function App() {
                 isAdmin={isAdmin}
                 onEditItem={(item) => setEditingItem(item)}
                 onAdjustStock={(item) => setStockAdjustItem(item)}
+                onDeleteItem={(item) => deleteInventoryItemRow(item.rowIndex)}
                 onManageSets={() => setShowItemSetManager(true)}
                 onImageClick={(url) => setImageModalUrl(url)}
                 onAddItem={(presetLocation) => {
