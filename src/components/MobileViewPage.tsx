@@ -109,9 +109,9 @@ export default function MobileViewPage({
   const mainRef = useRef<HTMLElement | null>(null);
   const swipeRef = useRef<{ x: number; y: number; t: number } | null>(null);
 
-  // 관리자 탭 순서 (사이드/상단 탭과 동일)
+  // 관리자 탭 순서 (사이드/상단 탭과 동일) — 관리자는 대여/반납 없이 물품 관리부터 시작한다
   const swipeTabs: Mode[] = isAdmin
-    ? (["등록", "시나리오", "대여", "불량"] as Mode[])
+    ? (["등록", "시나리오", "불량"] as Mode[])
     : (["대여", "반납"] as Mode[]);
 
   function goTab(delta: number) {
@@ -476,6 +476,18 @@ export default function MobileViewPage({
   }, [inventory, searchQuery]);
 
   // ---------- 등록 탭(목록 보기): PC RackGroupedView와 동일하게 슬롯 단위로 묶는다 ----------
+  // 슬롯(위치) 하나에 있는 물품들의 "대표 서브카테고리"(규격) — 다수결로 정한다. (PC RackGroupedView와 동일 규칙)
+  function whDominantSubcategory(items: InventoryItem[]): string {
+    const counts = new Map<string, number>();
+    items.forEach((item) => {
+      const s = (item.spec || "").trim() || "미분류";
+      counts.set(s, (counts.get(s) || 0) + 1);
+    });
+    let best = "미분류", bestN = 0;
+    counts.forEach((n, s) => { if (n > bestN) { best = s; bestN = n; } });
+    return best;
+  }
+
   const whGroups = useMemo(() => {
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((item) => {
@@ -483,8 +495,33 @@ export default function MobileViewPage({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(item);
     });
-    return Array.from(map.entries()).sort((a, b) => compareRackSlot(a[0], b[0]));
+    const entries = Array.from(map.entries());
+    entries.forEach(([, items]) => items.sort((a, b) => compareRackSlot(a.location, b.location)));
+    // 같은 랙 안에서는 서브카테고리(규격)가 같은 슬롯끼리 나란히 붙도록 정렬한다.
+    entries.sort((a, b) => {
+      const rackA = parseLocation(a[0]).rack || "";
+      const rackB = parseLocation(b[0]).rack || "";
+      if (rackA !== rackB) return rackA.localeCompare(rackB);
+      const subA = whDominantSubcategory(a[1]);
+      const subB = whDominantSubcategory(b[1]);
+      if (subA !== subB) return subA.localeCompare(subB, "ko");
+      return compareRackSlot(a[0], b[0]);
+    });
+    return entries;
   }, [inventory]);
+
+  // 어디서부터 새 (랙, 서브카테고리) 묶음이 시작되는지 미리 계산 — 구분 라벨 렌더링용
+  const whGroupClusterInfo = useMemo(() => {
+    let prevKey = "";
+    return whGroups.map(([groupKey, items]) => {
+      const rack = parseLocation(groupKey).rack || "미지정";
+      const subcat = whDominantSubcategory(items);
+      const clusterKey = `${rack}::${subcat}`;
+      const isNewCluster = clusterKey !== prevKey;
+      prevKey = clusterKey;
+      return { rack, subcat, isNewCluster };
+    });
+  }, [whGroups]);
 
   const whRacks = useMemo(() => {
     const set = new Set<string>();
@@ -1685,16 +1722,26 @@ export default function MobileViewPage({
                     등록된 공구 및 부품류가 없습니다.
                   </div>
                 ) : (
-                  whGroups.map(([groupKey, items]) => {
+                  whGroups.map(([groupKey, items], idx) => {
                     const isCollapsed = !!whCollapsed[groupKey];
                     const isHighlighted = whHighlightKey === groupKey;
+                    const cluster = whGroupClusterInfo[idx];
                     return (
-                      <div
-                        key={groupKey}
-                        ref={(el) => { whGroupRefs.current[groupKey] = el; }}
-                        className={isHighlighted ? "mvp-wh-highlight" : undefined}
-                        style={{ border: `1px solid ${BORDER}`, borderRadius: "14px", background: CARD_BG, overflow: "hidden", marginBottom: "10px" }}
-                      >
+                      <React.Fragment key={groupKey}>
+                        {cluster?.isNewCluster ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: "7px", margin: "10px 2px 6px" }}>
+                            <span style={{ fontSize: "10.5px", fontWeight: 800, color: TEXT_DIM, fontFamily: "monospace" }}>{cluster.rack}랙</span>
+                            <span style={{ fontSize: "10.5px", fontWeight: 800, color: ACCENT_LIGHT, background: "rgba(37,99,235,0.12)", borderRadius: "999px", padding: "3px 9px" }}>
+                              🏷 {cluster.subcat}
+                            </span>
+                            <div style={{ flex: 1, height: "1px", background: BORDER }} />
+                          </div>
+                        ) : null}
+                        <div
+                          ref={(el) => { whGroupRefs.current[groupKey] = el; }}
+                          className={isHighlighted ? "mvp-wh-highlight" : undefined}
+                          style={{ border: `1px solid ${BORDER}`, borderRadius: "14px", background: CARD_BG, overflow: "hidden", marginBottom: "10px" }}
+                        >
                         <div
                           onClick={() => setWhCollapsed((p) => ({ ...p, [groupKey]: !p[groupKey] }))}
                           style={{
@@ -1763,6 +1810,7 @@ export default function MobileViewPage({
                           </div>
                         ) : null}
                       </div>
+                      </React.Fragment>
                     );
                   })
                 )}
@@ -1877,6 +1925,7 @@ export default function MobileViewPage({
                     placeholder="수량"
                     value={regStock}
                     onChange={(e) => setRegStock(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     style={{ ...inputBaseStyle, flex: 1 }}
                   />
                   <button
@@ -3273,6 +3322,7 @@ export default function MobileViewPage({
                         type="text"
                         value={editStock}
                         onChange={(e) => setEditStock(e.target.value)}
+                        onFocus={(e) => e.target.select()}
                         style={inputBaseStyle}
                         placeholder="예: 5 또는 N/A"
                         required
