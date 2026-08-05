@@ -13,6 +13,7 @@ import {
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import { getGoogleDriveImageUrl } from "../utils/drive";
+import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 
 interface Props {
   scriptUrl: string;
@@ -355,6 +356,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [lendSearch, setLendSearch] = useState("");
   const [lendCart, setLendCart] = useState<{ id: string; name: string; quantity: number; stock: number }[]>([]);
   const [lendSubmitting, setLendSubmitting] = useState(false);
+  // 깨질 위험/화재 위험/특정 업체 request용 물품이 대여 목록에 있을 때, 제출 직전 확인 모달
+  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string }[]; onConfirm: () => void } | null>(null);
 
   async function openLend(g: { name: string; items: UnreturnedItem[] }) {
     const first = g.items[0];
@@ -392,7 +395,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     });
   }
 
-  async function submitLend() {
+  async function doSubmitLend() {
     if (!lendTarget || !lendCart.length) { showToast("대여할 물품을 담아주세요.", "warn"); return; }
     setLendSubmitting(true);
     try {
@@ -425,6 +428,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     } finally {
       setLendSubmitting(false);
     }
+  }
+
+  // 제출 직전에 깨질 위험/화재 위험/특정 업체 request용 물품이 있는지 확인하고,
+  // 있으면 모달로 한 번 더 확인받은 뒤에만 실제로 대여 처리한다.
+  function submitLend() {
+    if (!lendTarget || !lendCart.length) { showToast("대여할 물품을 담아주세요.", "warn"); return; }
+    const hazards = collectHazardItems(lendCatalog, lendCart);
+    if (hazards.length > 0) { setHazardModal({ items: hazards, onConfirm: doSubmitLend }); return; }
+    doSubmitLend();
   }
 
   async function notifyBorrower(g: { name: string; email: string; days: number; items: UnreturnedItem[] }) {
@@ -1279,6 +1291,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       ) : null}
 
       {/* 물품 교체 모달 */}
+      {/* 깨질 위험 / 화재 위험 / 특정 업체 request용 물품 확인 (확인 후 실제 대여 처리) */}
+      {hazardModal ? (
+        <HazardConfirmModal
+          items={hazardModal.items}
+          C={C}
+          onConfirm={() => { const fn = hazardModal.onConfirm; setHazardModal(null); fn(); }}
+        />
+      ) : null}
+
       {swapTarget ? (
         <div
           onClick={() => !swapping && setSwapTarget(null)}
