@@ -136,6 +136,7 @@ export default function StockAdjustModal({
                 min={0}
                 value={newStock}
                 onChange={(e) => setNewStock(e.target.value)}
+                onFocus={(e) => e.target.select()}
                 style={{ width: "100%", border: "none", background: "transparent", outline: "none", fontSize: "18px", fontWeight: 800, color: C.text, textAlign: "center" }}
               />
             </div>
@@ -162,6 +163,7 @@ export default function StockAdjustModal({
                     min={0}
                     value={newRented}
                     onChange={(e) => setNewRented(e.target.value)}
+                    onFocus={(e) => e.target.select()}
                     style={{ width: "100%", border: "none", background: "transparent", outline: "none", fontSize: "18px", fontWeight: 800, color: C.text, textAlign: "center" }}
                   />
                 </div>
