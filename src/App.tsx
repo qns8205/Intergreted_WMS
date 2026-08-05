@@ -632,13 +632,16 @@ export default function App() {
   // 조기에 지워버리는 문제를 막는다. (예: A 토스트 → 곧이어 B 토스트가 뜬 경우,
   // A의 2.8초 타이머가 나중에 발동해 B를 순식간에 지워버려 "경고가 안 뜬 것처럼" 보이는 버그)
   const toastTokenRef = useRef(0);
-  const showToast = (msg: string, type: "info" | "ok" | "warn" | "error" = "info") => {
+  // useCallback으로 감싸 참조가 렌더마다 바뀌지 않게 한다. 안 그러면 showToast를
+  // 의존성 배열에 넣은 여러 화면의 useEffect(재고 변경 이력 조회 등)가 App이 리렌더될
+  // 때마다 "함수가 바뀌었다"고 오인해 데이터를 계속 다시 불러오며 깜빡이게 된다.
+  const showToast = useCallback((msg: string, type: "info" | "ok" | "warn" | "error" = "info") => {
     const myToken = ++toastTokenRef.current;
     setToast({ msg, type });
     setTimeout(() => {
       if (toastTokenRef.current === myToken) setToast(null);
     }, 2800);
-  };
+  }, []);
 
   // 3-1. 모바일용 관리자 모드 시스템 활성화 지원
   useEffect(() => {
