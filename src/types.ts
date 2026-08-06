@@ -27,6 +27,7 @@ export interface DefectLog {
   culprit?: string; // 파손자 (로봇/시나리오 오브젝트 파손 시 기록)
   photo?: string;
   itemCategory?: string;
+  itemId?: string; // 로봇(시나리오) 오브젝트 재고 차감 대상 특정용 — rack(공구) 항목에는 없음
 }
 
 export interface RentLog {
