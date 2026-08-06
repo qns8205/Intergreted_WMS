@@ -74,12 +74,29 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [reborrowTargetAffiliation, setReborrowTargetAffiliation] = useState<"cfgw" | "configds" | "other">("cfgw");
   const [reborrowSameName, setReborrowSameName] = useState(true); // true: 원래 반납자 명의 유지, false: 다른 사람 명의로 재대여
   const [showStats, setShowStats] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(30);
+  const [visibleCount, setVisibleCount] = useState(5);
+
+  // 정렬된 로그를 "건수"가 아니라 "사람 수" 기준으로 잘라 보여준다.
+  // 한 사람이 여러 건에 걸쳐 나타날 수 있으므로(연속되지 않고 흩어져 있을 수도 있다),
+  // 앞에서부터 처음 등장하는 사람 N명을 정하고 그 사람들의 건은 전부 포함시킨다.
+  function limitByPeople<T>(sortedList: T[], getName: (item: T) => string, peopleLimit: number): T[] {
+    const seen = new Set<string>();
+    const result: T[] = [];
+    for (const item of sortedList) {
+      const name = getName(item) || "(이름 없음)";
+      if (!seen.has(name)) {
+        if (seen.size >= peopleLimit) continue;
+        seen.add(name);
+      }
+      result.push(item);
+    }
+    return result;
+  }
   const [viewMode, setViewMode] = useState<"log" | "byItem">("log");
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
 
   // 필터가 바뀌면 페이지를 처음으로 되돌린다.
-  useEffect(() => { setVisibleCount(30); }, [search, kindFilter, statusFilter, borrowerFilter]);
+  useEffect(() => { setVisibleCount(5); }, [search, kindFilter, statusFilter, borrowerFilter]);
 
   // 화면에 데이터가 떠 있는지 여부는 ref로 추적한다.
   // (state를 load의 의존성에 넣으면 로드 완료 → load 재생성 → useEffect 재실행의 무한 재조회 루프가 생긴다)
@@ -692,7 +709,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               return (
                 <button
                   key={p.name}
-                  onClick={() => { setBorrowerFilter(on ? "" : p.name); setVisibleCount(30); }}
+                  onClick={() => { setBorrowerFilter(on ? "" : p.name); setVisibleCount(5); }}
                   title={`${p.name} · ${p.count}건 · 총 ${p.qty}개 · 최장 ${p.days}일 경과`}
                   style={{
                     display: "flex", alignItems: "center", gap: "7px",
@@ -744,7 +761,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {whFilteredLogs.slice(0, visibleCount).map((l) => {
+            {(() => {
+              const visibleWhLogs = limitByPeople<WarehouseLogEntry>(whFilteredLogs, (l) => l.user || "", visibleCount);
+              const totalWhPeople = new Set(whFilteredLogs.map((l) => l.user || "(이름 없음)")).size;
+              const shownWhPeople = new Set(visibleWhLogs.map((l) => l.user || "(이름 없음)")).size;
+              return (
+                <>
+                  {visibleWhLogs.map((l) => {
               const tone = l.type === "반납" ? C.success : l.type === "소모" ? C.warn : C.accentText;
               const toneBg = l.type === "반납" ? C.successSoft : l.type === "소모" ? C.warnSoft : C.accentSoft;
               return (
@@ -762,12 +785,15 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   <span style={{ fontSize: "13px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>{l.quantity}개</span>
                 </div>
               );
-            })}
-            {whFilteredLogs.length > visibleCount ? (
-              <button onClick={() => setVisibleCount((v) => v + 30)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-                더 보기 ({visibleCount} / {whFilteredLogs.length}건 표시 중)
-              </button>
-            ) : null}
+                  })}
+                  {totalWhPeople > shownWhPeople ? (
+                    <button onClick={() => setVisibleCount((v) => v + 5)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                      더 보기 ({shownWhPeople} / {totalWhPeople}명 표시 중)
+                    </button>
+                  ) : null}
+                </>
+              );
+            })()}
           </div>
         )
       ) : loading && !loaded ? (
@@ -776,7 +802,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {groups.slice(0, visibleCount).map((g) => (
+          {(() => {
+            const visibleGroups = limitByPeople<typeof groups[number]>(groups, (g) => g.borrower || "", visibleCount);
+            const totalGroupPeople = new Set(groups.map((g) => g.borrower || "(이름 없음)")).size;
+            const shownGroupPeople = new Set(visibleGroups.map((g) => g.borrower || "(이름 없음)")).size;
+            return (
+              <>
+                {visibleGroups.map((g) => (
             <div key={g.key} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", opacity: g.allReturned ? 0.85 : 1 }}>
               <div onClick={() => isAdmin && toggleGroup(g)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.cardSub, cursor: isAdmin ? "pointer" : "default" }}>
                 <div style={{ width: 34, height: 34, borderRadius: "9px", background: g.allReturned ? C.successSoft : C.accentSoft, color: g.allReturned ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><User size={17} /></div>
@@ -813,11 +845,14 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               </div>
             </div>
           ))}
-          {groups.length > visibleCount ? (
-            <button onClick={() => setVisibleCount((n) => n + 30)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-              더 보기 ({visibleCount} / {groups.length}건 표시 중)
-            </button>
-          ) : null}
+                {totalGroupPeople > shownGroupPeople ? (
+                  <button onClick={() => setVisibleCount((n) => n + 5)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
+                    더 보기 ({shownGroupPeople} / {totalGroupPeople}명 표시 중)
+                  </button>
+                ) : null}
+              </>
+            );
+          })()}
         </div>
       )}
 
