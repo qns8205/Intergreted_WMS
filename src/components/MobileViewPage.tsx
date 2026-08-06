@@ -2275,15 +2275,18 @@ export default function MobileViewPage({
                       <input className="mvp-input" type="text" placeholder="새 카테고리 이름"
                         value={sciForm.category} onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))} style={inputBaseStyle} />
                     ) : (
-                      <select
-                        className="mvp-input"
-                        value={sciCategories.includes(sciForm.category || "") ? sciForm.category : ""}
-                        onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))}
-                        style={inputBaseStyle}
-                      >
-                        <option value="">선택 안 함</option>
-                        {sciCategories.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          className="mvp-input"
+                          value={sciCategories.includes(sciForm.category || "") ? sciForm.category : ""}
+                          onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))}
+                          style={{ ...inputBaseStyle, appearance: "none", WebkitAppearance: "none", paddingRight: "34px" }}
+                        >
+                          <option value="">선택 안 함</option>
+                          {sciCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <ChevronDown size={16} color={TEXT_DIM} style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                      </div>
                     )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -2297,15 +2300,18 @@ export default function MobileViewPage({
                       <input className="mvp-input" type="text" placeholder="새 서브카테고리 이름"
                         value={sciForm.subcategory} onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))} style={inputBaseStyle} />
                     ) : (
-                      <select
-                        className="mvp-input"
-                        value={sciSubcategoriesForCategory.includes(sciForm.subcategory || "") ? sciForm.subcategory : ""}
-                        onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))}
-                        style={inputBaseStyle}
-                      >
-                        <option value="">선택 안 함</option>
-                        {sciSubcategoriesForCategory.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      <div style={{ position: "relative" }}>
+                        <select
+                          className="mvp-input"
+                          value={sciSubcategoriesForCategory.includes(sciForm.subcategory || "") ? sciForm.subcategory : ""}
+                          onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))}
+                          style={{ ...inputBaseStyle, appearance: "none", WebkitAppearance: "none", paddingRight: "34px" }}
+                        >
+                          <option value="">선택 안 함</option>
+                          {sciSubcategoriesForCategory.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <ChevronDown size={16} color={TEXT_DIM} style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                      </div>
                     )}
                   </div>
                 </div>
