@@ -227,6 +227,28 @@ export default function MobileViewPage({
   // 등록/수정 폼 (editing이 있으면 수정, 없으면 신규)
   const emptySciForm = { rowIndex: 0, id: "", name: "", sector: "", rootSlot: "", category: "", subcategory: "", image: "", stock: 0, rented: 0, excludeFromRanking: false };
   const [sciForm, setSciForm] = useState<ScenarioObjectAdmin>(emptySciForm as ScenarioObjectAdmin);
+
+  // 카테고리/서브카테고리 드롭다운 옵션 (PC ScenarioAdminPage와 동일한 규칙)
+  const sciCategories = useMemo(() => {
+    const set = new Set<string>();
+    sciItems.forEach((it) => { if (it.category) set.add(it.category); });
+    return Array.from(set).sort();
+  }, [sciItems]);
+  const sciAllSubcategories = useMemo(() => {
+    const set = new Set<string>();
+    sciItems.forEach((it) => { if (it.subcategory) set.add(it.subcategory); });
+    return Array.from(set).sort();
+  }, [sciItems]);
+  const sciSubcategoriesForCategory = useMemo(() => {
+    const cat = sciForm.category?.trim();
+    if (!cat) return sciAllSubcategories;
+    const set = new Set<string>();
+    sciItems.forEach((it) => { if (it.category === cat && it.subcategory) set.add(it.subcategory); });
+    const scoped = Array.from(set).sort();
+    return scoped.length > 0 ? scoped : sciAllSubcategories;
+  }, [sciItems, sciForm.category, sciAllSubcategories]);
+  const [sciCatCustom, setSciCatCustom] = useState(false);
+  const [sciSubcatCustom, setSciSubcatCustom] = useState(false);
   const [sciEditing, setSciEditing] = useState(false);
   const [sciSaving, setSciSaving] = useState(false);
   const [sciUploading, setSciUploading] = useState(false);
@@ -263,11 +285,16 @@ export default function MobileViewPage({
     setSciForm({ ...(emptySciForm as ScenarioObjectAdmin) });
     setSciEditing(false);
     setScenarioTab("register");
+    setSciCatCustom(false);
+    setSciSubcatCustom(false);
   }
   function openSciEdit(item: ScenarioObjectAdmin) {
     setSciForm({ ...item });
     setSciEditing(true);
     setScenarioTab("register");
+    // 기존 목록에 없는 값이면(레거시 데이터) 드롭다운에 안 보이니 직접입력 모드로 연다.
+    setSciCatCustom(!!item.category && !sciCategories.includes(item.category));
+    setSciSubcatCustom(!!item.subcategory && !sciAllSubcategories.includes(item.subcategory));
   }
 
   async function handleSciPhoto(file: File) {
@@ -2238,14 +2265,48 @@ export default function MobileViewPage({
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>카테고리</label>
-                    <input className="mvp-input" type="text" placeholder="예: 식음료"
-                      value={sciForm.category} onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))} style={inputBaseStyle} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>카테고리</label>
+                      <button type="button" onClick={() => setSciCatCustom((v) => !v)} style={{ background: "none", border: "none", color: ACCENT_LIGHT, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        {sciCatCustom ? "목록에서 선택" : "직접 입력"}
+                      </button>
+                    </div>
+                    {sciCatCustom ? (
+                      <input className="mvp-input" type="text" placeholder="새 카테고리 이름"
+                        value={sciForm.category} onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))} style={inputBaseStyle} />
+                    ) : (
+                      <select
+                        className="mvp-input"
+                        value={sciCategories.includes(sciForm.category || "") ? sciForm.category : ""}
+                        onChange={(e) => setSciForm((f) => ({ ...f, category: e.target.value }))}
+                        style={inputBaseStyle}
+                      >
+                        <option value="">선택 안 함</option>
+                        {sciCategories.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>서브 카테고리</label>
-                    <input className="mvp-input" type="text" placeholder="예: 음료"
-                      value={sciForm.subcategory} onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))} style={inputBaseStyle} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>서브 카테고리</label>
+                      <button type="button" onClick={() => setSciSubcatCustom((v) => !v)} style={{ background: "none", border: "none", color: ACCENT_LIGHT, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        {sciSubcatCustom ? "목록에서 선택" : "직접 입력"}
+                      </button>
+                    </div>
+                    {sciSubcatCustom ? (
+                      <input className="mvp-input" type="text" placeholder="새 서브카테고리 이름"
+                        value={sciForm.subcategory} onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))} style={inputBaseStyle} />
+                    ) : (
+                      <select
+                        className="mvp-input"
+                        value={sciSubcategoriesForCategory.includes(sciForm.subcategory || "") ? sciForm.subcategory : ""}
+                        onChange={(e) => setSciForm((f) => ({ ...f, subcategory: e.target.value }))}
+                        style={inputBaseStyle}
+                      >
+                        <option value="">선택 안 함</option>
+                        {sciSubcategoriesForCategory.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    )}
                   </div>
                 </div>
 
