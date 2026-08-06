@@ -304,6 +304,27 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     return Array.from(set).sort();
   }, [items]);
 
+  // 서브카테고리는 기본적으로 "지금 선택된 카테고리 안에서 실제로 쓰인 것들"만 보여준다.
+  // 카테고리가 비어있거나 그 카테고리에 아직 서브카테고리가 하나도 없으면, 전체 서브카테고리를 보여준다.
+  const allSubcategories = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((it) => { if (it.subcategory) set.add(it.subcategory); });
+    return Array.from(set).sort();
+  }, [items]);
+  const subcategoriesForCategory = useMemo(() => {
+    const cat = editing?.category?.trim();
+    if (!cat) return allSubcategories;
+    const set = new Set<string>();
+    items.forEach((it) => { if (it.category === cat && it.subcategory) set.add(it.subcategory); });
+    const scoped = Array.from(set).sort();
+    return scoped.length > 0 ? scoped : allSubcategories;
+  }, [items, editing?.category, allSubcategories]);
+
+  // 카테고리/서브카테고리를 드롭다운(select)으로 고를지, 직접 텍스트로 입력할지.
+  // 기존 목록에 없는 값으로 편집을 열면(레거시 데이터), 값이 사라져 보이지 않도록 직접입력 모드로 시작한다.
+  const [catCustom, setCatCustom] = useState(false);
+  const [subcatCustom, setSubcatCustom] = useState(false);
+
   const filtered = useMemo(() => {
     const q = search.trim();
     return items.filter((it) => {
@@ -322,10 +343,18 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     });
   }, [items, search, cat]);
 
-  function openEdit(it: ScenarioObjectAdmin) { setEditing({ ...it }); setIsNew(false); }
+  function openEdit(it: ScenarioObjectAdmin) {
+    setEditing({ ...it });
+    setIsNew(false);
+    // 기존 목록에 없는 값이면(레거시 데이터) 드롭다운에 안 보여서 값이 사라진 것처럼 보이니, 직접입력 모드로 연다.
+    setCatCustom(!!it.category && !categories.includes(it.category));
+    setSubcatCustom(!!it.subcategory && !allSubcategories.includes(it.subcategory));
+  }
   function openNew() {
     setEditing({ id: "", name: "", sector: "", rootSlot: "", category: "", subcategory: "", image: "", stock: 0 });
     setIsNew(true);
+    setCatCustom(false);
+    setSubcatCustom(false);
   }
 
   async function handleFile(file: File) {
@@ -389,6 +418,40 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
           .sap-root { zoom: 1.15; }
         }
       `}</style>
+
+      {/* 카테고리 내비게이터 — 검색창 위 공간을 채우면서 빠른 필터로도 쓴다 */}
+      {categories.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+          <button
+            onClick={() => setCat("")}
+            style={{
+              padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
+              border: `1px solid ${cat === "" ? C.accent : C.border}`,
+              background: cat === "" ? C.accent : C.card, color: cat === "" ? "#fff" : C.text,
+              fontSize: "12px", fontWeight: 800,
+            }}
+          >
+            전체
+          </button>
+          {categories.map((c) => {
+            const on = cat === c;
+            return (
+              <button
+                key={c}
+                onClick={() => setCat(on ? "" : c)}
+                style={{
+                  padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
+                  border: `1px solid ${on ? C.accent : C.border}`,
+                  background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
+                  fontSize: "12px", fontWeight: 800,
+                }}
+              >
+                {c}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {/* 필터 바 (스크롤해도 고정) */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: C.bg, padding: "10px 0" }}>
@@ -490,13 +553,44 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "12px" }}>
                 <div>
-                  <label style={lblStyle}>카테고리</label>
-                  <input value={editing.category || ""} onChange={(e) => setEditing((p) => (p ? { ...p, category: e.target.value } : p))} placeholder="카테고리" style={inputStyle} list="sap-cat-list" />
-                  <datalist id="sap-cat-list">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <label style={lblStyle}>카테고리</label>
+                    <button type="button" onClick={() => setCatCustom((v) => !v)} style={{ background: "none", border: "none", color: C.accentText, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0, marginBottom: "5px" }}>
+                      {catCustom ? "목록에서 선택" : "직접 입력"}
+                    </button>
+                  </div>
+                  {catCustom ? (
+                    <input value={editing.category || ""} onChange={(e) => setEditing((p) => (p ? { ...p, category: e.target.value } : p))} placeholder="새 카테고리 이름" style={inputStyle} />
+                  ) : (
+                    <select
+                      value={categories.includes(editing.category || "") ? editing.category : ""}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, category: e.target.value } : p))}
+                      style={inputStyle}
+                    >
+                      <option value="">선택 안 함</option>
+                      {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div>
-                  <label style={lblStyle}>서브카테고리</label>
-                  <input value={editing.subcategory || ""} onChange={(e) => setEditing((p) => (p ? { ...p, subcategory: e.target.value } : p))} placeholder="서브카테고리" style={inputStyle} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <label style={lblStyle}>서브카테고리</label>
+                    <button type="button" onClick={() => setSubcatCustom((v) => !v)} style={{ background: "none", border: "none", color: C.accentText, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0, marginBottom: "5px" }}>
+                      {subcatCustom ? "목록에서 선택" : "직접 입력"}
+                    </button>
+                  </div>
+                  {subcatCustom ? (
+                    <input value={editing.subcategory || ""} onChange={(e) => setEditing((p) => (p ? { ...p, subcategory: e.target.value } : p))} placeholder="새 서브카테고리 이름" style={inputStyle} />
+                  ) : (
+                    <select
+                      value={subcategoriesForCategory.includes(editing.subcategory || "") ? editing.subcategory : ""}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, subcategory: e.target.value } : p))}
+                      style={inputStyle}
+                    >
+                      <option value="">선택 안 함</option>
+                      {subcategoriesForCategory.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  )}
                 </div>
               </div>
 
