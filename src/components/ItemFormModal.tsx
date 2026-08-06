@@ -124,9 +124,14 @@ export default function ItemFormModal({
 
   const existingSubcategories = React.useMemo(() => {
     if (!location || !inventory) return [];
+    // 정확히 같은 슬롯(예: "A-00")만 보면 그 슬롯에 다른 물품이 없는 한 후보가 항상 비어서
+    // 드롭다운이 뜰 일이 없다. RackGroupedView의 "같은 랙끼리 서브분류 묶기"와 통일되게,
+    // 같은 랙 전체에서 이미 쓰인 서브분류를 후보로 보여준다.
+    const targetRack = parseLocation(location).rack;
+    if (!targetRack) return [];
     const set = new Set<string>();
     inventory.forEach((itm) => {
-      if (itm.location === location && itm.spec && itm.spec.trim() && itm.spec !== "기타") {
+      if (parseLocation(itm.location).rack === targetRack && itm.spec && itm.spec.trim() && itm.spec !== "기타") {
         set.add(itm.spec.trim());
       }
     });
@@ -304,67 +309,53 @@ export default function ItemFormModal({
             />
           </Field>
 
-          <Field label="선반 내 서브 분류 (예: 공구, M2 규격, M3 규격 등)">
-            {subMode === "select" && existingSubcategories.length > 0 ? (
-              <div style={{ display: "flex", gap: 8 }}>
-                <select
-                  value={form.spec}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val === "__custom__") {
-                      setSubMode("custom");
-                    } else {
-                      update("spec", val);
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    background: "var(--input-bg, #0f172a)",
-                    color: TEXT_MAIN,
-                    border: "1px solid var(--panel-border, #334155)",
-                    borderRadius: "6px",
-                    padding: "10px 14px",
-                    fontSize: "13px",
-                    outline: "none",
-                  }}
+          <div style={{ marginBottom: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>
+                선반 내 서브 분류 (예: 공구, M2 규격, M3 규격 등)
+              </label>
+              {existingSubcategories.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSubMode((m) => (m === "select" ? "custom" : "select"))}
+                  style={{ background: "none", border: "none", color: ACCENT, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}
                 >
-                  <option value="">선택 안 함 (기타)</option>
-                  {existingSubcategories.map((sub) => (
-                    <option key={sub} value={sub}>
-                      {sub}
-                    </option>
-                  ))}
-                  <option value="__custom__">➕ 새 서브 분류 직접 입력...</option>
-                </select>
-              </div>
+                  {subMode === "select" ? "직접 입력" : "목록에서 선택"}
+                </button>
+              ) : null}
+            </div>
+            {subMode === "select" && existingSubcategories.length > 0 ? (
+              <select
+                value={form.spec}
+                onChange={(e) => update("spec", e.target.value)}
+                style={{
+                  width: "100%",
+                  background: "var(--input-bg, #0f172a)",
+                  color: TEXT_MAIN,
+                  border: "1px solid var(--panel-border, #334155)",
+                  borderRadius: "6px",
+                  padding: "10px 14px",
+                  fontSize: "13px",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">선택 안 함 (기타)</option>
+                {existingSubcategories.map((sub) => (
+                  <option key={sub} value={sub}>
+                    {sub}
+                  </option>
+                ))}
+              </select>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <input
-                  value={form.spec}
-                  onChange={(e) => update("spec", e.target.value)}
-                  placeholder="선반 내에서 구분할 서브 분류 직접 입력"
-                  style={{ width: "100%" }}
-                />
-                {existingSubcategories.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setSubMode("select")}
-                    style={{
-                      alignSelf: "flex-end",
-                      background: "transparent",
-                      border: "none",
-                      color: ACCENT_SOFT,
-                      fontSize: "11px",
-                      cursor: "pointer",
-                      padding: "2px 4px",
-                    }}
-                  >
-                    📋 기존 서브 분류 목록에서 선택하기
-                  </button>
-                )}
-              </div>
+              <input
+                value={form.spec}
+                onChange={(e) => update("spec", e.target.value)}
+                placeholder="선반 내에서 구분할 서브 분류 직접 입력"
+                style={{ width: "100%" }}
+              />
             )}
-          </Field>
+          </div>
 
           <Field label="특이사항">
             <input
