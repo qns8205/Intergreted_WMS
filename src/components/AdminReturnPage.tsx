@@ -708,6 +708,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     };
   }, []);
 
+  // itemLabel(예: "[000123] 드라이버 x 2")에서 ID 접두사와 수량 접미사를 떼어
+  // 순수 물품명만 뽑는다. UnreturnedItem에는 itemName이라는 필드가 애초에 없어서
+  // (재대여 시 item?.itemName을 참조하면 항상 undefined → 빈 이름으로 등록되는 버그가 있었다)
+  function pureItemName(label?: string): string {
+    return String(label || "")
+      .replace(/^\[[^\]]*\]\s*/, "")     // 앞의 "[000123] " 제거
+      .replace(/\s*[x×]\s*\d+\s*$/i, "") // 끝의 " x 2" 제거
+      .trim();
+  }
+
   function changeQty(key: string, delta: number) {
     setCart((prev) =>
       prev
@@ -801,7 +811,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                   const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
                   // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
                   // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
-                  return { id: item?.itemId || "", name: item?.itemName || "", quantity: c.qty };
+                  return { id: item?.itemId || "", name: pureItemName(item?.itemLabel), quantity: c.qty };
                 }).filter((x) => x.id),
                 floor: src?.floor,
                 unit: src?.unit,
