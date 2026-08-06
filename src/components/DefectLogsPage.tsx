@@ -106,6 +106,9 @@ export default function DefectLogsPage({
   // Form states
   const [locationInput, setLocationInput] = useState("");
   const [nameInput, setNameInput] = useState("");
+  // 로봇 오브젝트를 선택했을 때만 채워진다 — 재고를 정확히 어느 물품에서 차감할지 특정하는 데 쓴다.
+  // (이름만으로는 동명이인처럼 겹치는 물품이 있을 수 있어 id로 특정해야 안전하다)
+  const [itemIdInput, setItemIdInput] = useState("");
   const [qtyInput, setQtyInput] = useState<number>(1);
   const [defectType, setDefectType] = useState("파손");
   const [noteInput, setNoteInput] = useState("");
@@ -251,6 +254,7 @@ export default function DefectLogsPage({
   const handleItemSelectChange = (name: string) => {
     setNameInput(name);
     if (itemCategory === "rack") {
+      setItemIdInput(""); // 공구 및 부품류는 재고 차감 대상이 아니므로 id를 아예 안 보낸다
       const found = inventory.find((item) => item.name === name);
       if (found) {
         setLocationInput(found.location || "-");
@@ -259,6 +263,7 @@ export default function DefectLogsPage({
       }
     } else {
       const found = robotObjects.find((item) => item.name === name);
+      setItemIdInput(found ? String(found.id || "") : "");
       if (found) {
         setLocationInput(found.location || "로봇 구역");
       } else {
@@ -311,6 +316,7 @@ export default function DefectLogsPage({
         actionTaken: actionTakenInput.trim(),
         photo: photoInput || undefined,
         itemCategory: itemCategory, // Pass category to Google Apps Script
+        itemId: itemCategory === "robot" ? itemIdInput.trim() : "", // rack(공구)은 절대 재고 차감 대상이 아니므로 항상 빈 값
         culprit: itemCategory === "robot" ? culpritInput.trim() : "",
       });
 
@@ -320,6 +326,7 @@ export default function DefectLogsPage({
       setCulpritInput("");
       setQtyInput(1);
       setPhotoInput("");
+      setItemIdInput("");
       setFormError(null);
     } catch (err: any) {
       setFormError(err.message || "불량 로그 등록에 실패했습니다.");
@@ -600,6 +607,7 @@ export default function DefectLogsPage({
                   onClick={() => {
                     setManualItemName(!manualItemName);
                     setNameInput("");
+                    setItemIdInput("");
                     setLocationInput("");
                     setItemSearchQuery("");
                     setItemListOpen(false);
@@ -645,6 +653,7 @@ export default function DefectLogsPage({
                       onClick={() => {
                         setItemCategory("rack");
                         setNameInput("");
+                        setItemIdInput("");
                         setLocationInput("");
                         setItemSearchQuery("");
                         setItemListOpen(true);
@@ -669,6 +678,7 @@ export default function DefectLogsPage({
                       onClick={() => {
                         setItemCategory("robot");
                         setNameInput("");
+                        setItemIdInput("");
                         setLocationInput("");
                         setItemSearchQuery("");
                         setItemListOpen(true);
@@ -701,7 +711,7 @@ export default function DefectLogsPage({
                         setItemSearchQuery(e.target.value);
                         setItemListOpen(true);
                         // 검색어를 바꾸면 기존 선택은 해제한다 (선택했다고 착각하는 것을 방지)
-                        if (nameInput) { setNameInput(""); setLocationInput(""); }
+                        if (nameInput) { setNameInput(""); setItemIdInput(""); setLocationInput(""); }
                       }}
                       onFocus={() => setItemListOpen(true)}
                       style={{
@@ -726,7 +736,7 @@ export default function DefectLogsPage({
                       {locationInput ? <span style={{ fontSize: "11px", color: TEXT_DIM, flexShrink: 0 }}>{locationInput}</span> : null}
                       <button
                         type="button"
-                        onClick={() => { setNameInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
+                        onClick={() => { setNameInput(""); setItemIdInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
                         style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "11.5px", fontWeight: 700, flexShrink: 0 }}
                       >
                         변경
