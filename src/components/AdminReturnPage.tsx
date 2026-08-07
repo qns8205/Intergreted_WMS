@@ -60,7 +60,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 지난번 목록을 먼저 그려 화면이 비어 보이지 않게 한다 (응답이 오면 교체)
   const CACHE_KEY = "wms_unreturned_v2"; // 시각·시프트 필드 추가로 버전 상향
   // 대여 확인 / 반납 처리 — 같은 장바구니·같은 A/P/O/B/C 키를 그대로 쓰고, R 키로 서로 전환한다.
-  const [processMode, setProcessMode] = useState<"대여" | "반납">("반납");
+  const [processMode, setProcessMode] = useState<"대여" | "반납">("대여");
   // 분야: 시나리오·일반 / 공구 및 부품류 — 반납 처리 방식이 서로 달라 탭으로 나눈다.
   // (대여 확인은 SID·일반 대여에만 해당하므로, 대여 모드에서는 "scenario"로 고정한다)
   const [category, setCategory] = useState<"scenario" | "warehouse">("scenario");
@@ -912,6 +912,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   return (
     <div style={{ display: "flex", flex: 1, width: "100%", minWidth: 0, height: "100%", minHeight: 0, background: C.bg, color: C.text }}>
+      <style>{`
+        @keyframes arSpin { to { transform: rotate(360deg); } }
+        .ar-spin { animation: arSpin 0.8s linear infinite; }
+        @keyframes arProgress { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+        .ar-progress-bar { animation: arProgress 1.1s ease-in-out infinite; }
+      `}</style>
       {/* ── 왼쪽: 대여자 / 물품 ── */}
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
@@ -926,8 +932,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             </button>
           ) : null}
           <span style={{ fontSize: "11px", color: C.label }}>15초마다 자동 새로고침</span>
-          <button onClick={() => reloadActive()} title="지금 새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}>
-            <RotateCcw size={14} />
+          <button onClick={() => reloadActive()} disabled={activeLoading} title="지금 새로고침" style={{ ...inputStyle, cursor: activeLoading ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText, opacity: activeLoading ? 0.7 : 1 }}>
+            <RotateCcw size={14} className={activeLoading ? "ar-spin" : undefined} />
           </button>
         </div>
 
@@ -1592,6 +1598,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           ) : null}
         </div>
 
+        {/* 처리 중일 때 진행 중임을 보여주는 얇은 바 (완료 시각을 알 수 없는 단일 요청이라 부정확 진행률 대신 흐르는 바로 표현) */}
+        {submitting ? (
+          <div style={{ height: "3px", background: C.cardSub, overflow: "hidden", position: "relative" }}>
+            <div className="ar-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "3px" }} />
+          </div>
+        ) : null}
+
         <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", minHeight: 0 }}>
           {cart.length === 0 ? (
             <div style={{ textAlign: "center", padding: "56px 0", color: C.label, fontSize: "13px", lineHeight: 1.7 }}>
@@ -1664,12 +1677,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               width: "100%", padding: "15px", borderRadius: "12px", border: "none",
               background: cart.length ? C.accent : C.border, color: "#fff",
               fontSize: "15px", fontWeight: 800, cursor: cart.length && !submitting ? "pointer" : "not-allowed",
-              opacity: submitting ? 0.7 : 1,
+              opacity: submitting ? 0.85 : 1,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
             }}
           >
-            {submitting
-              ? "처리 중..."
-              : processMode === "대여"
+            {submitting ? (
+              <>
+                <RotateCcw size={15} className="ar-spin" />
+                {processMode === "대여" ? "대여 확인 처리 중..." : "반납 처리 중..."}
+              </>
+            ) : processMode === "대여"
               ? `대여 확인하기 (${cartTotal}개) · B`
               : reborrowAfter ? `반납 후 재대여 (${cartTotal}개) · B` : `반납 처리하기 (${cartTotal}개) · B`}
           </button>
