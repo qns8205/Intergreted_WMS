@@ -266,8 +266,8 @@ export async function fetchScenarioDefinition(scriptUrl: string, sid: string): P
   return (data.scenario || { sid, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }) as ScenarioDefinition;
 }
 
-export async function fetchUnreturnedItems(scriptUrl: string): Promise<UnreturnedItem[]> {
-  const data = await apiGet(scriptUrl, "getUnreturnedItems", {}, { timeoutMs: 60000, retries: 1 });
+export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boolean): Promise<UnreturnedItem[]> {
+  const data = await apiGet(scriptUrl, "getUnreturnedItems", forceRefresh ? { forceRefresh: "1" } : {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as UnreturnedItem[];
 }
 
