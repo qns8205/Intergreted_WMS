@@ -5,18 +5,18 @@ import {
 } from "lucide-react";
 import {
   ScenarioLogEntry, ReturnRequest, padSlot,
-  fetchScenarioAllLogs, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
+  fetchScenarioAllLogs, fetchScenarioAllLogsPaged, postProcessReturn, fetchBorrowAppVersion, reBorrowScenarioLogs,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin,
   isVersionMismatchMessage, signalVersionOutdated, postSwapBorrowItem,
-  fetchWarehouseLogs, WarehouseLogEntry,
+  fetchWarehouseLogs, fetchWarehouseLogsPaged, WarehouseLogEntry,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
 
-// 관리자 대여/반납 화면은 두 단계로 받는다.
-//  1) 미반납 전체 + 최근 1주 반납분  → 첫 화면 (실무에서 보는 건 대부분 여기에 있다)
-//  2) 나머지 전체 이력             → 백그라운드 (검색이 전체 기간을 덮도록)
-const RECENT_DAYS = 7;
+// 미반납/반납완료 이력을 "사람 수" 기준으로 페이지네이션한다. 처음엔 각 5명치만 서버에서
+// 받아오고, "더 보기"를 누르면 그때 실제로 다음 5명치를 새로 요청한다 — 전체를 미리
+// 받아놓고 화면에서만 잘라 보여주는 방식이 아니다.
+const PEOPLE_PAGE_SIZE = 5;
 
 // 이 일수를 넘겨 반납하지 않은 건은 "장기 체납"으로 본다.
 const OVERDUE_DAYS = 3;
@@ -74,29 +74,14 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [reborrowTargetAffiliation, setReborrowTargetAffiliation] = useState<"cfgw" | "configds" | "other">("cfgw");
   const [reborrowSameName, setReborrowSameName] = useState(true); // true: 원래 반납자 명의 유지, false: 다른 사람 명의로 재대여
   const [showStats, setShowStats] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(5);
 
-  // 정렬된 로그를 "건수"가 아니라 "사람 수" 기준으로 잘라 보여준다.
-  // 한 사람이 여러 건에 걸쳐 나타날 수 있으므로(연속되지 않고 흩어져 있을 수도 있다),
-  // 앞에서부터 처음 등장하는 사람 N명을 정하고 그 사람들의 건은 전부 포함시킨다.
-  function limitByPeople<T>(sortedList: T[], getName: (item: T) => string, peopleLimit: number): T[] {
-    const seen = new Set<string>();
-    const result: T[] = [];
-    for (const item of sortedList) {
-      const name = getName(item) || "(이름 없음)";
-      if (!seen.has(name)) {
-        if (seen.size >= peopleLimit) continue;
-        seen.add(name);
-      }
-      result.push(item);
-    }
-    return result;
-  }
+  // 미반납/반납완료 각각 독립적으로 "몇 명치 받아왔는지"와 "더 있는지"를 추적한다.
+  const [scopeOffsets, setScopeOffsets] = useState<Record<"unreturned" | "returned", number>>({ unreturned: 0, returned: 0 });
+  const [scopeHasMore, setScopeHasMore] = useState<Record<"unreturned" | "returned", boolean>>({ unreturned: true, returned: true });
+  const [scopeLoadingMore, setScopeLoadingMore] = useState<Record<"unreturned" | "returned", boolean>>({ unreturned: false, returned: false });
+
   const [viewMode, setViewMode] = useState<"log" | "byItem">("log");
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
-
-  // 필터가 바뀌면 페이지를 처음으로 되돌린다.
-  useEffect(() => { setVisibleCount(5); }, [search, kindFilter, statusFilter, borrowerFilter]);
 
   // 화면에 데이터가 떠 있는지 여부는 ref로 추적한다.
   // (state를 load의 의존성에 넣으면 로드 완료 → load 재생성 → useEffect 재실행의 무한 재조회 루프가 생긴다)
@@ -114,17 +99,39 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [whLogs, setWhLogs] = useState<WarehouseLogEntry[]>([]);
   const [whLogsLoading, setWhLogsLoading] = useState(false);
   const [whLogsLoaded, setWhLogsLoaded] = useState(false);
+  const [whOffset, setWhOffset] = useState(0);
+  const [whHasMore, setWhHasMore] = useState(true);
+  const [whLoadingMore, setWhLoadingMore] = useState(false);
 
-  // 공구 탭을 처음 열 때 한 번만 불러온다
+  // 공구 탭을 처음 열 때 첫 5명치만 불러온다
   useEffect(() => {
     if (category !== "warehouse" || whLogsLoaded || whLogsLoading) return;
     if (!connected || !scriptUrl) { setWhLogsLoaded(true); return; }
     setWhLogsLoading(true);
-    fetchWarehouseLogs(scriptUrl)
-      .then((list) => { setWhLogs(list); setWhLogsLoaded(true); })
+    fetchWarehouseLogsPaged(scriptUrl, { peopleLimit: PEOPLE_PAGE_SIZE })
+      .then((page) => { setWhLogs(page.items); setWhOffset(PEOPLE_PAGE_SIZE); setWhHasMore(page.hasMore); setWhLogsLoaded(true); })
       .catch((e: any) => showToast(`공구 및 부품류 로그를 불러오지 못했습니다: ${e.message}`, "error"))
       .finally(() => setWhLogsLoading(false));
   }, [category, whLogsLoaded, whLogsLoading, connected, scriptUrl]);
+
+  // "더 보기" — 공구 로그 다음 5명을 실제로 새로 요청한다.
+  const loadMoreWarehouse = useCallback(async () => {
+    if (!connected || !scriptUrl || whLoadingMore || !whHasMore) return;
+    setWhLoadingMore(true);
+    try {
+      const page = await fetchWarehouseLogsPaged(scriptUrl, { peopleLimit: PEOPLE_PAGE_SIZE, peopleOffset: whOffset });
+      setWhLogs((prev) => {
+        const seen = new Set(prev.map((l) => l.rowIndex));
+        return prev.concat(page.items.filter((l) => !seen.has(l.rowIndex)));
+      });
+      setWhOffset((o) => o + PEOPLE_PAGE_SIZE);
+      setWhHasMore(page.hasMore);
+    } catch (e: any) {
+      showToast(`공구 및 부품류 로그를 더 불러오지 못했습니다: ${e.message}`, "warn");
+    } finally {
+      setWhLoadingMore(false);
+    }
+  }, [connected, scriptUrl, whOffset, whHasMore, whLoadingMore, showToast]);
 
   const whFilteredLogs = useMemo(() => {
     const q = search.trim();
@@ -135,71 +142,49 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     });
   }, [whLogs, whTab, search]);
 
+  // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순.
+  // 서버가 구버전이라 borrowDateTime을 안 내려주면 서버 순서를 그대로 신뢰한다.
+  function parseTs(v?: string) {
+    const s = String(v || "").trim();
+    if (!s) return 0;
+    const t = Date.parse(s.replace(" ", "T"));
+    return isNaN(t) ? 0 : t;
+  }
+  function activityTs(l: ScenarioLogEntry) {
+    return Math.max(parseTs(l.borrowDateTime || l.borrowDate), parseTs(l.returnDate));
+  }
+  function sortLogs(arr: ScenarioLogEntry[]) {
+    if (!arr.some((l) => !!l.borrowDateTime)) return arr;
+    return arr.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     setSel({});
-    setHistoryComplete(false);
     try {
       if (connected && scriptUrl) {
-        // 대여일과 반납일 중 더 최근인 시점(=마지막 활동 시각) 기준 내림차순.
-        // 서버가 구버전이라 borrowDateTime을 안 내려주면 서버 순서를 그대로 신뢰한다.
-        const parseTs = (v?: string) => {
-          const s = String(v || "").trim();
-          if (!s) return 0;
-          const t = Date.parse(s.replace(" ", "T"));
-          return isNaN(t) ? 0 : t;
-        };
-        const activityTs = (l: ScenarioLogEntry) => Math.max(parseTs(l.borrowDateTime || l.borrowDate), parseTs(l.returnDate));
-        const sortLogs = (arr: ScenarioLogEntry[]) => {
-          if (!arr.some((l) => !!l.borrowDateTime)) return arr;
-          return arr.sort((a, b) => (activityTs(b) - activityTs(a)) || ((b.rowIndex || 0) - (a.rowIndex || 0)));
-        };
-
-        // 1단계: 미반납 전체 + 최근 1주 반납분을 한 번에 받아 화면을 채운다.
-        const [unreturned, ver, catalog] = await Promise.all([
-          fetchScenarioAllLogs(scriptUrl, { recentDays: RECENT_DAYS, slim: true }),
+        // 미반납/반납완료 각각 첫 5명치만 받아온다. "더 보기"를 눌러야 다음 5명이 온다.
+        const [unreturnedPage, returnedPage, ver, catalog] = await Promise.all([
+          fetchScenarioAllLogsPaged(scriptUrl, { scope: "unreturned", slim: true, peopleLimit: PEOPLE_PAGE_SIZE }),
+          fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true, peopleLimit: PEOPLE_PAGE_SIZE }),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
           fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
-        // 이미 화면에 있던 "반납 완료" 항목은 유지한 채 미반납 목록만 갈아끼운다.
-        // (그러지 않으면 새로고침할 때마다 반납 이력이 사라졌다가 뒤늦게 다시 나타난다)
-        setLogs((prev) => {
-          const keptReturned = prev.filter((l) => l.returned);
-          const seen = new Set(unreturned.map((l) => `${l.sheetType}:${l.rowIndex}`));
-          return sortLogs([...unreturned, ...keptReturned.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`))]);
-        });
+        setLogs(sortLogs([...unreturnedPage.items, ...returnedPage.items]));
+        setScopeOffsets({ unreturned: PEOPLE_PAGE_SIZE, returned: PEOPLE_PAGE_SIZE });
+        setScopeHasMore({ unreturned: unreturnedPage.hasMore, returned: returnedPage.hasMore });
         setAppVersion(ver);
         setAllItems(catalog);
-        hasDataRef.current = unreturned.length > 0;
-        setLoading(false);
-
-        // 2단계: 나머지 전체 이력을 백그라운드로 받아 합친다. 목록은 이미 조작 가능한 상태다.
-        const mergeInto = (incoming: ScenarioLogEntry[]) => {
-          setLogs((prev) => {
-            const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
-            const merged = prev.concat(incoming.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`)));
-            return sortLogs(merged);
-          });
-        };
-
-        setHistoryLoading(true);
-        try {
-          mergeInto(await fetchScenarioAllLogs(scriptUrl, { scope: "returned", slim: true }));
-          setHistoryComplete(true);
-        } catch (e: any) {
-          showToast(`반납 이력을 불러오지 못했습니다: ${e.message}`, "warn");
-        } finally {
-          setHistoryLoading(false);
-        }
-        return;
+        hasDataRef.current = unreturnedPage.items.length > 0 || returnedPage.items.length > 0;
+        setLoaded(true);
       } else {
         setLogs([
           { sheetType: "scenario", rowIndex: 2, borrowerName: "홍길동", scenarioId: "S00001", itemLabel: "[000060] 소화기 x 2", itemKind: "필수 물품", location: "000060", itemId: "000060", itemName: "소화기", quantity: 2, borrowDate: "2026-07-15 09:00", borrowPurpose: "훈련", email: "", batchId: "b1", returned: false, image: "", stock: 5, rented: 2 },
           { sheetType: "general", rowIndex: 3, borrowerName: "김철수", itemLabel: "[000012] 삼각대 x 1", location: "000012", itemId: "000012", itemName: "삼각대", quantity: 1, borrowDate: "2026-07-11 14:00", borrowPurpose: "촬영", email: "", batchId: "b2", generalOption: "일반 대여", returned: true, image: "", stock: 3, rented: 0 },
         ]);
         hasDataRef.current = true;
+        setLoaded(true);
       }
-      setLoaded(true);
     } catch (e: any) {
       // 이미 대장이 화면에 떠 있는 상태의 새로고침 실패라면(보기 전용 갱신) 조용한 경고로만 알린다.
       if (hasDataRef.current) {
@@ -210,6 +195,26 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     }
     finally { setLoading(false); }
   }, [connected, scriptUrl, showToast]);
+
+  // "더 보기" — 미반납/반납완료 중 지금 탭에 해당하는 쪽만 다음 5명을 실제로 새로 요청한다.
+  const loadMoreScope = useCallback(async (scope: "unreturned" | "returned") => {
+    if (!connected || !scriptUrl || scopeLoadingMore[scope] || !scopeHasMore[scope]) return;
+    setScopeLoadingMore((p) => ({ ...p, [scope]: true }));
+    try {
+      const offset = scopeOffsets[scope];
+      const page = await fetchScenarioAllLogsPaged(scriptUrl, { scope, slim: true, peopleLimit: PEOPLE_PAGE_SIZE, peopleOffset: offset });
+      setLogs((prev) => {
+        const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
+        return sortLogs(prev.concat(page.items.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`))));
+      });
+      setScopeOffsets((p) => ({ ...p, [scope]: offset + PEOPLE_PAGE_SIZE }));
+      setScopeHasMore((p) => ({ ...p, [scope]: page.hasMore }));
+    } catch (e: any) {
+      showToast(`이력을 더 불러오지 못했습니다: ${e.message}`, "warn");
+    } finally {
+      setScopeLoadingMore((p) => ({ ...p, [scope]: false }));
+    }
+  }, [connected, scriptUrl, scopeOffsets, scopeHasMore, scopeLoadingMore, showToast]);
 
   // 최초 진입(및 연동 상태가 실제로 바뀐 경우)에만 1회 로드. 이후에는 새로고침 버튼으로만 갱신한다.
   const loadedKeyRef = useRef("");
@@ -692,7 +697,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           {borrowers.map((b) => <option key={b} value={b}>{b}</option>)}
         </select>
         ) : null}
-        <button onClick={() => { if (category === "warehouse") { setWhLogsLoaded(false); } else { load(); } }} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
+        <button onClick={() => { if (category === "warehouse") { setWhLogs([]); setWhOffset(0); setWhHasMore(true); setWhLogsLoaded(false); } else { load(); } }} title="새로고침" style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText }}><RotateCcw size={14} /></button>
       </div>
       {/* 장기 체납자: 미반납 상태로 오래 지난 대여자를 맨 위에 모아 보여준다 */}
       {category === "scenario" && loaded && overdueBorrowers.length > 0 ? (
@@ -709,7 +714,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               return (
                 <button
                   key={p.name}
-                  onClick={() => { setBorrowerFilter(on ? "" : p.name); setVisibleCount(5); }}
+                  onClick={() => setBorrowerFilter(on ? "" : p.name)}
                   title={`${p.name} · ${p.count}건 · 총 ${p.qty}개 · 최장 ${p.days}일 경과`}
                   style={{
                     display: "flex", alignItems: "center", gap: "7px",
@@ -735,18 +740,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
 
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
         {category === "warehouse" ? (
-          whLogsLoaded ? `${whFilteredLogs.length}건 (최신순)` : ""
+          whLogsLoaded ? `${whFilteredLogs.length}건 (최신순) · 검색은 지금까지 불러온 범위 안에서만 됩니다` : ""
         ) : loaded ? (
-          <>
-            {`${filtered.length} / ${logs.length}건 (최신순)`}
-            {historyLoading ? (
-              <span style={{ marginLeft: "8px", color: C.accentText, fontWeight: 700 }}>
-                전체 이력 불러오는 중... (지금은 최근 {RECENT_DAYS}일 기록만 검색됩니다)
-              </span>
-            ) : historyComplete ? (
-              <span style={{ marginLeft: "8px", color: C.label }}>· 전체 기간 검색 가능</span>
-            ) : null}
-          </>
+          `${filtered.length} / ${logs.length}건 (최신순) · 검색은 지금까지 불러온 범위 안에서만 됩니다`
         ) : ""}
       </div>
 
@@ -761,13 +757,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-            {(() => {
-              const visibleWhLogs = limitByPeople<WarehouseLogEntry>(whFilteredLogs, (l) => l.user || "", visibleCount);
-              const totalWhPeople = new Set(whFilteredLogs.map((l) => l.user || "(이름 없음)")).size;
-              const shownWhPeople = new Set(visibleWhLogs.map((l) => l.user || "(이름 없음)")).size;
-              return (
-                <>
-                  {visibleWhLogs.map((l) => {
+            {whFilteredLogs.map((l) => {
               const tone = l.type === "반납" ? C.success : l.type === "소모" ? C.warn : C.accentText;
               const toneBg = l.type === "반납" ? C.successSoft : l.type === "소모" ? C.warnSoft : C.accentSoft;
               return (
@@ -785,15 +775,12 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   <span style={{ fontSize: "13px", fontWeight: 800, color: C.accentText, flexShrink: 0 }}>{l.quantity}개</span>
                 </div>
               );
-                  })}
-                  {totalWhPeople > shownWhPeople ? (
-                    <button onClick={() => setVisibleCount((v) => v + 5)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-                      더 보기 ({shownWhPeople} / {totalWhPeople}명 표시 중)
-                    </button>
-                  ) : null}
-                </>
-              );
-            })()}
+            })}
+            {whHasMore ? (
+              <button onClick={loadMoreWarehouse} disabled={whLoadingMore} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: whLoadingMore ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: whLoadingMore ? 0.7 : 1 }}>
+                {whLoadingMore ? "불러오는 중..." : "더 보기 (다음 5명)"}
+              </button>
+            ) : null}
           </div>
         )
       ) : loading && !loaded ? (
@@ -802,13 +789,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {(() => {
-            const visibleGroups = limitByPeople<typeof groups[number]>(groups, (g) => g.borrower || "", visibleCount);
-            const totalGroupPeople = new Set(groups.map((g) => g.borrower || "(이름 없음)")).size;
-            const shownGroupPeople = new Set(visibleGroups.map((g) => g.borrower || "(이름 없음)")).size;
-            return (
-              <>
-                {visibleGroups.map((g) => (
+          {groups.map((g) => (
             <div key={g.key} style={{ border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden", opacity: g.allReturned ? 0.85 : 1 }}>
               <div onClick={() => isAdmin && toggleGroup(g)} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 16px", borderBottom: `1px solid ${C.border}`, background: C.cardSub, cursor: isAdmin ? "pointer" : "default" }}>
                 <div style={{ width: 34, height: 34, borderRadius: "9px", background: g.allReturned ? C.successSoft : C.accentSoft, color: g.allReturned ? C.success : C.accentText, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><User size={17} /></div>
@@ -845,13 +826,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               </div>
             </div>
           ))}
-                {totalGroupPeople > shownGroupPeople ? (
-                  <button onClick={() => setVisibleCount((n) => n + 5)} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>
-                    더 보기 ({shownGroupPeople} / {totalGroupPeople}명 표시 중)
-                  </button>
-                ) : null}
-              </>
-            );
+          {(() => {
+            const scope = scenarioTab === "return" ? "returned" : "unreturned";
+            return scopeHasMore[scope] ? (
+              <button onClick={() => loadMoreScope(scope)} disabled={scopeLoadingMore[scope]} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: scopeLoadingMore[scope] ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: scopeLoadingMore[scope] ? 0.7 : 1 }}>
+                {scopeLoadingMore[scope] ? "불러오는 중..." : "더 보기 (다음 5명)"}
+              </button>
+            ) : null;
           })()}
         </div>
       )}
