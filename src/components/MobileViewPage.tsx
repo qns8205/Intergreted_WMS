@@ -509,18 +509,6 @@ export default function MobileViewPage({
   }, [inventory, searchQuery]);
 
   // ---------- 등록 탭(목록 보기): PC RackGroupedView와 동일하게 슬롯 단위로 묶는다 ----------
-  // 슬롯(위치) 하나에 있는 물품들의 "대표 서브카테고리"(규격) — 다수결로 정한다. (PC RackGroupedView와 동일 규칙)
-  function whDominantSubcategory(items: InventoryItem[]): string {
-    const counts = new Map<string, number>();
-    items.forEach((item) => {
-      const s = (item.spec || "").trim() || "미분류";
-      counts.set(s, (counts.get(s) || 0) + 1);
-    });
-    let best = "미분류", bestN = 0;
-    counts.forEach((n, s) => { if (n > bestN) { best = s; bestN = n; } });
-    return best;
-  }
-
   const whGroups = useMemo(() => {
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((item) => {
@@ -529,30 +517,32 @@ export default function MobileViewPage({
       map.get(key)!.push(item);
     });
     const entries = Array.from(map.entries());
-    entries.forEach(([, items]) => items.sort((a, b) => compareRackSlot(a.location, b.location)));
-    // 같은 랙 안에서는 서브카테고리(규격)가 같은 슬롯끼리 나란히 붙도록 정렬한다.
-    entries.sort((a, b) => {
-      const rackA = parseLocation(a[0]).rack || "";
-      const rackB = parseLocation(b[0]).rack || "";
-      if (rackA !== rackB) return rackA.localeCompare(rackB);
-      const subA = whDominantSubcategory(a[1]);
-      const subB = whDominantSubcategory(b[1]);
-      if (subA !== subB) return subA.localeCompare(subB, "ko");
-      return compareRackSlot(a[0], b[0]);
+    // 슬롯 "안"에서만 서브카테고리(규격)가 같은 물품끼리 나란히 붙도록 정렬한다.
+    // (슬롯 자체의 순서는 절대 바꾸지 않는다 — PC RackGroupedView와 동일한 규칙)
+    entries.forEach(([, items]) => {
+      items.sort((a, b) => {
+        const subA = (a.spec || "").trim() || "미분류";
+        const subB = (b.spec || "").trim() || "미분류";
+        if (subA !== subB) return subA.localeCompare(subB, "ko");
+        return compareRackSlot(a.location, b.location);
+      });
     });
-    return entries;
-  }, [inventory]);
+    // 슬롯은 항상 정상적인 랙-슬롯 번호 순서 그대로 나열한다.
+    entries.sort((a, b) => compareRackSlot(a[0], b[0]));
+    // 검색어가 있으면 매칭되는 슬롯만 걸러서 보여준다 (전에는 스크롤+하이라이트 방식이었다).
+    const q = searchQuery.trim();
+    if (!q) return entries;
+    return entries.filter(([, items]) => items.some((item) => smartMatch([item.name, item.location, item.spec, item.keywords], q)));
+  }, [inventory, searchQuery]);
 
   // 어디서부터 새 (랙, 서브카테고리) 묶음이 시작되는지 미리 계산 — 구분 라벨 렌더링용
   const whGroupClusterInfo = useMemo(() => {
-    let prevKey = "";
-    return whGroups.map(([groupKey, items]) => {
+    let prevRack = "";
+    return whGroups.map(([groupKey]) => {
       const rack = parseLocation(groupKey).rack || "미지정";
-      const subcat = whDominantSubcategory(items);
-      const clusterKey = `${rack}::${subcat}`;
-      const isNewCluster = clusterKey !== prevKey;
-      prevKey = clusterKey;
-      return { rack, subcat, isNewCluster };
+      const isNewRack = rack !== prevRack;
+      prevRack = rack;
+      return { rack, isNewRack };
     });
   }, [whGroups]);
 
@@ -590,20 +580,7 @@ export default function MobileViewPage({
     whHighlightTimerRef.current = window.setTimeout(() => setWhHighlightKey(null), 2300);
   };
 
-  // 등록 탭(목록 보기)에서 검색어가 바뀌면, 목록을 걸러내는 대신 첫 매칭 위치로 스크롤+하이라이트한다.
-  useEffect(() => {
-    if (!(mode === "등록" && warehouseTab === "list")) return;
-    const q = searchQuery.trim();
-    if (!q) return;
-    const timer = window.setTimeout(() => {
-      const match = inventory.find((item) => smartMatch([item.name, item.location, item.spec, item.keywords], q));
-      if (!match) return;
-      const key = (match.location || "").trim().toUpperCase() || "미지정";
-      scrollToWhGroup(key);
-    }, 350);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, mode, warehouseTab, inventory]);
+  // 등록 탭(목록 보기) 검색은 위 whGroups useMemo에서 이미 필터링된다 (스크롤 방식에서 변경됨).
 
   // 목록 행에서 바로 편집 화면으로 (상세보기를 거치지 않는 빠른 편집)
   const quickEditItem = (item: InventoryItem) => {
@@ -1342,7 +1319,7 @@ export default function MobileViewPage({
                     : mode === "반납"
                     ? "품목명, 위치, 대여자 이름으로 검색"
                     : mode === "등록"
-                    ? "물품명·위치·규격 검색 (해당 위치로 이동)"
+                    ? "물품명·위치·규격 검색"
                     : "제품명, 불량 유형, 상세 내용으로 검색"
                 }
                 value={searchQuery}
@@ -1772,7 +1749,7 @@ export default function MobileViewPage({
                 {whGroups.length === 0 ? (
                   <div style={{ marginTop: "40px", textAlign: "center", color: TEXT_DIM, fontSize: "13px" }}>
                     <Package size={36} style={{ margin: "0 auto 10px", opacity: 0.4 }} />
-                    등록된 공구 및 부품류가 없습니다.
+                    {searchQuery.trim() ? "검색 결과가 없습니다." : "등록된 공구 및 부품류가 없습니다."}
                   </div>
                 ) : (
                   whGroups.map(([groupKey, items], idx) => {
@@ -1781,12 +1758,9 @@ export default function MobileViewPage({
                     const cluster = whGroupClusterInfo[idx];
                     return (
                       <React.Fragment key={groupKey}>
-                        {cluster?.isNewCluster ? (
+                        {cluster?.isNewRack ? (
                           <div style={{ display: "flex", alignItems: "center", gap: "7px", margin: "10px 2px 6px" }}>
                             <span style={{ fontSize: "10.5px", fontWeight: 800, color: TEXT_DIM, fontFamily: "monospace" }}>{cluster.rack}랙</span>
-                            <span style={{ fontSize: "10.5px", fontWeight: 800, color: ACCENT_LIGHT, background: "rgba(37,99,235,0.12)", borderRadius: "999px", padding: "3px 9px" }}>
-                              🏷 {cluster.subcat}
-                            </span>
                             <div style={{ flex: 1, height: "1px", background: BORDER }} />
                           </div>
                         ) : null}
