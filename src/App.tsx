@@ -2920,21 +2920,8 @@ export default function App() {
                 padding: "24px",
               }}
             >
-              {/* 상단 바 */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "20px",
-                  flexWrap: "wrap",
-                  gap: "12px",
-                }}
-              >
-                <div style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-main, #f1f5f9)" }}>🗂 공구 및 부품류</div>
-              </div>
-
               <RackGroupedView
+                title="🗂 공구 및 부품류"
                 inventory={inventory}
                 isLightMode={isLightMode}
                 isAdmin={isAdmin}
