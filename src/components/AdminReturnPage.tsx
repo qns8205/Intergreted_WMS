@@ -97,7 +97,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (!connected || !scriptUrl) { setLoaded(true); return; }
     if (!silent) setLoading(true);
     try {
-      const list = await fetchUnreturnedItems(scriptUrl);
+      // 수동으로 새로고침 버튼을 눌렀을 때(silent=false)는 서버 캐시를 무시하고 시트를 다시 읽는다.
+      // 자동 15초 새로고침(silent=true)까지 매번 무시하면 시트를 너무 자주 통째로 읽게 되니,
+      // 그건 기존처럼 캐시를 쓴다.
+      const list = await fetchUnreturnedItems(scriptUrl, !silent);
       setItems(list);
       setLoaded(true);
       try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch (e) { /* 무시 */ }
