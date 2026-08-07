@@ -50,15 +50,17 @@ export default function StockAdjustModal({
   useEffect(() => {
     if (!connected || !scriptUrl) return;
     setHistoryLoading(true);
-    fetchStockChangeHistory(scriptUrl, category, itemId)
+    // 공구 및 부품류는 위치(슬롯)에 여러 물품이 같이 놓일 수 있어 슬롯만으로는 특정이 안 된다.
+    // 그래서 공구류는 물품명으로, 시나리오 물품은 고유 ID로 이력을 구분한다.
+    fetchStockChangeHistory(scriptUrl, category, itemId, category === "inventory" ? itemLabel : undefined)
       .then(setHistory)
       .catch((e) => showToast(`변경 이력을 불러오지 못했습니다: ${e.message}`, "error"))
       .finally(() => setHistoryLoading(false));
     // showToast는 매 렌더링마다 새로 만들어지는 함수라 의존성에 넣으면 렌더될 때마다
-    // 이력을 다시 불러와 깜빡이게 된다. 조회 조건(scriptUrl/connected/category/itemId)이
+    // 이력을 다시 불러와 깜빡이게 된다. 조회 조건(scriptUrl/connected/category/itemId/itemLabel)이
     // 바뀔 때만 다시 불러오면 되므로 의도적으로 뺐다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scriptUrl, connected, category, itemId]);
+  }, [scriptUrl, connected, category, itemId, itemLabel]);
 
   const parsed = parseInt(newStock, 10);
   const diff = !isNaN(parsed) ? parsed - currentStock : null;
