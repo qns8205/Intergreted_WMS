@@ -50,18 +50,6 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
   const highlightTimerRef = useRef<number | null>(null);
 
-  // 슬롯(위치) 하나에 있는 물품들의 "대표 서브카테고리"(규격) — 다수결로 정한다.
-  function dominantSubcategory(items: InventoryItem[]): string {
-    const counts = new Map<string, number>();
-    items.forEach((it) => {
-      const s = (it.spec || "").trim() || "미분류";
-      counts.set(s, (counts.get(s) || 0) + 1);
-    });
-    let best = "미분류", bestN = 0;
-    counts.forEach((n, s) => { if (n > bestN) { best = s; bestN = n; } });
-    return best;
-  }
-
   const groups = useMemo(() => {
     const map = new Map<string, InventoryItem[]>();
     inventory.forEach((it) => {
@@ -71,32 +59,30 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
       map.get(key)!.push(it);
     });
     const entries = Array.from(map.entries());
-    entries.forEach(([, items]) => items.sort((a, b) => compareRackSlot(a.location, b.location)));
-    // 같은 랙 안에서는 서브카테고리(규격)가 같은 슬롯끼리 나란히 붙도록 정렬한다.
-    // (랙이 다르면 랙 우선, 같은 랙이면 서브카테고리, 그다음 슬롯 번호 순)
-    entries.sort((a, b) => {
-      const rackA = parseLocation(a[0]).rack || "";
-      const rackB = parseLocation(b[0]).rack || "";
-      if (rackA !== rackB) return rackA.localeCompare(rackB);
-      const subA = dominantSubcategory(a[1]);
-      const subB = dominantSubcategory(b[1]);
-      if (subA !== subB) return subA.localeCompare(subB, "ko");
-      return compareRackSlot(a[0], b[0]);
+    // 슬롯 "안"에서만 서브카테고리(규격)가 같은 물품끼리 나란히 붙도록 정렬한다.
+    // (슬롯 자체의 순서는 절대 바꾸지 않는다 — 전에 랙 전체를 서브카테고리로 재배열했더니
+    //  슬롯 번호 순서가 뒤죽박죽돼 보였다는 피드백을 반영했다)
+    entries.forEach(([, items]) => {
+      items.sort((a, b) => {
+        const subA = (a.spec || "").trim() || "미분류";
+        const subB = (b.spec || "").trim() || "미분류";
+        if (subA !== subB) return subA.localeCompare(subB, "ko");
+        return compareRackSlot(a.location, b.location);
+      });
     });
+    // 슬롯은 항상 정상적인 랙-슬롯 번호 순서 그대로 나열한다.
+    entries.sort((a, b) => compareRackSlot(a[0], b[0]));
     return entries;
   }, [inventory]);
 
-  // 화면에 그릴 때 "여기서부터 새 (랙, 서브카테고리) 묶음이 시작된다"를 미리 계산해둔다.
-  // 이 지점마다 구분 라벨을 하나씩 띄워서 어떤 서브카테고리끼리 묶였는지 보여준다.
+  // 화면에 그릴 때 "여기서부터 새 랙이 시작된다"를 미리 계산해둔다 (구분선 표시용).
   const groupClusterInfo = useMemo(() => {
-    let prevKey = "";
-    return groups.map(([groupKey, items]) => {
+    let prevRack = "";
+    return groups.map(([groupKey]) => {
       const rack = parseLocation(groupKey).rack || "미지정";
-      const subcat = dominantSubcategory(items);
-      const clusterKey = `${rack}::${subcat}`;
-      const isNewCluster = clusterKey !== prevKey;
-      prevKey = clusterKey;
-      return { rack, subcat, isNewCluster };
+      const isNewRack = rack !== prevRack;
+      prevRack = rack;
+      return { rack, isNewRack };
     });
   }, [groups]);
 
@@ -168,6 +154,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "9px 12px 9px 34px", fontSize: "13px", borderRadius: "10px",
     border: `1px solid ${C.border}`, background: C.card, color: C.text, outline: "none",
+    boxSizing: "border-box",
   };
 
   function stockNum(s: InventoryItem["stock"]): string {
@@ -190,7 +177,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
       {/* 헤더 전체(랙 내비게이터 + 검색/컨트롤 바)를 하나로 묶어 함께 고정한다.
           따로 고정하면 랙 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록
           사진이 비쳐 보이는 문제가 있었다. */}
-      <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", paddingTop: "10px" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", margin: "0 -24px", padding: "10px 24px" }}>
         {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다.
             랙이 하나도 없으면 빈 여백만 남지 않도록 컨테이너 자체를 렌더링하지 않는다. */}
         {racks.length > 0 ? (
@@ -241,7 +228,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
 
         {/* 상단 컨트롤 */}
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", paddingBottom: "10px" }}>
-          <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
+          <div style={{ position: "relative", flex: "1 1 0%", minWidth: "200px" }}>
             <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색... (해당 위치로 이동합니다)" style={inputStyle} />
           </div>
@@ -278,12 +265,9 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
             const cluster = groupClusterInfo[idx];
             return (
               <React.Fragment key={groupKey}>
-                {cluster?.isNewCluster ? (
+                {cluster?.isNewRack ? (
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "6px 2px -6px" }}>
                     <span style={{ fontSize: "11px", fontWeight: 800, color: C.label, fontFamily: "monospace" }}>{cluster.rack}랙</span>
-                    <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "3px 10px" }}>
-                      🏷 {cluster.subcat}
-                    </span>
                     <div style={{ flex: 1, height: "1px", background: C.border }} />
                   </div>
                 ) : null}
