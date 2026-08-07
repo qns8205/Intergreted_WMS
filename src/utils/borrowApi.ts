@@ -543,12 +543,14 @@ export async function adjustStock(
 export async function fetchStockChangeHistory(
   scriptUrl: string,
   category?: "inventory" | "scenario",
-  id?: string
+  id?: string,
+  name?: string
 ): Promise<StockChangeRecord[]> {
   try {
     const params: Record<string, string> = {};
     if (category) params.category = category;
     if (id) params.id = id;
+    if (name) params.name = name;
     const data = await apiGet(scriptUrl, "getStockChangeHistory", params);
     return (data.items || []) as StockChangeRecord[];
   } catch (err: any) {
