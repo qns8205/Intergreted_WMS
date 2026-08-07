@@ -67,6 +67,7 @@ export interface UnreturnedItem {
   image: string;
   stock: number;
   rented: number;
+  pickedUp?: string; // 대여 실물 확인(체크) 완료 시각 — 없으면 아직 미확인 (SID=M열, 일반=N열)
 }
 
 export interface BorrowEntry {
@@ -286,6 +287,11 @@ export async function postRecordBorrow(scriptUrl: string, borrowList: BorrowEntr
 
 export async function postProcessReturn(scriptUrl: string, returnRequests: ReturnRequest[], clientVersion: string): Promise<BorrowResult> {
   return (await apiPost(scriptUrl, "processReturn", { returnRequests, clientVersion })) as BorrowResult;
+}
+
+/** 대여 실물 확인(체크) 처리 — 반납의 postProcessReturn과 대칭. 재고는 안 건드리고 확인 시각만 남긴다. */
+export async function postConfirmPickup(scriptUrl: string, items: { sheetType: "scenario" | "general"; rowIndex: number }[]): Promise<BorrowResult> {
+  return (await apiPost(scriptUrl, "confirmPickup", { items })) as BorrowResult;
 }
 
 /* ---------------- 데모 데이터 (미연동 시) ---------------- */
