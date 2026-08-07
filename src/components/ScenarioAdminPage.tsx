@@ -422,7 +422,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       {/* 헤더 전체(카테고리 내비게이터 + 검색바)를 하나로 묶어 함께 고정한다.
           따로 고정하면 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록 사진이
           비쳐 보이는 문제가 있었다. */}
-      <div style={{ position: "sticky", top: 0, zIndex: 30, background: C.bg, paddingTop: "10px", marginBottom: "14px" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: C.bg, paddingTop: "10px", marginBottom: "14px", width: "100%", boxSizing: "border-box" }}>
         {/* 카테고리 내비게이터 — 검색창 위 공간을 채우면서 빠른 필터로도 쓴다 */}
         {categories.length > 0 ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
