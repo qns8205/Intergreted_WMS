@@ -1007,7 +1007,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
-          {processMode === "대여" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : (category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null)}<b style={{ color: C.accentText }}>A</b> {category === "scenario" ? "사진 확인 → 한 번 더 눌러 담기" : "한 개 담기"} · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
+          {category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null}<b style={{ color: C.accentText }}>A</b> {category === "scenario" ? "사진 확인 → 한 번 더 눌러 담기" : "한 개 담기"} · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
           <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> {processMode === "대여" ? "대여 확인" : "반납 완료"} ·{" "}
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제) · <b style={{ color: C.accentText }}>R</b> {processMode === "대여" ? "반납 처리로 전환" : "대여 확인으로 전환"}
           {processMode === "반납" ? <> · <b style={{ color: C.accentText }}>T</b> {category === "scenario" ? "공구 및 부품류로 전환" : "시나리오 물품으로 전환"}</> : null}
@@ -1126,7 +1126,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       </div>
                       <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 {processMode === "대여" ? "확인 대기" : "미반납"}</div>
                     </div>
-                    {processMode === "대여" && category === "scenario" ? (
+                    {category === "scenario" ? (
                     <button
                       onClick={(e) => { e.stopPropagation(); openLend(g); }}
                       title={`${g.name}님에게 물품 추가 대여`}
@@ -1173,10 +1173,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                     ref={atCursor ? cursorElRef : undefined}
                                     onClick={() => { setCursor(idx); if (!done) addOne(it); }}
                                     onContextMenu={(e) => {
-                                      if (category === "warehouse" || processMode !== "대여") return;
+                                      if (category === "warehouse") return;
                                       e.preventDefault(); setCursor(idx); openSwap(it);
                                     }}
-                                    title={category === "warehouse" || processMode !== "대여" ? undefined : "우클릭하면 다른 물품으로 교체할 수 있습니다"}
+                                    title={category === "warehouse" ? undefined : "우클릭하면 다른 물품으로 교체할 수 있습니다"}
                                     style={{
                                       display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
                                       cursor: done ? "default" : "pointer",
