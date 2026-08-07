@@ -661,12 +661,19 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     setProcessMode((m) => (m === "대여" ? "반납" : "대여"));
   }
 
-  const handlersRef = useRef({ addAtCursor, undoOne, clearAll, moveCursor, toggleMode, submit: async () => {} });
+  function toggleCategory() {
+    if (processMode !== "반납") { showToast("대여 확인 모드는 시나리오 물품만 다룹니다.", "info"); return; }
+    if (cart.length > 0) { showToast("장바구니를 먼저 비우거나 처리한 뒤 전환해주세요.", "warn"); return; }
+    setCategory((c) => (c === "scenario" ? "warehouse" : "scenario"));
+  }
+
+  const handlersRef = useRef({ addAtCursor, undoOne, clearAll, moveCursor, toggleMode, toggleCategory, submit: async () => {} });
   handlersRef.current.addAtCursor = addAtCursor;
   handlersRef.current.moveCursor = moveCursor;
   handlersRef.current.undoOne = undoOne;
   handlersRef.current.clearAll = clearAll;
   handlersRef.current.toggleMode = toggleMode;
+  handlersRef.current.toggleCategory = toggleCategory;
 
   const [cHeld, setCHeld] = useState(false);
 
@@ -696,6 +703,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
       // R: 대여 확인 ↔ 반납 처리 모드 전환 (장바구니 담긴 게 있으면 실수 방지로 무시)
       if (k === "r" || e.key === "ㄱ") { e.preventDefault(); handlersRef.current.toggleMode(); return; }
+
+      // T: 반납 모드에서 시나리오 물품 ↔ 공구 및 부품류 전환 (대여 확인 모드는 시나리오 고정이라 해당 없음)
+      if (k === "t" || e.key === "ㅅ") { e.preventDefault(); handlersRef.current.toggleCategory(); return; }
 
       // B: 처리 완료 (대여 모드=대여 확인 / 반납 모드=반납 완료)
       if (k === "b" || e.key === "ㅠ") { e.preventDefault(); handlersRef.current.submit(); return; }
@@ -1000,6 +1010,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           {processMode === "대여" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : (category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null)}<b style={{ color: C.accentText }}>A</b> {category === "scenario" ? "사진 확인 → 한 번 더 눌러 담기" : "한 개 담기"} · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
           <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> {processMode === "대여" ? "대여 확인" : "반납 완료"} ·{" "}
           <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제) · <b style={{ color: C.accentText }}>R</b> {processMode === "대여" ? "반납 처리로 전환" : "대여 확인으로 전환"}
+          {processMode === "반납" ? <> · <b style={{ color: C.accentText }}>T</b> {category === "scenario" ? "공구 및 부품류로 전환" : "시나리오 물품으로 전환"}</> : null}
         </div>
 
         {/* 연체 예외로 등록된 사람 */}
@@ -1089,7 +1100,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         ) : borrowers.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
             <Check size={34} style={{ color: C.border, marginBottom: "8px" }} />
-            <div>미반납 물품이 없습니다.</div>
+            <div>{processMode === "대여" ? "확인할 대여 물품이 없습니다." : "미반납 물품이 없습니다."}</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
