@@ -180,7 +180,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
       {/* 헤더 전체(랙 내비게이터 + 검색/컨트롤 바)를 하나로 묶어 함께 고정한다.
           따로 고정하면 랙 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록
           사진이 비쳐 보이는 문제가 있었다. */}
-      <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", paddingTop: "10px" }}>
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", paddingTop: "10px", width: "100%", boxSizing: "border-box" }}>
         {title ? (
           <div style={{ fontSize: "15px", fontWeight: 800, color: C.text, marginBottom: "14px" }}>{title}</div>
         ) : null}
