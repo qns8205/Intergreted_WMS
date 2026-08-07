@@ -284,10 +284,10 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     }
   }, [detailTab, borrowersItem, historyLoadedForId, historyLoading, loadHistory]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
-      if (connected && scriptUrl) setItems(await fetchScenarioObjectsForAdmin(scriptUrl));
+      if (connected && scriptUrl) setItems(await fetchScenarioObjectsForAdmin(scriptUrl, forceRefresh));
       else setItems([
         { rowIndex: 2, id: "000008", name: "fruit", sector: "Seoul-Root", rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", image: "", stock: 15, rented: 8 },
       ]);
@@ -419,53 +419,62 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         }
       `}</style>
 
-      {/* 카테고리 내비게이터 — 검색창 위 공간을 채우면서 빠른 필터로도 쓴다 */}
-      {categories.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
-          <button
-            onClick={() => setCat("")}
-            style={{
-              padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
-              border: `1px solid ${cat === "" ? C.accent : C.border}`,
-              background: cat === "" ? C.accent : C.card, color: cat === "" ? "#fff" : C.text,
-              fontSize: "12px", fontWeight: 800,
-            }}
-          >
-            전체
-          </button>
-          {categories.map((c) => {
-            const on = cat === c;
-            return (
-              <button
-                key={c}
-                onClick={() => setCat(on ? "" : c)}
-                style={{
-                  padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
-                  border: `1px solid ${on ? C.accent : C.border}`,
-                  background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
-                  fontSize: "12px", fontWeight: 800,
-                }}
-              >
-                {c}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {/* 헤더 전체(카테고리 내비게이터 + 검색바)를 하나로 묶어 함께 고정한다.
+          따로 고정하면 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록 사진이
+          비쳐 보이는 문제가 있었다. */}
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: C.bg, paddingTop: "10px", marginBottom: "14px" }}>
+        {/* 카테고리 내비게이터 — 검색창 위 공간을 채우면서 빠른 필터로도 쓴다 */}
+        {categories.length > 0 ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+            <button
+              onClick={() => setCat("")}
+              style={{
+                padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
+                border: `1px solid ${cat === "" ? C.accent : C.border}`,
+                background: cat === "" ? C.accent : C.card, color: cat === "" ? "#fff" : C.text,
+                fontSize: "12px", fontWeight: 800,
+              }}
+            >
+              전체
+            </button>
+            {categories.map((c) => {
+              const on = cat === c;
+              return (
+                <button
+                  key={c}
+                  onClick={() => setCat(on ? "" : c)}
+                  style={{
+                    padding: "7px 13px", borderRadius: "9px", cursor: "pointer",
+                    border: `1px solid ${on ? C.accent : C.border}`,
+                    background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
+                    fontSize: "12px", fontWeight: 800,
+                  }}
+                >
+                  {c}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
 
-      {/* 필터 바 (스크롤해도 고정) */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "14px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: C.bg, padding: "10px 0" }}>
-        <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
-          <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID · 물품명 · 위치 · 카테고리로 검색..." style={{ ...inputStyle, paddingLeft: "36px" }} />
-        </div>
-        <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px", minWidth: 0 }}>
-          <option value="">전체 카테고리</option>
-          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
+        {/* 필터 바 */}
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", paddingBottom: "10px" }}>
+          <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
+            <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="ID · 물품명 · 위치 · 카테고리로 검색..." style={{ ...inputStyle, paddingLeft: "36px" }} />
+          </div>
+          <select value={cat} onChange={(e) => setCat(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px", minWidth: 0 }}>
+            <option value="">전체 카테고리</option>
+            {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        <style>{`@keyframes sapSpinBtn2 { to { transform: rotate(360deg); } } .sap-spin-btn2 { animation: sapSpinBtn2 0.9s linear infinite; }`}</style>
+        <button onClick={() => load(true)} disabled={loading} title="지금 새로고침" style={{ display: "flex", alignItems: "center", gap: "5px", padding: "11px 13px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: loading ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: loading ? 0.7 : 1 }}>
+          <RotateCcw size={15} className={loading ? "sap-spin-btn2" : undefined} />
+        </button>
         <button onClick={openNew} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "11px 16px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, whiteSpace: "nowrap" }}>
           <Plus size={15} /> 새 물품
         </button>
+        </div>
       </div>
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${filtered.length} / ${items.length}개 시나리오 물품` : ""}</div>
 
