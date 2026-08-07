@@ -3,7 +3,7 @@ import { InventoryItem } from "../types";
 import { parseLocation, getGoogleDriveImageUrl } from "../utils/drive";
 import { compareRackSlot } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
-import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, ArrowUpDown, PackageOpen, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Search, Package, Pencil, MapPin, Boxes, ExternalLink, ArrowUpDown, PackageOpen, Plus, Trash2, RotateCcw } from "lucide-react";
 import ScrollToTopButton from "./ScrollToTopButton";
 
 interface Props {
@@ -17,9 +17,12 @@ interface Props {
   onImageClick?: (url: string) => void;
   // 랙/슬롯별로 새 물품을 추가할 때 (그 위치를 미리 채워 등록 화면을 연다)
   onAddItem?: (presetLocation: string) => void;
+  // 캐시 무시하고 시트를 다시 읽는 강제 새로고침
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }
 
-export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onDeleteItem, onManageSets, onImageClick, onAddItem }: Props) {
+export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onDeleteItem, onManageSets, onImageClick, onAddItem, onRefresh, refreshing }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
@@ -184,60 +187,64 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
         .wms-slot-highlight { animation: wms-slot-highlight-pulse 1.15s ease-out 2; }
       `}</style>
 
-      {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다.
-          랙이 하나도 없으면 빈 여백만 남지 않도록 컨테이너 자체를 렌더링하지 않는다. */}
-      {racks.length > 0 ? (
-      <div style={{ marginBottom: "10px" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-          {racks.map((r) => {
-            const on = expandedRack === r;
-            return (
-              <button
-                key={r}
-                onClick={() => setExpandedRack(on ? null : r)}
-                style={{
-                  display: "flex", alignItems: "center", gap: "4px",
-                  padding: "7px 12px", borderRadius: "9px", cursor: "pointer",
-                  border: `1px solid ${on ? C.accent : C.border}`,
-                  background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
-                  fontSize: "12px", fontWeight: 800, fontFamily: "monospace",
-                }}
-              >
-                {r}랙 {on ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </button>
-            );
-          })}
-        </div>
-        {expandedRack ? (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px", padding: "10px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}` }}>
-            {(slotsByRack[expandedRack] || []).length === 0 ? (
-              <span style={{ fontSize: "11.5px", color: C.label }}>이 랙에는 등록된 물품이 없습니다.</span>
-            ) : (
-              (slotsByRack[expandedRack] || []).map((slot) => (
+      {/* 헤더 전체(랙 내비게이터 + 검색/컨트롤 바)를 하나로 묶어 함께 고정한다.
+          따로 고정하면 랙 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록
+          사진이 비쳐 보이는 문제가 있었다. */}
+      <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", paddingTop: "10px" }}>
+        {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다.
+            랙이 하나도 없으면 빈 여백만 남지 않도록 컨테이너 자체를 렌더링하지 않는다. */}
+        {racks.length > 0 ? (
+        <div style={{ marginBottom: "10px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {racks.map((r) => {
+              const on = expandedRack === r;
+              return (
                 <button
-                  key={slot}
-                  onClick={() => { scrollToGroup(slot); setExpandedRack(null); }}
+                  key={r}
+                  onClick={() => setExpandedRack(on ? null : r)}
                   style={{
-                    padding: "6px 10px", borderRadius: "7px", cursor: "pointer",
-                    border: `1px solid ${C.border}`, background: C.card, color: C.text,
-                    fontSize: "11.5px", fontWeight: 700, fontFamily: "monospace",
+                    display: "flex", alignItems: "center", gap: "4px",
+                    padding: "7px 12px", borderRadius: "9px", cursor: "pointer",
+                    border: `1px solid ${on ? C.accent : C.border}`,
+                    background: on ? C.accent : C.card, color: on ? "#fff" : C.text,
+                    fontSize: "12px", fontWeight: 800, fontFamily: "monospace",
                   }}
                 >
-                  {slot}
+                  {r}랙 {on ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 </button>
-              ))
-            )}
+              );
+            })}
           </div>
-        ) : null}
-      </div>
-      ) : null}
-
-      {/* 상단 컨트롤 (스크롤해도 고정) */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", padding: "10px 0", borderRadius: "10px" }}>
-        <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
-          <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색... (해당 위치로 이동합니다)" style={inputStyle} />
+          {expandedRack ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px", padding: "10px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}` }}>
+              {(slotsByRack[expandedRack] || []).length === 0 ? (
+                <span style={{ fontSize: "11.5px", color: C.label }}>이 랙에는 등록된 물품이 없습니다.</span>
+              ) : (
+                (slotsByRack[expandedRack] || []).map((slot) => (
+                  <button
+                    key={slot}
+                    onClick={() => { scrollToGroup(slot); setExpandedRack(null); }}
+                    style={{
+                      padding: "6px 10px", borderRadius: "7px", cursor: "pointer",
+                      border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                      fontSize: "11.5px", fontWeight: 700, fontFamily: "monospace",
+                    }}
+                  >
+                    {slot}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
         </div>
+        ) : null}
+
+        {/* 상단 컨트롤 */}
+        <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", paddingBottom: "10px" }}>
+          <div style={{ position: "relative", flex: "1 1 260px", minWidth: 0 }}>
+            <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색... (해당 위치로 이동합니다)" style={inputStyle} />
+          </div>
         <button onClick={toggleAll} style={{ padding: "9px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap" }}>
           {allCollapsed ? "모두 펼치기" : "모두 접기"}
         </button>
@@ -246,7 +253,16 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
             <PackageOpen size={13} /> 세트 관리
           </button>
         ) : null}
+        {onRefresh ? (
+          <>
+            <style>{`@keyframes rgvSpin { to { transform: rotate(360deg); } } .rgv-spin { animation: rgvSpin 0.9s linear infinite; }`}</style>
+            <button onClick={onRefresh} disabled={refreshing} title="지금 새로고침" style={{ display: "flex", alignItems: "center", padding: "9px 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: refreshing ? "wait" : "pointer", opacity: refreshing ? 0.7 : 1 }}>
+              <RotateCcw size={14} className={refreshing ? "rgv-spin" : undefined} />
+            </button>
+          </>
+        ) : null}
         <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{groups.length}개 슬롯 · {totalShown}개 물품</span>
+        </div>
       </div>
 
       {groups.length === 0 ? (
