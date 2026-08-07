@@ -20,9 +20,12 @@ interface Props {
   // 캐시 무시하고 시트를 다시 읽는 강제 새로고침
   onRefresh?: () => void;
   refreshing?: boolean;
+  // 화면 타이틀 — 별도 바로 안 빼고 이 컴포넌트의 고정 헤더 안에 같이 넣는다.
+  // (따로 두면 타이틀만 고정이 안 돼서 그 자리가 스크롤할 때 비어 보이는 문제가 있었다)
+  title?: string;
 }
 
-export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onDeleteItem, onManageSets, onImageClick, onAddItem, onRefresh, refreshing }: Props) {
+export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEditItem, onAdjustStock, onDeleteItem, onManageSets, onImageClick, onAddItem, onRefresh, refreshing, title }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
     cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
@@ -178,6 +181,9 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
           따로 고정하면 랙 칩 줄은 스크롤에 그냥 흘러가버려서, 그 틈으로 아래 목록
           사진이 비쳐 보이는 문제가 있었다. */}
       <div style={{ position: "sticky", top: 0, zIndex: 30, background: isLightMode ? "#f8fafc" : "#0b0f19", paddingTop: "10px" }}>
+        {title ? (
+          <div style={{ fontSize: "15px", fontWeight: 800, color: C.text, marginBottom: "14px" }}>{title}</div>
+        ) : null}
         {/* 헤더 랙 내비게이터 — 검색창 위 공간을 채운다. 랙을 누르면 슬롯 목록이 펼쳐진다.
             랙이 하나도 없으면 빈 여백만 남지 않도록 컨테이너 자체를 렌더링하지 않는다. */}
         {racks.length > 0 ? (
