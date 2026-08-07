@@ -22,6 +22,7 @@ import {
   Upload,
   Trash2,
   Pencil,
+  RotateCcw,
 } from "lucide-react";
 import { getGoogleDriveImageUrl, isFuzzyMatch, formatTimestampLocal, resizeAndCompressImage, parseLocation } from "../utils/drive";
 import { smartMatch } from "../utils/search";
@@ -50,6 +51,9 @@ interface MobileViewPageProps {
   connected: boolean;
   scriptUrl?: string;
   currentView?: "landing" | "login" | "rental" | "monitor" | "defect" | "rent";
+  // 캐시 무시하고 시트를 다시 읽는 강제 새로고침 (공구 및 부품류 = App.tsx의 inventory와 공유)
+  onRefreshInventory?: () => void;
+  inventoryRefreshing?: boolean;
 }
 
 type Mode = "대여" | "반납" | "등록" | "불량" | "시나리오";
@@ -90,6 +94,8 @@ export default function MobileViewPage({
   connected,
   scriptUrl = "",
   currentView = "monitor",
+  onRefreshInventory,
+  inventoryRefreshing = false,
 }: MobileViewPageProps) {
   const [mode, setMode] = useState<Mode>(isAdmin ? "등록" : "대여");
   const [searchQuery, setSearchQuery] = useState("");
@@ -253,11 +259,11 @@ export default function MobileViewPage({
   const [sciSaving, setSciSaving] = useState(false);
   const [sciUploading, setSciUploading] = useState(false);
 
-  const loadScenarioItems = React.useCallback(async () => {
+  const loadScenarioItems = React.useCallback(async (forceRefresh = false) => {
     if (!connected || !scriptUrl) { setSciLoaded(true); return; }
     setSciLoading(true);
     try {
-      setSciItems(await fetchScenarioObjectsForAdmin(scriptUrl));
+      setSciItems(await fetchScenarioObjectsForAdmin(scriptUrl, forceRefresh));
       setSciLoaded(true);
     } catch (e: any) {
       notify(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
@@ -1640,6 +1646,26 @@ export default function MobileViewPage({
              3. 공구 및 부품류 탭: 목록 보기 / 새 물품 등록 (Admin 모바일 전용)
              ========================================================= */
           <>
+            {onRefreshInventory ? (
+              <>
+                <style>{`@keyframes mvpInvSpin { to { transform: rotate(360deg); } } .mvp-inv-spin { animation: mvpInvSpin 0.9s linear infinite; }`}</style>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "6px" }}>
+                  <button
+                    className="mvp-btn"
+                    onClick={onRefreshInventory}
+                    disabled={inventoryRefreshing}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "5px",
+                      padding: "7px 12px", borderRadius: "9px",
+                      border: `1px solid ${BORDER}`, background: CARD_BG, color: ACCENT_LIGHT,
+                      fontSize: "11.5px", fontWeight: 700, opacity: inventoryRefreshing ? 0.7 : 1,
+                    }}
+                  >
+                    <RotateCcw size={13} className={inventoryRefreshing ? "mvp-inv-spin" : undefined} /> 새로고침
+                  </button>
+                </div>
+              </>
+            ) : null}
             <div style={subTabBarStyle}>
             <div
               style={{
@@ -2141,6 +2167,22 @@ export default function MobileViewPage({
              ========================================================= */
           <>
             {/* 서브 탭: 공구 및 부품류 탭과 동일한 구조 (스크롤해도 고정) */}
+            <style>{`@keyframes mvpInvSpin { to { transform: rotate(360deg); } } .mvp-inv-spin { animation: mvpInvSpin 0.9s linear infinite; }`}</style>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "6px" }}>
+              <button
+                className="mvp-btn"
+                onClick={() => loadScenarioItems(true)}
+                disabled={sciLoading}
+                style={{
+                  display: "flex", alignItems: "center", gap: "5px",
+                  padding: "7px 12px", borderRadius: "9px",
+                  border: `1px solid ${BORDER}`, background: CARD_BG, color: ACCENT_LIGHT,
+                  fontSize: "11.5px", fontWeight: 700, opacity: sciLoading ? 0.7 : 1,
+                }}
+              >
+                <RotateCcw size={13} className={sciLoading ? "mvp-inv-spin" : undefined} /> 새로고침
+              </button>
+            </div>
             <div style={subTabBarStyle}>
             <div
               style={{
