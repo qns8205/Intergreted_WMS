@@ -78,19 +78,27 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     return entries;
   }, [inventory]);
 
+  // 검색어가 입력되면 매칭되는 슬롯만 걸러서 보여준다.
+  // (전에는 스크롤+하이라이트 방식이었는데, 필터링이 더 낫다는 피드백으로 바꿨다)
+  const visibleGroups = useMemo(() => {
+    const q = search.trim();
+    if (!q) return groups;
+    return groups.filter(([, items]) => items.some((it) => smartMatch([it.name, it.location, it.spec, it.keywords], q)));
+  }, [groups, search]);
+
   // 화면에 그릴 때 "여기서부터 새 랙이 시작된다"를 미리 계산해둔다 (구분선 표시용).
   const groupClusterInfo = useMemo(() => {
     let prevRack = "";
-    return groups.map(([groupKey]) => {
+    return visibleGroups.map(([groupKey]) => {
       const rack = parseLocation(groupKey).rack || "미지정";
       const isNewRack = rack !== prevRack;
       prevRack = rack;
       return { rack, isNewRack };
     });
-  }, [groups]);
+  }, [visibleGroups]);
 
-  const totalShown = groups.reduce((n, [, items]) => n + items.length, 0);
-  const allCollapsed = groups.length > 0 && groups.every(([key]) => collapsed[key]);
+  const totalShown = visibleGroups.reduce((n, [, items]) => n + items.length, 0);
+  const allCollapsed = visibleGroups.length > 0 && visibleGroups.every(([key]) => collapsed[key]);
 
   // 헤더 랙 내비게이터용: 랙 목록과, 랙별 슬롯(정확한 위치) 목록
   const racks = useMemo(() => {
@@ -135,20 +143,6 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
     setHighlightKey(key);
     highlightTimerRef.current = window.setTimeout(() => setHighlightKey(null), 2300);
   }
-
-  // 검색어가 입력되면 목록을 걸러내는 대신, 첫 매칭 위치로 스크롤 + 하이라이트한다.
-  useEffect(() => {
-    const q = search.trim();
-    if (!q) return;
-    const timer = window.setTimeout(() => {
-      const match = inventory.find((it) => smartMatch([it.name, it.location, it.spec, it.keywords], q));
-      if (!match) return;
-      const key = (match.location || "").trim().toUpperCase() || "미지정";
-      scrollToGroup(key);
-    }, 350);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, inventory]);
 
   useEffect(() => {
     return () => { if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current); };
@@ -236,7 +230,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
         <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap", alignItems: "center", paddingBottom: "10px" }}>
           <div style={{ position: "relative", flex: "1 1 0%", minWidth: "200px" }}>
             <Search size={15} style={{ position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색... (해당 위치로 이동합니다)" style={inputStyle} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="물품명 · 위치 · 규격 검색..." style={inputStyle} />
           </div>
         <button onClick={toggleAll} style={{ padding: "9px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, whiteSpace: "nowrap" }}>
           {allCollapsed ? "모두 펼치기" : "모두 접기"}
@@ -254,18 +248,18 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, onEdi
             </button>
           </>
         ) : null}
-        <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{groups.length}개 슬롯 · {totalShown}개 물품</span>
+        <span style={{ fontSize: "12px", color: C.label, whiteSpace: "nowrap" }}>{visibleGroups.length}개 슬롯 · {totalShown}개 물품</span>
         </div>
       </div>
 
-      {groups.length === 0 ? (
+      {visibleGroups.length === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
           <Package size={36} style={{ color: C.border, marginBottom: "8px" }} />
-          <div>표시할 공구 및 부품류가 없습니다.</div>
+          <div>{search.trim() ? "검색 결과가 없습니다." : "표시할 공구 및 부품류가 없습니다."}</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {groups.map(([groupKey, items], idx) => {
+          {visibleGroups.map(([groupKey, items], idx) => {
             const isCollapsed = !!collapsed[groupKey];
             const isHighlighted = highlightKey === groupKey;
             const cluster = groupClusterInfo[idx];
