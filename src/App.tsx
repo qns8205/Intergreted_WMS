@@ -2470,7 +2470,7 @@ export default function App() {
                   </>
                 ) : (
                   <>
-                    {navBtn("adminReturn", <Undo2 size={18} />, "반납")}
+                    {navBtn("adminReturn", <Undo2 size={18} />, "대여 및 반납")}
                     {navBtn("rent", <ClipboardList size={18} />, "대여 & 반납 로그")}
                     {navBtn("seatmap", <LayoutGrid size={18} />, "좌석 배치도")}
                   </>
@@ -2577,7 +2577,7 @@ export default function App() {
         {/* 현재 페이지 제목 및 권한 표시 배너 */}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em" }}>
-            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "adminReturn" ? "↩️ 반납 처리" : currentView === "rent" ? "📋 대여 & 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "adminReturn" ? "↩️ 대여 및 반납" : currentView === "rent" ? "📋 대여 & 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
