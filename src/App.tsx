@@ -2916,6 +2916,7 @@ export default function App() {
                 flexDirection: "column",
                 background: "var(--canvas-bg, #020617)",
                 overflowY: "auto",
+                overflowX: "hidden",
                 padding: "24px",
               }}
             >
