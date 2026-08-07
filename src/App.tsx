@@ -277,6 +277,7 @@ export default function App() {
 
   const [inventory, setInventory] = useState<InventoryItem[]>(DEMO_INVENTORY);
   const [racks, setRacks] = useState<Rack[]>([]);
+  const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
   const [selectedRackId, setSelectedRackId] = useState<string | null>(null);
   const [monitorView, setMonitorView] = useState<"map" | "grouped">("grouped");
   const [imageModalUrl, setImageModalUrl] = useState<string>("");
@@ -788,12 +789,12 @@ export default function App() {
     return data;
   }
 
-  async function fetchAll() {
+  async function fetchAll(forceRefresh?: boolean) {
     if (!scriptUrl) throw new Error("연동 URL이 비어 있습니다.");
     
     let res;
     try {
-      res = await fetch(`${scriptUrl}?action=getAll`);
+      res = await fetch(`${scriptUrl}?action=getAll${forceRefresh ? "&forceRefresh=1" : ""}`);
     } catch (e: any) {
       throw new Error(`스프레드시트 연결 실패: ${e.message}.\n\n[체크리스트]\n1. 구글 Apps Script 배포 시 '액세스 권한이 있는 사용자'가 '모든 사용자(Anyone)'로 되어 있는지 확인해 주세요.\n2. 등록하신 URL이 스프레드시트 주소가 아니라 '/exec'로 끝나는 웹앱 URL인지 확인해 주세요.\n3. 회사/학교 계정의 경우 외부 외부망 접근 정책을 확인해 주세요.`);
     }
@@ -970,15 +971,17 @@ export default function App() {
     }
   }
 
-  // 실시간 새로고침
+  // 실시간 새로고침 — 서버 캐시를 무시하고 시트를 직접 다시 읽는다.
+  // (시트가 스크립트 바깥 경로로 바뀐 경우까지 확실히 반영하기 위해 항상 강제 새로고침한다)
   async function handleRefresh() {
     if (!connected) {
       showToast("현재 가상 데모 모드입니다. 구글 시트 연동 후 클릭해주세요.", "warn");
       return;
     }
+    setInventoryRefreshing(true);
     showToast("스프레드시트 동기화 진행 중...", "info");
     try {
-      const data = await fetchAll();
+      const data = await fetchAll(true);
       const rawInv = data.inventory || [];
       const inv = mergePendingStocks(rawInv);
       setInventory(inv);
@@ -1001,6 +1004,8 @@ export default function App() {
       showToast("실시간 스프레드시트 동기화 완료!", "ok");
     } catch (err: any) {
       showToast("동기화 실패: " + err.message, "error");
+    } finally {
+      setInventoryRefreshing(false);
     }
   }
 
@@ -1926,6 +1931,8 @@ export default function App() {
         scriptUrl={scriptUrl}
         currentView={currentView}
         onOpenScenario={() => setCurrentView("scenario")}
+        onRefreshInventory={handleRefresh}
+        inventoryRefreshing={inventoryRefreshing}
       />
     );
   }
@@ -2757,6 +2764,7 @@ export default function App() {
 
           <button
             onClick={handleRefresh}
+            disabled={inventoryRefreshing}
             style={{
               width: 34,
               height: 34,
@@ -2764,14 +2772,16 @@ export default function App() {
               border: "1px solid var(--panel-border, #334155)",
               background: "var(--input-bg, #0f172a)",
               color: "var(--text-main, #f1f5f9)",
-              cursor: "pointer",
+              cursor: inventoryRefreshing ? "wait" : "pointer",
+              opacity: inventoryRefreshing ? 0.7 : 1,
             }}
             title="실시간 강제 새로고침"
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={inventoryRefreshing ? "app-topbar-spin" : undefined} />
           </button>
         </div>
       </header>
+      <style>{`@keyframes appTopbarSpin { to { transform: rotate(360deg); } } .app-topbar-spin { animation: appTopbarSpin 0.9s linear infinite; }`}</style>
 
       {/* ===== 실시간 연동/데모 상태 알림 슬림 배너 ===== */}
       <div
@@ -2932,6 +2942,8 @@ export default function App() {
                 onDeleteItem={(item) => deleteInventoryItemRow(item.rowIndex)}
                 onManageSets={() => setShowItemSetManager(true)}
                 onImageClick={(url) => setImageModalUrl(url)}
+                onRefresh={handleRefresh}
+                refreshing={inventoryRefreshing}
                 onAddItem={(presetLocation) => {
                   // 해당 랙/슬롯 위치를 미리 채운 채 등록 화면을 연다
                   setDefaultLocationForNewItem(presetLocation);
