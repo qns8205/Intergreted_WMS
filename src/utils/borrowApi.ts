@@ -449,8 +449,8 @@ export interface ScenarioObjectAdmin {
   requestFor?: string; // 특정 업체 request용 물품 — 업체명 (O열, 빈 값이면 해당 없음)
 }
 
-export async function fetchScenarioObjectsForAdmin(scriptUrl: string): Promise<ScenarioObjectAdmin[]> {
-  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", {}, { timeoutMs: 60000, retries: 1 });
+export async function fetchScenarioObjectsForAdmin(scriptUrl: string, forceRefresh?: boolean): Promise<ScenarioObjectAdmin[]> {
+  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", forceRefresh ? { forceRefresh: "1" } : {}, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as ScenarioObjectAdmin[];
 }
 
@@ -831,6 +831,22 @@ export async function fetchScenarioAllLogs(
   return (data.items || []) as ScenarioLogEntry[];
 }
 
+export interface PagedLogResult<T> { items: T[]; hasMore: boolean; totalPeople: number }
+
+/** "건수"가 아니라 "사람 수" 기준으로 잘라서 받아온다 — 더보기를 누르면 실제로 서버에 다시 요청한다. */
+export async function fetchScenarioAllLogsPaged(
+  scriptUrl: string,
+  query: ScenarioLogQuery & { peopleOffset?: number; peopleLimit: number }
+): Promise<PagedLogResult<ScenarioLogEntry>> {
+  const params: Record<string, string> = { peopleLimit: String(query.peopleLimit) };
+  if (query.recentDays && query.recentDays > 0) params.recentDays = String(query.recentDays);
+  if (query.scope && query.scope !== "all") params.scope = query.scope;
+  if (query.slim) params.slim = "1";
+  if (query.peopleOffset) params.peopleOffset = String(query.peopleOffset);
+  const data = await apiGet(scriptUrl, "getScenarioAllLogs", params, { timeoutMs: 60000, retries: 1 });
+  return { items: (data.items || []) as ScenarioLogEntry[], hasMore: !!data.hasMore, totalPeople: Number(data.totalPeople) || 0 };
+}
+
 // 반납완료된 대여를 그대로 다시 대여 신청 (동일 물품/수량/대여자)
 export async function reBorrowScenarioLogs(
   scriptUrl: string,
@@ -1059,6 +1075,18 @@ export async function fetchWarehouseLogs(scriptUrl: string, recentDays?: number)
   if (recentDays && recentDays > 0) params.recentDays = String(recentDays);
   const data = await apiGet(scriptUrl, "getWarehouseLogs", params, { timeoutMs: 60000, retries: 1 });
   return (data.items || []) as WarehouseLogEntry[];
+}
+
+/** "건수"가 아니라 "사람 수" 기준으로 잘라서 받아온다 — 더보기를 누르면 실제로 서버에 다시 요청한다. */
+export async function fetchWarehouseLogsPaged(
+  scriptUrl: string,
+  opts: { recentDays?: number; peopleOffset?: number; peopleLimit: number }
+): Promise<PagedLogResult<WarehouseLogEntry>> {
+  const params: Record<string, string> = { peopleLimit: String(opts.peopleLimit) };
+  if (opts.recentDays && opts.recentDays > 0) params.recentDays = String(opts.recentDays);
+  if (opts.peopleOffset) params.peopleOffset = String(opts.peopleOffset);
+  const data = await apiGet(scriptUrl, "getWarehouseLogs", params, { timeoutMs: 60000, retries: 1 });
+  return { items: (data.items || []) as WarehouseLogEntry[], hasMore: !!data.hasMore, totalPeople: Number(data.totalPeople) || 0 };
 }
 
 /* ══════════ 반납 독촉 DM ══════════ */
