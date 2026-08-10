@@ -90,7 +90,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [cursor, setCursor] = useState(0);
   // A를 한 번 누르면 사진을 먼저 보여주고, 다시 누르면 담는다 (엉뚱한 물품을 담는 실수 방지)
   const [preview, setPreview] = useState<{ key: string; item: UnreturnedItem } | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  // 여러 건이 동시에 백그라운드로 처리될 수 있어, 단일 boolean 대신 진행 중인 작업 목록으로 관리한다.
+  const [pendingJobs, setPendingJobs] = useState<{ id: number; label: string }[]>([]);
+  const jobIdRef = useRef(0);
   // 반납 후 곧바로 같은 물품을 다시 대여할지 (대여일 갱신 목적)
   const [reborrowAfter, setReborrowAfter] = useState(false);
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
@@ -160,7 +162,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 15초마다 자동 새로고침.
   // 다른 관리자가 처리한 내용이 바로 반영되도록 하되, 담아둔 장바구니와 선택은 유지한다.
   const submittingRef = useRef(false);
-  submittingRef.current = submitting;
+  submittingRef.current = pendingJobs.length > 0;
   useEffect(() => {
     if (!connected || !scriptUrl) return;
     const timer = window.setInterval(() => {
@@ -779,11 +781,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   async function submitReturn() {
     if (!cart.length) { showToast("담긴 물품이 없습니다.", "warn"); return; }
 
-    // 장바구니를 세 그룹으로 나눈다 — 각각 다른 API로, 서로 독립적으로 처리된다.
-    // 하나가 실패해도 다른 그룹 처리는 그대로 진행되고, 실패한 그룹의 줄만 장바구니에 남는다.
-    const pickupLines = cart.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
-    const returnLines = cart.filter((c) => c.sheetType !== "warehouse" && c.action === "반납");
-    const warehouseLines = cart.filter((c) => c.sheetType === "warehouse");
+    // 지금 담긴 내용을 스냅샷으로 떼어낸다. 실제 서버 처리는 이 스냅샷을 들고
+    // 아래에서 백그라운드로 진행되고, 장바구니는 확인을 누르는 순간 바로 비워져서
+    // 처리가 끝나길 기다리지 않고 곧바로 다른 사람의 대여 확인/반납을 담을 수 있다.
+    const batch = cart;
+    const batchReborrow = reborrowAfter;
+
+    const pickupLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
+    const returnLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action === "반납");
+    const warehouseLines = batch.filter((c) => c.sheetType === "warehouse");
 
     const parts: string[] = [];
     if (pickupLines.length) parts.push(`대여 확인 ${pickupLines.length}종`);
@@ -792,13 +798,20 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       const consumeN = warehouseLines.filter((c) => c.disposition === "소모").length;
       parts.push(consumeN > 0 ? `공구 ${warehouseLines.length}종 (그중 소모 ${consumeN}종)` : `공구 반납 ${warehouseLines.length}종`);
     }
-    if (!window.confirm(`${parts.join(" · ")}을(를) 처리할까요?`)) return;
+    if (!window.confirm(`${parts.join(" · ")}을(를) 처리할까요?`)) return; // 취소하면 장바구니는 그대로 남는다
 
-    setSubmitting(true);
-    const doneKeys = new Set<string>(); // 성공적으로 처리돼 장바구니에서 지울 줄들
-    let anyFailed = false;
+    // 확인을 누른 순간 장바구니를 비운다 — 이 시점부터 화면은 새 작업을 받을 준비가 된다.
+    setCart([]);
+    addHistoryRef.current = [];
+    setReborrowAfter(false);
+
+    const jobId = ++jobIdRef.current;
+    const jobQty = batch.reduce((n, c) => n + c.qty, 0);
+    setPendingJobs((prev) => [...prev, { id: jobId, label: `${batch.length}종 · ${jobQty}개` }]);
 
     try {
+      let anyFailed = false;
+
       // 1) 대여 확인 — 재고/수량 변화 없이 "실물 확인" 시각만 남긴다.
       if (pickupLines.length) {
         try {
@@ -812,7 +825,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           if (!res.success) { showToast(res.message || "대여 확인 처리 실패", "error"); anyFailed = true; }
           else {
             showToast(res.message || `${pickupLines.length}종을 대여 확인 처리했습니다.`, "ok");
-            pickupLines.forEach((c) => doneKeys.add(c.key));
             const pickedKeys = new Set(pickupLines.map((c) => c.key));
             setItems((prev) => prev.map((it) => (pickedKeys.has(`${it.sheetType}:${it.rowIndex}`) ? { ...it, pickedUp: new Date().toISOString() } : it)));
           }
@@ -823,6 +835,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       }
 
       // 2) 시나리오/일반 반납
+      let returnSucceeded = false;
       if (returnLines.length) {
         try {
           const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
@@ -834,8 +847,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
           if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); anyFailed = true; }
           else {
+            returnSucceeded = true;
             showToast(res.message || `${returnLines.reduce((n, c) => n + c.qty, 0)}개를 반납 처리했습니다.`, "ok");
-            returnLines.forEach((c) => doneKeys.add(c.key));
             const done = new Map(returnLines.map((c) => [c.key, c.qty]));
             setItems((prev) =>
               prev
@@ -855,6 +868,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       }
 
       // 3) 공구 및 부품류 (반납/소모)
+      let whSucceeded = false;
       if (warehouseLines.length) {
         try {
           const consumeTotal = warehouseLines.filter((c) => c.disposition === "소모").reduce((n, c) => n + c.qty, 0);
@@ -871,9 +885,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           );
           if (!bulk.success) { showToast(bulk.error || "공구 반납 처리 실패", "error"); anyFailed = true; }
           else {
+            whSucceeded = true;
             const whTotal = warehouseLines.reduce((n, c) => n + c.qty, 0);
             showToast(consumeTotal > 0 ? `${whTotal}개를 처리했습니다. (소모 ${consumeTotal}개 포함)` : `${whTotal}개를 반납 처리했습니다.`, "ok");
-            warehouseLines.forEach((c) => doneKeys.add(c.key));
             const done = new Map(warehouseLines.map((c) => [c.key, c.qty]));
             setWhItems((prev) =>
               prev
@@ -892,16 +906,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         }
       }
 
-      // 반납 후 재대여: "반납"으로 처리된 줄(공구는 소모 제외)만 대상으로 한다.
+      // 반납 후 재대여: "반납"으로 성공 처리된 줄(공구는 소모 제외)만 대상으로 한다.
       // 대여 확인 줄은 이미 대여 중이던 물품이라 재대여 대상이 아니다.
-      if (reborrowAfter) {
+      if (batchReborrow) {
         const reborrowLines = [
-          ...returnLines.filter((c) => doneKeys.has(c.key)),
-          ...warehouseLines.filter((c) => doneKeys.has(c.key) && c.disposition !== "소모"),
+          ...(returnSucceeded ? returnLines : []),
+          ...(whSucceeded ? warehouseLines.filter((c) => c.disposition !== "소모") : []),
         ];
         if (reborrowLines.length) {
           try {
-            const byBorrower: Record<string, typeof cart> = {};
+            const byBorrower: Record<string, typeof batch> = {};
             reborrowLines.forEach((c) => { (byBorrower[c.borrower] ||= []).push(c); });
 
             for (const who of Object.keys(byBorrower)) {
@@ -953,13 +967,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         }
       }
 
-      // 처리에 성공한 줄만 장바구니에서 지운다. 실패한 그룹은 남아서 다시 시도할 수 있다.
-      setCart((prev) => prev.filter((c) => !doneKeys.has(c.key)));
-      addHistoryRef.current = addHistoryRef.current.filter((k) => !doneKeys.has(k));
-      if (!anyFailed) setReborrowAfter(false); // 전부 성공했을 때만 해제 (실패분 재시도 시 유지)
+      if (anyFailed) {
+        showToast("일부 항목 처리에 실패했습니다 — 실패한 물품은 목록에서 다시 찾아 담아주세요.", "warn");
+      }
       reloadActive(true); // 정합성은 백그라운드로 맞춘다
     } finally {
-      setSubmitting(false);
+      setPendingJobs((prev) => prev.filter((j) => j.id !== jobId));
     }
   }
 
@@ -1661,10 +1674,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           ) : null}
         </div>
 
-        {/* 처리 중일 때 진행 중임을 보여주는 얇은 바 (완료 시각을 알 수 없는 단일 요청이라 부정확 진행률 대신 흐르는 바로 표현) */}
-        {submitting ? (
-          <div style={{ height: "3px", background: C.cardSub, overflow: "hidden", position: "relative" }}>
-            <div className="ar-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "3px" }} />
+        {/* 백그라운드로 처리 중인 건이 있으면 몇 건인지 보여준다. 장바구니는 이미 비워진 상태라 새 작업을 계속 담을 수 있다. */}
+        {pendingJobs.length > 0 ? (
+          <div style={{ padding: "8px 20px", background: C.accentSoft, display: "flex", alignItems: "center", gap: "8px" }}>
+            <RotateCcw size={12} className="ar-spin" style={{ color: C.accentText, flexShrink: 0 }} />
+            <span style={{ fontSize: "11px", color: C.accentText, fontWeight: 700 }}>
+              백그라운드로 처리 중: {pendingJobs.map((j) => j.label).join(" · ")}
+            </span>
           </div>
         ) : null}
 
@@ -1749,21 +1765,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
           <button
             onClick={submitReturn}
-            disabled={!cart.length || submitting}
+            disabled={!cart.length}
             style={{
               width: "100%", padding: "15px", borderRadius: "12px", border: "none",
               background: cart.length ? C.accent : C.border, color: "#fff",
-              fontSize: "15px", fontWeight: 800, cursor: cart.length && !submitting ? "pointer" : "not-allowed",
-              opacity: submitting ? 0.85 : 1,
+              fontSize: "15px", fontWeight: 800, cursor: cart.length ? "pointer" : "not-allowed",
               display: "flex", alignItems: "center", justifyContent: "center", gap: "8px",
             }}
           >
-            {submitting ? (
-              <>
-                <RotateCcw size={15} className="ar-spin" />
-                처리 중...
-              </>
-            ) : `장바구니 처리하기 (${cartTotal}개) · B`}
+            {`장바구니 처리하기 (${cartTotal}개) · B`}
           </button>
         </div>
       </div>
