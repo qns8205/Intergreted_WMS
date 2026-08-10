@@ -2,9 +2,10 @@ import React from "react";
 import { AlertCircle } from "lucide-react";
 
 /**
- * 깨질 위험(fragile) / 화재 위험(fireRisk) / 특정 업체 request용(requestFor) 물품을
- * 대여 마지막 단계 직전(또는 제출 직전)에 한 번 더 확인시키는 공용 모달.
- * 여러 대여 진입점(BorrowSystemPage, MobileViewPage, RentalPage, SidePanel, App.tsx)에서 공유한다.
+ * 깨질 위험(fragile) / 화재 위험(fireRisk) / 특정 업체 request용(requestFor) /
+ * 개인 물품(personalOwner) 물품을 대여 마지막 단계 직전(또는 제출 직전)에 한 번 더
+ * 확인시키는 공용 모달. 여러 대여 진입점(BorrowSystemPage, MobileViewPage, RentalPage,
+ * SidePanel, App.tsx)에서 공유한다.
  */
 
 export interface HazardItem {
@@ -13,6 +14,7 @@ export interface HazardItem {
   fragile?: boolean;
   fireRisk?: boolean;
   requestFor?: string;
+  personalOwner?: string;
 }
 
 export interface HazardPalette {
@@ -29,9 +31,9 @@ export interface HazardPalette {
   accentText: string;
 }
 
-/** 카탈로그에서 담은 물품들의 id를 찾아, 위험/request 플래그가 있는 것만 추린다 (중복 id 제거). */
+/** 카탈로그에서 담은 물품들의 id를 찾아, 위험/request/개인 물품 플래그가 있는 것만 추린다 (중복 id 제거). */
 export function collectHazardItems(
-  catalog: { id: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string }[],
+  catalog: { id: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string; personalOwner?: string }[],
   picked: { id: string; name: string }[]
 ): HazardItem[] {
   const seen = new Set<string>();
@@ -39,9 +41,9 @@ export function collectHazardItems(
   picked.forEach((it) => {
     if (!it.id || seen.has(it.id)) return;
     const obj = catalog.find((o) => o.id === it.id);
-    if (obj && (obj.fragile || obj.fireRisk || obj.requestFor)) {
+    if (obj && (obj.fragile || obj.fireRisk || obj.requestFor || obj.personalOwner)) {
       seen.add(it.id);
-      result.push({ id: it.id, name: it.name, fragile: obj.fragile, fireRisk: obj.fireRisk, requestFor: obj.requestFor });
+      result.push({ id: it.id, name: it.name, fragile: obj.fragile, fireRisk: obj.fireRisk, requestFor: obj.requestFor, personalOwner: obj.personalOwner });
     }
   });
   return result;
@@ -82,6 +84,9 @@ export default function HazardConfirmModal({
                 ) : null}
                 {it.requestFor ? (
                   <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>📌 {it.requestFor} request용</span>
+                ) : null}
+                {it.personalOwner ? (
+                  <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>👤 {it.personalOwner}님 개인 물품</span>
                 ) : null}
               </div>
             </div>
