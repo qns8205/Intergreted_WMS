@@ -51,6 +51,18 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
 
   const [logs, setLogs] = useState<ScenarioLogEntry[]>([]);
   const [allItems, setAllItems] = useState<ScenarioObjectAdmin[]>([]);
+  const [allItemsLoaded, setAllItemsLoaded] = useState(false);
+  const [allItemsLoading, setAllItemsLoading] = useState(false);
+
+  // 전체 물품 카탈로그(통계/물품별 보기 전용) — 처음엔 안 받아오다가, 그 기능을 실제로 열 때만 받아온다.
+  const loadAllItemsIfNeeded = useCallback(() => {
+    if (allItemsLoaded || allItemsLoading || !connected || !scriptUrl) return;
+    setAllItemsLoading(true);
+    fetchScenarioObjectsForAdmin(scriptUrl)
+      .then((catalog) => { setAllItems(catalog); setAllItemsLoaded(true); })
+      .catch((e: any) => showToast(`물품 카탈로그를 불러오지 못했습니다: ${e.message}`, "warn"))
+      .finally(() => setAllItemsLoading(false));
+  }, [allItemsLoaded, allItemsLoading, connected, scriptUrl, showToast]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -164,17 +176,16 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     try {
       if (connected && scriptUrl) {
         // 미반납/반납완료 각각 첫 5명치만 받아온다. "더 보기"를 눌러야 다음 5명이 온다.
-        const [unreturnedPage, returnedPage, ver, catalog] = await Promise.all([
+        // 전체 물품 카탈로그(296개 등)는 여기서 안 받는다 — 통계/물품별 보기를 열 때만 따로 받아온다.
+        const [unreturnedPage, returnedPage, ver] = await Promise.all([
           fetchScenarioAllLogsPaged(scriptUrl, { scope: "unreturned", slim: true, peopleLimit: PEOPLE_PAGE_SIZE }),
           fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true, peopleLimit: PEOPLE_PAGE_SIZE }),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
-          fetchScenarioObjectsForAdmin(scriptUrl).catch(() => []),
         ]);
         setLogs(sortLogs([...unreturnedPage.items, ...returnedPage.items]));
         setScopeOffsets({ unreturned: PEOPLE_PAGE_SIZE, returned: PEOPLE_PAGE_SIZE });
         setScopeHasMore({ unreturned: unreturnedPage.hasMore, returned: returnedPage.hasMore });
         setAppVersion(ver);
-        setAllItems(catalog);
         hasDataRef.current = unreturnedPage.items.length > 0 || returnedPage.items.length > 0;
         setLoaded(true);
       } else {
@@ -434,6 +445,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     setSwapQty(t.quantity || 1);
     setSwapSearch("");
     setSwapReason("");
+    loadAllItemsIfNeeded();
   }
 
   async function doSwap() {
@@ -608,7 +620,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             <div style={{ fontSize: "22px", fontWeight: 800, color: s.color }}>{s.value}</div>
           </div>
         ))}
-        <button onClick={() => setShowStats((v) => !v)} style={{ flex: "0 0 auto", padding: "0 16px", borderRadius: "12px", border: `1px solid ${showStats ? C.accent : C.border}`, background: showStats ? C.accentSoft : C.card, color: showStats ? C.accentText : C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}>
+        <button onClick={() => { setShowStats((v) => !v); loadAllItemsIfNeeded(); }} style={{ flex: "0 0 auto", padding: "0 16px", borderRadius: "12px", border: `1px solid ${showStats ? C.accent : C.border}`, background: showStats ? C.accentSoft : C.card, color: showStats ? C.accentText : C.label, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", gap: "6px" }}>
           <TrendingUp size={15} /> 분석 {showStats ? "닫기" : "보기"}
         </button>
       </div>
