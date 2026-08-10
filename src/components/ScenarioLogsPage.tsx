@@ -31,6 +31,22 @@ interface Props {
 
 type StatusFilter = "all" | "unreturned" | "returned";
 
+// 서버가 "몇 명째 처리 중"인지 실시간으로 알려주진 않기 때문에(응답이 한 번에 통째로 옴),
+// 5명을 기준으로 일정 간격마다 1명씩 채워지는 것처럼 흉내 낸다. 실제 응답이 오면
+// 그 즉시 5/5로 마무리된다 — 그 전까지는 4/5(80%)에서 멈춰 기다린다.
+function useFakeStepProgress(active: boolean, steps: number, intervalMs: number) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!active) { setCount(0); return; }
+    setCount(1);
+    const timer = window.setInterval(() => {
+      setCount((c) => (c < steps - 1 ? c + 1 : c));
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [active, steps, intervalMs]);
+  return count;
+}
+
 export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, isAdmin, showToast }: Props) {
   const C = {
     card: isLightMode ? "#ffffff" : "#161f30",
@@ -117,6 +133,12 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [whHasMore, setWhHasMore] = useState(true);
   const [whLoadingMore, setWhLoadingMore] = useState(false);
   const [whTotalPeople, setWhTotalPeople] = useState(0);
+
+  // 5명 기준 진행률 시뮬레이션 — 초기 로딩과 각 "더 보기"마다 따로 추적한다.
+  const initialProgress = useFakeStepProgress(loading && !loaded, PEOPLE_PAGE_SIZE, 550);
+  const unreturnedProgress = useFakeStepProgress(scopeLoadingMore.unreturned, PEOPLE_PAGE_SIZE, 550);
+  const returnedProgress = useFakeStepProgress(scopeLoadingMore.returned, PEOPLE_PAGE_SIZE, 550);
+  const whProgress = useFakeStepProgress(whLoadingMore, PEOPLE_PAGE_SIZE, 550);
 
   // 공구 탭을 처음 열 때 첫 5명치만 불러온다
   useEffect(() => {
@@ -554,8 +576,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     <div className="slp-root">
       <style>{`
         @keyframes slp-spin { to { transform: rotate(360deg); } }
-        @keyframes slp-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
-        .slp-progress-bar { animation: slp-progress 1.1s ease-in-out infinite; }
         @media (min-width: 900px) {
           .slp-root { zoom: 1.15; }
         }
@@ -591,9 +611,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           {loading && !loaded ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
               <Spinner size={30} />
-              <div>불러오는 중...</div>
-              <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
-                <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+              <div>불러오는 중... ({initialProgress}/{PEOPLE_PAGE_SIZE})</div>
+              <div style={{ width: "180px", height: "6px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+                <div style={{ width: `${(initialProgress / PEOPLE_PAGE_SIZE) * 100}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.4s ease" }} />
               </div>
             </div>
           ) : byItemGroups.length === 0 ? (
@@ -777,9 +797,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         whLogsLoading && !whLogsLoaded ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
             <Spinner size={30} />
-            <div>불러오는 중...</div>
-            <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
-              <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+            <div>불러오는 중... ({initialProgress}/{PEOPLE_PAGE_SIZE})</div>
+            <div style={{ width: "180px", height: "6px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+              <div style={{ width: `${(initialProgress / PEOPLE_PAGE_SIZE) * 100}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.4s ease" }} />
             </div>
           </div>
         ) : whFilteredLogs.length === 0 ? (
@@ -824,8 +844,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               </button>
             ) : null}
             {whLoadingMore ? (
-              <div style={{ height: "3px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
-                <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div style={{ flex: 1, height: "5px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+                  <div style={{ width: `${(whProgress / PEOPLE_PAGE_SIZE) * 100}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.4s ease" }} />
+                </div>
+                <span style={{ fontSize: "11px", color: C.label, fontWeight: 700, whiteSpace: "nowrap" }}>{whProgress}/{PEOPLE_PAGE_SIZE}명 확인 중...</span>
               </div>
             ) : null}
           </div>
@@ -833,9 +856,9 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       ) : loading && !loaded ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
           <Spinner size={30} />
-          <div>불러오는 중...</div>
-          <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
-            <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+          <div>불러오는 중... ({initialProgress}/{PEOPLE_PAGE_SIZE})</div>
+          <div style={{ width: "180px", height: "6px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+            <div style={{ width: `${(initialProgress / PEOPLE_PAGE_SIZE) * 100}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.4s ease" }} />
           </div>
         </div>
       ) : filtered.length === 0 ? (
@@ -900,8 +923,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   </button>
                 ) : null}
                 {scopeLoadingMore[scope] ? (
-                  <div style={{ height: "3px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
-                    <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ flex: 1, height: "5px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+                      <div style={{ width: `${((scope === "returned" ? returnedProgress : unreturnedProgress) / PEOPLE_PAGE_SIZE) * 100}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.4s ease" }} />
+                    </div>
+                    <span style={{ fontSize: "11px", color: C.label, fontWeight: 700, whiteSpace: "nowrap" }}>{scope === "returned" ? returnedProgress : unreturnedProgress}/{PEOPLE_PAGE_SIZE}명 확인 중...</span>
                   </div>
                 ) : null}
               </div>
