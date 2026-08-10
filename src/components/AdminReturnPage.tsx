@@ -147,11 +147,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   }, [category, processMode]);
 
   const activeSource = useMemo(() => {
-    // 모드는 더 이상 목록을 걸러내지 않는다 — "대여 확인"/"반납 처리"는 이제 화면을 볼 때
-    // 새로 담을 물품의 기본 동작을 정할 뿐이고, 실제 목록은 항상 이 분야의 미반납 전체를 보여준다.
-    // (그래야 대여 확인 화면에서도 이미 확인된 물품을 반납으로 처리할 수 있다)
-    return category === "warehouse" ? whItems : items;
-  }, [category, whItems, items]);
+    const base = category === "warehouse" ? whItems : items;
+    // 목록은 탭마다 서로 겹치지 않게 나눠 보여준다 (섞여 보이면 헷갈린다는 피드백을 반영).
+    // 공구 및 부품류는 "확인" 개념 자체가 없어서(대여 즉시 확정) 걸러내지 않는다.
+    if (category === "warehouse") return base;
+    return processMode === "대여" ? base.filter((it) => !it.pickedUp) : base.filter((it) => !!it.pickedUp);
+  }, [category, processMode, whItems, items]);
   const activeLoaded = category === "warehouse" ? whLoaded : loaded;
   const activeLoading = category === "warehouse" ? whLoading : loading;
   const reloadActive = (silent = false) => (category === "warehouse" ? loadWarehouse(silent) : load(silent));
@@ -982,7 +983,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
           <Undo2 size={19} style={{ color: C.accentText }} />
-          <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>대여 및 반납</h1>
+          <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>{processMode === "대여" ? "대여 확인" : "반납 처리"}</h1>
           {category === "warehouse" ? (
             <button
               onClick={openWhLend}
@@ -1020,7 +1021,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           })}
         </div>
         <div style={{ fontSize: "10.5px", color: C.label, marginBottom: "10px" }}>
-          새로 담는 물품의 기본값일 뿐입니다 — 이미 담긴 줄은 오른쪽 장바구니에서 따로 확인/반납을 바꿀 수 있고, 처리도 각자 따로 됩니다.
+          왼쪽 목록은 탭에 맞춰 미확인/확인된 물품만 따로 보여줍니다. 담은 뒤엔 오른쪽 장바구니에서 줄마다 확인/반납을 바꿀 수 있고, 처리도 각자 따로 됩니다.
         </div>
 
         {/* 분야 탭 — 반납 처리 방식이 달라 분리해서 다룬다. */}
@@ -1148,7 +1149,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         ) : borrowers.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
             <Check size={34} style={{ color: C.border, marginBottom: "8px" }} />
-            <div>미반납 물품이 없습니다.</div>
+            <div>{category === "scenario" && processMode === "대여" ? "확인할 대여 물품이 없습니다." : "미반납 물품이 없습니다."}</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -1172,7 +1173,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           </span>
                         ))}
                       </div>
-                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
+                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 {category === "scenario" && processMode === "대여" ? "확인 대기" : "미반납"}</div>
                     </div>
                     {category === "scenario" ? (
                     <button
@@ -1237,18 +1238,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
                                         <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
-                                        {category === "scenario" ? (
-                                          <span
-                                            title={it.pickedUp ? "관리자가 실물 확인을 마쳤습니다" : "아직 실물 확인 전입니다"}
-                                            style={{
-                                              flexShrink: 0, fontSize: "9.5px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
-                                              color: it.pickedUp ? C.success : C.label,
-                                              background: it.pickedUp ? C.successSoft : C.cardSub,
-                                            }}
-                                          >
-                                            {it.pickedUp ? "✓ 확인됨" : "미확인"}
-                                          </span>
-                                        ) : null}
                                         {(() => {
                                           const d = daysOverdue(it.borrowDate, it.shift);
                                           if (d === null) return null;
