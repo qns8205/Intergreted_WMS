@@ -90,6 +90,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   // 미반납/반납완료 각각 독립적으로 "몇 명치 받아왔는지"와 "더 있는지"를 추적한다.
   const [scopeOffsets, setScopeOffsets] = useState<Record<"unreturned" | "returned", number>>({ unreturned: 0, returned: 0 });
   const [scopeHasMore, setScopeHasMore] = useState<Record<"unreturned" | "returned", boolean>>({ unreturned: true, returned: true });
+  // 진행률 표시용 — 서버가 페이지마다 "전체 몇 명 중"을 같이 내려준다.
+  const [scopeTotalPeople, setScopeTotalPeople] = useState<Record<"unreturned" | "returned", number>>({ unreturned: 0, returned: 0 });
   const [scopeLoadingMore, setScopeLoadingMore] = useState<Record<"unreturned" | "returned", boolean>>({ unreturned: false, returned: false });
 
   const [viewMode, setViewMode] = useState<"log" | "byItem">("log");
@@ -114,6 +116,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [whOffset, setWhOffset] = useState(0);
   const [whHasMore, setWhHasMore] = useState(true);
   const [whLoadingMore, setWhLoadingMore] = useState(false);
+  const [whTotalPeople, setWhTotalPeople] = useState(0);
 
   // 공구 탭을 처음 열 때 첫 5명치만 불러온다
   useEffect(() => {
@@ -121,7 +124,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     if (!connected || !scriptUrl) { setWhLogsLoaded(true); return; }
     setWhLogsLoading(true);
     fetchWarehouseLogsPaged(scriptUrl, { peopleLimit: PEOPLE_PAGE_SIZE })
-      .then((page) => { setWhLogs(page.items); setWhOffset(PEOPLE_PAGE_SIZE); setWhHasMore(page.hasMore); setWhLogsLoaded(true); })
+      .then((page) => { setWhLogs(page.items); setWhOffset(PEOPLE_PAGE_SIZE); setWhHasMore(page.hasMore); setWhTotalPeople(page.totalPeople); setWhLogsLoaded(true); })
       .catch((e: any) => showToast(`공구 및 부품류 로그를 불러오지 못했습니다: ${e.message}`, "error"))
       .finally(() => setWhLogsLoading(false));
   }, [category, whLogsLoaded, whLogsLoading, connected, scriptUrl]);
@@ -138,6 +141,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       });
       setWhOffset((o) => o + PEOPLE_PAGE_SIZE);
       setWhHasMore(page.hasMore);
+      setWhTotalPeople(page.totalPeople);
     } catch (e: any) {
       showToast(`공구 및 부품류 로그를 더 불러오지 못했습니다: ${e.message}`, "warn");
     } finally {
@@ -185,6 +189,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         setLogs(sortLogs([...unreturnedPage.items, ...returnedPage.items]));
         setScopeOffsets({ unreturned: PEOPLE_PAGE_SIZE, returned: PEOPLE_PAGE_SIZE });
         setScopeHasMore({ unreturned: unreturnedPage.hasMore, returned: returnedPage.hasMore });
+        setScopeTotalPeople({ unreturned: unreturnedPage.totalPeople, returned: returnedPage.totalPeople });
         setAppVersion(ver);
         hasDataRef.current = unreturnedPage.items.length > 0 || returnedPage.items.length > 0;
         setLoaded(true);
@@ -220,6 +225,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       });
       setScopeOffsets((p) => ({ ...p, [scope]: offset + PEOPLE_PAGE_SIZE }));
       setScopeHasMore((p) => ({ ...p, [scope]: page.hasMore }));
+      setScopeTotalPeople((p) => ({ ...p, [scope]: page.totalPeople }));
     } catch (e: any) {
       showToast(`이력을 더 불러오지 못했습니다: ${e.message}`, "warn");
     } finally {
@@ -788,6 +794,16 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                 </div>
               );
             })}
+            {whTotalPeople > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: whHasMore ? "0" : undefined }}>
+                <div style={{ flex: 1, height: "5px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, Math.round((Math.min(whOffset, whTotalPeople) / whTotalPeople) * 100))}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.3s ease" }} />
+                </div>
+                <span style={{ fontSize: "11px", color: C.label, fontWeight: 700, whiteSpace: "nowrap" }}>
+                  {Math.min(whOffset, whTotalPeople)} / {whTotalPeople}명 ({Math.min(100, Math.round((Math.min(whOffset, whTotalPeople) / whTotalPeople) * 100))}%)
+                </span>
+              </div>
+            ) : null}
             {whHasMore ? (
               <button onClick={loadMoreWarehouse} disabled={whLoadingMore} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: whLoadingMore ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: whLoadingMore ? 0.7 : 1 }}>
                 {whLoadingMore ? "불러오는 중..." : "더 보기 (다음 5명)"}
@@ -840,11 +856,26 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           ))}
           {(() => {
             const scope = scenarioTab === "return" ? "returned" : "unreturned";
-            return scopeHasMore[scope] ? (
-              <button onClick={() => loadMoreScope(scope)} disabled={scopeLoadingMore[scope]} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: scopeLoadingMore[scope] ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: scopeLoadingMore[scope] ? 0.7 : 1 }}>
-                {scopeLoadingMore[scope] ? "불러오는 중..." : "더 보기 (다음 5명)"}
-              </button>
-            ) : null;
+            const shown = Math.min(scopeOffsets[scope], scopeTotalPeople[scope] || scopeOffsets[scope]);
+            const total = scopeTotalPeople[scope];
+            const pct = total > 0 ? Math.min(100, Math.round((shown / total) * 100)) : 0;
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {total > 0 ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <div style={{ flex: 1, height: "5px", borderRadius: "999px", background: C.border, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: C.accent, borderRadius: "999px", transition: "width 0.3s ease" }} />
+                    </div>
+                    <span style={{ fontSize: "11px", color: C.label, fontWeight: 700, whiteSpace: "nowrap" }}>{shown} / {total}명 ({pct}%)</span>
+                  </div>
+                ) : null}
+                {scopeHasMore[scope] ? (
+                  <button onClick={() => loadMoreScope(scope)} disabled={scopeLoadingMore[scope]} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: scopeLoadingMore[scope] ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: scopeLoadingMore[scope] ? 0.7 : 1 }}>
+                    {scopeLoadingMore[scope] ? "불러오는 중..." : "더 보기 (다음 5명)"}
+                  </button>
+                ) : null}
+              </div>
+            );
           })()}
         </div>
       )}
