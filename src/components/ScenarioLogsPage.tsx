@@ -554,6 +554,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     <div className="slp-root">
       <style>{`
         @keyframes slp-spin { to { transform: rotate(360deg); } }
+        @keyframes slp-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+        .slp-progress-bar { animation: slp-progress 1.1s ease-in-out infinite; }
         @media (min-width: 900px) {
           .slp-root { zoom: 1.15; }
         }
@@ -587,7 +589,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             현재 대여 중인 물품 <b style={{ color: C.accentText }}>{byItemGroups.length}종</b>
           </div>
           {loading && !loaded ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
+              <Spinner size={30} />
+              <div>불러오는 중...</div>
+              <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
+                <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+              </div>
+            </div>
           ) : byItemGroups.length === 0 ? (
             <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
           ) : (
@@ -767,7 +775,13 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       {/* 공구 및 부품류 로그 */}
       {category === "warehouse" ? (
         whLogsLoading && !whLogsLoaded ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
+            <Spinner size={30} />
+            <div>불러오는 중...</div>
+            <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
+              <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+            </div>
+          </div>
         ) : whFilteredLogs.length === 0 ? (
           <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
             <Check size={36} style={{ color: C.border, marginBottom: "8px" }} />
@@ -809,10 +823,21 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                 {whLoadingMore ? "불러오는 중..." : "더 보기 (다음 5명)"}
               </button>
             ) : null}
+            {whLoadingMore ? (
+              <div style={{ height: "3px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
+                <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+              </div>
+            ) : null}
           </div>
         )
       ) : loading && !loaded ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "14px", padding: "64px 0", color: C.label }}>
+          <Spinner size={30} />
+          <div>불러오는 중...</div>
+          <div style={{ width: "180px", height: "4px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
+            <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+          </div>
+        </div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 대여 기록이 없습니다.</div></div>
       ) : (
@@ -873,6 +898,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                   <button onClick={() => loadMoreScope(scope)} disabled={scopeLoadingMore[scope]} style={{ padding: "12px", borderRadius: "12px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: scopeLoadingMore[scope] ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: scopeLoadingMore[scope] ? 0.7 : 1 }}>
                     {scopeLoadingMore[scope] ? "불러오는 중..." : "더 보기 (다음 5명)"}
                   </button>
+                ) : null}
+                {scopeLoadingMore[scope] ? (
+                  <div style={{ height: "3px", borderRadius: "999px", background: C.border, overflow: "hidden", position: "relative" }}>
+                    <div className="slp-progress-bar" style={{ position: "absolute", inset: 0, width: "40%", background: C.accent, borderRadius: "999px" }} />
+                  </div>
                 ) : null}
               </div>
             );
