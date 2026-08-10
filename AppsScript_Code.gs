@@ -1877,7 +1877,7 @@ function getFormHtml(inventory) {
 //  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
 //  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
 //  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "API Key";
+var SLACK_BOT_TOKEN = "Slack App API Key";
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
@@ -5087,7 +5087,7 @@ function getShiftType_(borrowDateStr) {
 }
 
 function getSeatOccupancy_(ss, floor, unit, shift) {
-  var allLogs = getScenarioAllLogs_(4); // 반납 완료 항목도 포함해서 조회 (아래에서 3일로 다시 좁히므로 4일이면 충분) (미반납만 보던 기존 방식과 달리 반납 여부를 실제로 표시하기 위함)
+  var allLogs = getScenarioAllLogs_(1); // 반납 완료 항목도 포함해서 조회 (아래에서 24시간으로 다시 좁히므로 1일이면 충분) (미반납만 보던 기존 방식과 달리 반납 여부를 실제로 표시하기 위함)
   var batchMap = {};
   var batchOrder = [];
 
@@ -5096,9 +5096,8 @@ function getSeatOccupancy_(ss, floor, unit, shift) {
   var cleanTargetUnit = targetUnit.replace(/\s*\(.*?\)\s*/g, "").trim();
   var reqShift = String(shift || "").trim().toLowerCase();
 
-  // 좌석 배치도는 최근 3일치만 보여준다 (오래된 기록까지 다 뒤지지 않도록).
-  var cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - 3);
+  // 좌석 배치도는 최근 24시간 안의 기록만 보여준다 (오래된 기록까지 다 뒤지지 않도록).
+  var cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   for (var i = 0; i < allLogs.length; i++) {
     var item = allLogs[i];
