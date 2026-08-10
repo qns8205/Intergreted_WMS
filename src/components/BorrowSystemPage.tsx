@@ -144,7 +144,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [overdueReminderModal, setOverdueReminderModal] = useState<{ id: string; name: string; quantity: number; borrowDate: string; hoursAgo: number }[] | null>(null); // 48시간 넘게 미반납 중인 물품 확인창
   // 깨질 위험 / 화재 위험 / 특정 업체 request용으로 표시된 물품이 장바구니에 있을 때,
   // 마지막(확인) 단계로 넘어가기 직전 한 번 더 확인시키는 팝업.
-  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string }[]; proceedMode: Mode } | null>(null);
+  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string; personalOwner?: string }[]; proceedMode: Mode } | null>(null);
 
   // 마지막 확인 단계(targetMode)로 넘어가기 전에 위험/request 물품이 있는지 검사하고,
   // 있으면 모달을 띄워 확인을 받은 뒤에만 진행한다.
