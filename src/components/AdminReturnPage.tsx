@@ -33,6 +33,9 @@ interface ReturnCartLine {
   location: string;
   max: number;                       // 이 행에서 반납 가능한 최대 수량
   qty: number;                       // 담은 수량
+  // 시나리오/일반 물품 전용: 이 줄을 "대여 확인"으로 처리할지 "반납"으로 처리할지.
+  // 담을 때 지금 보고 있는 화면(대여 확인/반납 처리)을 기본값으로 쓰지만, 줄마다 따로 바꿀 수 있다.
+  action?: "확인" | "반납";
   // 공구 및 부품류 전용: 재고로 돌려놓을지(반납), 다 써서 재고에서 빼버릴지(소모).
   // 시나리오/일반 물품에는 해당 개념이 없어 항상 undefined.
   disposition?: "반납" | "소모";
@@ -133,26 +136,22 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (category === "warehouse" && !whLoaded && !whLoading) loadWarehouse();
   }, [category, whLoaded, whLoading, loadWarehouse]);
 
-  // 분야/모드가 바뀌면 담아둔 내용과 선택을 비운다 (처리 방식이 달라 섞으면 안 된다)
+  // 대여/반납 모드나 분야를 바꾸면 검색어·선택은 초기화하지만, 장바구니는 그대로 둔다.
+  // (반납 처리 중에도 다른 물품을 대여 확인하거나 반납할 수 있어야 하므로, 모드/분야 전환이
+  //  더 이상 장바구니를 막거나 비우지 않는다 — 처리 자체는 제출할 때 줄마다 따로 나뉜다)
   useEffect(() => {
-    setCart([]);
-    addHistoryRef.current = [];
+    setSearch("");
     setSelectedBorrower(null);
     setCursor(0);
     setPreview(null);
   }, [category, processMode]);
 
-  // 대여 모드는 공구 및 부품류를 다루지 않으므로, 대여 모드로 들어가면 분야를 시나리오로 고정한다.
-  useEffect(() => {
-    if (processMode === "대여" && category === "warehouse") setCategory("scenario");
-  }, [processMode, category]);
-
   const activeSource = useMemo(() => {
-    const base = category === "warehouse" ? whItems : items;
-    // 대여 모드: 이미 대여로 기록된 건 중, 아직 실물 확인(체크)이 안 된 것만 보여준다.
-    if (processMode === "대여") return base.filter((it) => !it.pickedUp);
-    return base;
-  }, [category, processMode, whItems, items]);
+    // 모드는 더 이상 목록을 걸러내지 않는다 — "대여 확인"/"반납 처리"는 이제 화면을 볼 때
+    // 새로 담을 물품의 기본 동작을 정할 뿐이고, 실제 목록은 항상 이 분야의 미반납 전체를 보여준다.
+    // (그래야 대여 확인 화면에서도 이미 확인된 물품을 반납으로 처리할 수 있다)
+    return category === "warehouse" ? whItems : items;
+  }, [category, whItems, items]);
   const activeLoaded = category === "warehouse" ? whLoaded : loaded;
   const activeLoading = category === "warehouse" ? whLoading : loading;
   const reloadActive = (silent = false) => (category === "warehouse" ? loadWarehouse(silent) : load(silent));
@@ -571,6 +570,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           location: it.location || "",
           max,
           qty: 1,
+          // 지금 보고 있는 화면(대여 확인/반납 처리)을 기본 동작으로 삼는다. 나중에 장바구니에서 줄마다 바꿀 수 있다.
+          action: (it.sheetType as string) !== "warehouse" ? processMode : undefined,
           disposition: (it.sheetType as string) === "warehouse" ? "반납" : undefined,
         }];
       }
@@ -578,7 +579,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       return prev.map((c, i) => (i === idx ? { ...c, qty: c.qty + 1 } : c));
     });
     addHistoryRef.current.push(key);
-  }, []);
+  }, [processMode]);
 
   // C: 마지막으로 담은 한 개를 되돌린다
   const undoOne = useCallback(() => {
@@ -657,13 +658,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   // 최신 핸들러를 참조로 들고 있어야 키 이벤트가 오래된 값을 잡지 않는다
   function toggleMode() {
-    if (cart.length > 0) { showToast("장바구니를 먼저 비우거나 처리한 뒤 전환해주세요.", "warn"); return; }
     setProcessMode((m) => (m === "대여" ? "반납" : "대여"));
   }
 
   function toggleCategory() {
-    if (processMode !== "반납") { showToast("대여 확인 모드는 시나리오 물품만 다룹니다.", "info"); return; }
-    if (cart.length > 0) { showToast("장바구니를 먼저 비우거나 처리한 뒤 전환해주세요.", "warn"); return; }
     setCategory((c) => (c === "scenario" ? "warehouse" : "scenario"));
   }
 
@@ -768,148 +766,197 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     );
   }
 
+  // 시나리오/일반 물품 한정: 이 줄을 "확인" 처리할지 "반납" 처리할지 전환
+  function toggleAction(key: string) {
+    setCart((prev) =>
+      prev.map((c) => (c.key === key ? { ...c, action: c.action === "확인" ? "반납" : "확인" } : c))
+    );
+  }
+
   const submitReturnRef = useRef<() => Promise<void>>();
 
   async function submitReturn() {
-    if (!cart.length) { showToast(processMode === "대여" ? "확인할 물품을 담아주세요." : "반납할 물품을 담아주세요.", "warn"); return; }
+    if (!cart.length) { showToast("담긴 물품이 없습니다.", "warn"); return; }
 
-    // 대여 모드: 반납과 달리 재고/수량 변화가 없다. "실물을 확인했다"는 시각만
-    // SID대여는 M열, 일반대여는 N열에 남긴다. (담은 줄 기준으로 행 단위 확인 — 부분 수량 개념 없음)
-    if (processMode === "대여") {
-      if (!window.confirm(`${cart.length}종 · 총 ${cartTotal}개를 대여 확인 처리할까요?`)) return;
-      setSubmitting(true);
-      try {
-        const uniqueRows = Array.from(
-          new Map<string, { sheetType: "scenario" | "general"; rowIndex: number }>(
-            cart.map((c) => [c.key, { sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex }])
-          ).values()
-        );
-        const res = await postConfirmPickup(scriptUrl, uniqueRows);
-        if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
-        if (!res.success) { showToast(res.message || "대여 확인 처리 실패", "error"); return; }
-        showToast(res.message || `${cart.length}종을 대여 확인 처리했습니다.`, "ok");
-        // 확인된 항목은 대여 모드 목록에서 즉시 사라지도록 로컬에서도 반영한다.
-        const doneKeys = new Set(cart.map((c) => c.key));
-        setItems((prev) => prev.map((it) => (doneKeys.has(`${it.sheetType}:${it.rowIndex}`) ? { ...it, pickedUp: new Date().toISOString() } : it)));
-        setCart([]);
-        addHistoryRef.current = [];
-        reloadActive(true);
-      } catch (e: any) {
-        showToast(`대여 확인 처리 실패: ${e.message}`, "error");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
+    // 장바구니를 세 그룹으로 나눈다 — 각각 다른 API로, 서로 독립적으로 처리된다.
+    // 하나가 실패해도 다른 그룹 처리는 그대로 진행되고, 실패한 그룹의 줄만 장바구니에 남는다.
+    const pickupLines = cart.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
+    const returnLines = cart.filter((c) => c.sheetType !== "warehouse" && c.action === "반납");
+    const warehouseLines = cart.filter((c) => c.sheetType === "warehouse");
+
+    const parts: string[] = [];
+    if (pickupLines.length) parts.push(`대여 확인 ${pickupLines.length}종`);
+    if (returnLines.length) parts.push(`반납 ${returnLines.length}종`);
+    if (warehouseLines.length) {
+      const consumeN = warehouseLines.filter((c) => c.disposition === "소모").length;
+      parts.push(consumeN > 0 ? `공구 ${warehouseLines.length}종 (그중 소모 ${consumeN}종)` : `공구 반납 ${warehouseLines.length}종`);
     }
+    if (!window.confirm(`${parts.join(" · ")}을(를) 처리할까요?`)) return;
 
-    const consumeTotal = cart.filter((c) => c.disposition === "소모").reduce((n, c) => n + c.qty, 0);
-    const confirmMsg = consumeTotal > 0
-      ? `${cart.length}종 · 총 ${cartTotal}개를 처리할까요? (그중 소모 ${consumeTotal}개는 재고로 돌아가지 않습니다)`
-      : `${cart.length}종 · 총 ${cartTotal}개를 반납 처리할까요?`;
-    if (!window.confirm(confirmMsg)) return;
     setSubmitting(true);
+    const doneKeys = new Set<string>(); // 성공적으로 처리돼 장바구니에서 지울 줄들
+    let anyFailed = false;
+
     try {
-      let res: { success: boolean; message?: string };
-      if (category === "warehouse") {
-        // 공구 및 부품류는 반납 로그를 쌓는 방식이라 별도 API를 쓴다.
-        // 줄마다 disposition("반납"/"소모")을 따로 지정할 수 있어, 파손·소진된 물품은
-        // 재고로 돌아가지 않도록 "소모"로 보낼 수 있다.
-        const bulk = await postWarehouseRentBulk(
-          scriptUrl,
-          cart.map((c) => ({
-            type: (c.disposition === "소모" ? "소모" : "반납") as "반납" | "소모",
-            location: c.location,
-            name: c.name || c.itemLabel,
-            qty: c.qty,
-            user: c.borrower,
-            note: c.disposition === "소모" ? "관리자 반납 중 소모 처리" : "관리자 반납 처리",
-          }))
-        );
-        const doneMsg = consumeTotal > 0
-          ? `${cartTotal}개를 처리했습니다. (소모 ${consumeTotal}개 포함)`
-          : `${cartTotal}개를 반납 처리했습니다.`;
-        res = { success: bulk.success, message: bulk.success ? doneMsg : (bulk.error || "반납 처리 실패") };
-      } else {
-        const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
-        res = await postProcessReturn(
-          scriptUrl,
-          cart.map((c) => ({ sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex, quantity: c.qty })),
-          ver
-        );
-      }
-      if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
-      if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); return; }
-      // 반납 후 재대여: 같은 사람·같은 물품을 새 대여일로 다시 기록한다
-      if (reborrowAfter) {
+      // 1) 대여 확인 — 재고/수량 변화 없이 "실물 확인" 시각만 남긴다.
+      if (pickupLines.length) {
         try {
-          const byBorrower: Record<string, typeof cart> = {};
-          cart.forEach((c) => { (byBorrower[c.borrower] ||= []).push(c); });
-
-          for (const who of Object.keys(byBorrower)) {
-            const lines = byBorrower[who];
-            if (category === "warehouse") {
-              await postWarehouseRentBulk(
-                scriptUrl,
-                lines.map((c) => ({
-                  type: "대여" as const,
-                  location: c.location,
-                  name: c.name || c.itemLabel,
-                  qty: c.qty,
-                  user: who,
-                  note: "반납 후 재대여 (대여일 갱신)",
-                }))
-              );
-            } else {
-              // 원래 대여 기록에서 이메일·위치를 가져와 Slack 태깅과 좌석 정보를 유지한다
-              const src = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === lines[0].key);
-              const ver2 = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
-              await postBorrow(scriptUrl, [{
-                itemType: "general",
-                borrowerName: who,
-                affiliation: "",
-                employeeId: "",
-                knownEmail: src?.email || undefined,
-                borrowDate: nowString(),
-                borrowPurpose: "반납 후 재대여 (대여일 갱신)",
-                generalOption: "재대여",
-                borrowedItems: lines.map((c) => {
-                  const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
-                  // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
-                  // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
-                  return { id: item?.itemId || "", name: pureItemName(item?.itemLabel), quantity: c.qty };
-                }).filter((x) => x.id),
-                floor: src?.floor,
-                unit: src?.unit,
-              }], ver2);
-            }
+          const uniqueRows = Array.from(
+            new Map<string, { sheetType: "scenario" | "general"; rowIndex: number }>(
+              pickupLines.map((c) => [c.key, { sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex }])
+            ).values()
+          );
+          const res = await postConfirmPickup(scriptUrl, uniqueRows);
+          if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+          if (!res.success) { showToast(res.message || "대여 확인 처리 실패", "error"); anyFailed = true; }
+          else {
+            showToast(res.message || `${pickupLines.length}종을 대여 확인 처리했습니다.`, "ok");
+            pickupLines.forEach((c) => doneKeys.add(c.key));
+            const pickedKeys = new Set(pickupLines.map((c) => c.key));
+            setItems((prev) => prev.map((it) => (pickedKeys.has(`${it.sheetType}:${it.rowIndex}`) ? { ...it, pickedUp: new Date().toISOString() } : it)));
           }
-          showToast(`${cartTotal}개를 반납 후 다시 대여했습니다. (대여일 갱신)`, "ok");
-        } catch (reErr: any) {
-          showToast(`반납은 완료했지만 재대여에 실패했습니다: ${reErr.message}`, "warn");
+        } catch (e: any) {
+          showToast(`대여 확인 처리 실패: ${e.message}`, "error");
+          anyFailed = true;
         }
-      } else {
-        showToast(res.message || `${cartTotal}개를 반납 처리했습니다.`, "ok");
       }
 
-      // 서버 재조회를 기다리지 않고 화면에서 먼저 반영한다 (처리 직후 바로 다음 작업이 가능하도록).
-      const done = new Map(cart.map((c) => [c.key, c.qty]));
-      const applyLocal = category === "warehouse" ? setWhItems : setItems;
-      if (!reborrowAfter) applyLocal((prev) =>
-        prev
-          .map((it) => {
-            const q = done.get(`${it.sheetType}:${it.rowIndex}`);
-            if (q === undefined) return it;
-            const left = (it.quantity || 1) - Number(q);
-            return left > 0 ? { ...it, quantity: left } : null;
-          })
-          .filter(Boolean) as UnreturnedItem[]
-      );
-      setCart([]);
-      addHistoryRef.current = [];
-      setReborrowAfter(false); // 다음 처리에 실수로 이어지지 않도록 해제
+      // 2) 시나리오/일반 반납
+      if (returnLines.length) {
+        try {
+          const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+          const res = await postProcessReturn(
+            scriptUrl,
+            returnLines.map((c) => ({ sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex, quantity: c.qty })),
+            ver
+          );
+          if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
+          if (!res.success) { showToast(res.message || "반납 처리 실패", "error"); anyFailed = true; }
+          else {
+            showToast(res.message || `${returnLines.reduce((n, c) => n + c.qty, 0)}개를 반납 처리했습니다.`, "ok");
+            returnLines.forEach((c) => doneKeys.add(c.key));
+            const done = new Map(returnLines.map((c) => [c.key, c.qty]));
+            setItems((prev) =>
+              prev
+                .map((it) => {
+                  const q = done.get(`${it.sheetType}:${it.rowIndex}`);
+                  if (q === undefined) return it;
+                  const left = (it.quantity || 1) - Number(q);
+                  return left > 0 ? { ...it, quantity: left } : null;
+                })
+                .filter(Boolean) as UnreturnedItem[]
+            );
+          }
+        } catch (e: any) {
+          showToast(`반납 처리 실패: ${e.message}`, "error");
+          anyFailed = true;
+        }
+      }
+
+      // 3) 공구 및 부품류 (반납/소모)
+      if (warehouseLines.length) {
+        try {
+          const consumeTotal = warehouseLines.filter((c) => c.disposition === "소모").reduce((n, c) => n + c.qty, 0);
+          const bulk = await postWarehouseRentBulk(
+            scriptUrl,
+            warehouseLines.map((c) => ({
+              type: (c.disposition === "소모" ? "소모" : "반납") as "반납" | "소모",
+              location: c.location,
+              name: c.name || c.itemLabel,
+              qty: c.qty,
+              user: c.borrower,
+              note: c.disposition === "소모" ? "관리자 반납 중 소모 처리" : "관리자 반납 처리",
+            }))
+          );
+          if (!bulk.success) { showToast(bulk.error || "공구 반납 처리 실패", "error"); anyFailed = true; }
+          else {
+            const whTotal = warehouseLines.reduce((n, c) => n + c.qty, 0);
+            showToast(consumeTotal > 0 ? `${whTotal}개를 처리했습니다. (소모 ${consumeTotal}개 포함)` : `${whTotal}개를 반납 처리했습니다.`, "ok");
+            warehouseLines.forEach((c) => doneKeys.add(c.key));
+            const done = new Map(warehouseLines.map((c) => [c.key, c.qty]));
+            setWhItems((prev) =>
+              prev
+                .map((it) => {
+                  const q = done.get(`${it.sheetType}:${it.rowIndex}`);
+                  if (q === undefined) return it;
+                  const left = (it.quantity || 1) - Number(q);
+                  return left > 0 ? { ...it, quantity: left } : null;
+                })
+                .filter(Boolean) as UnreturnedItem[]
+            );
+          }
+        } catch (e: any) {
+          showToast(`공구 반납 처리 실패: ${e.message}`, "error");
+          anyFailed = true;
+        }
+      }
+
+      // 반납 후 재대여: "반납"으로 처리된 줄(공구는 소모 제외)만 대상으로 한다.
+      // 대여 확인 줄은 이미 대여 중이던 물품이라 재대여 대상이 아니다.
+      if (reborrowAfter) {
+        const reborrowLines = [
+          ...returnLines.filter((c) => doneKeys.has(c.key)),
+          ...warehouseLines.filter((c) => doneKeys.has(c.key) && c.disposition !== "소모"),
+        ];
+        if (reborrowLines.length) {
+          try {
+            const byBorrower: Record<string, typeof cart> = {};
+            reborrowLines.forEach((c) => { (byBorrower[c.borrower] ||= []).push(c); });
+
+            for (const who of Object.keys(byBorrower)) {
+              const lines = byBorrower[who];
+              const whPart = lines.filter((c) => c.sheetType === "warehouse");
+              const scenarioPart = lines.filter((c) => c.sheetType !== "warehouse");
+
+              if (whPart.length) {
+                await postWarehouseRentBulk(
+                  scriptUrl,
+                  whPart.map((c) => ({
+                    type: "대여" as const,
+                    location: c.location,
+                    name: c.name || c.itemLabel,
+                    qty: c.qty,
+                    user: who,
+                    note: "반납 후 재대여 (대여일 갱신)",
+                  }))
+                );
+              }
+              if (scenarioPart.length) {
+                // 원래 대여 기록에서 이메일·위치를 가져와 Slack 태깅과 좌석 정보를 유지한다
+                const src = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === scenarioPart[0].key);
+                const ver2 = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+                await postBorrow(scriptUrl, [{
+                  itemType: "general",
+                  borrowerName: who,
+                  affiliation: "",
+                  employeeId: "",
+                  knownEmail: src?.email || undefined,
+                  borrowDate: nowString(),
+                  borrowPurpose: "반납 후 재대여 (대여일 갱신)",
+                  generalOption: "재대여",
+                  borrowedItems: scenarioPart.map((c) => {
+                    const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
+                    // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
+                    // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
+                    return { id: item?.itemId || "", name: pureItemName(item?.itemLabel), quantity: c.qty };
+                  }).filter((x) => x.id),
+                  floor: src?.floor,
+                  unit: src?.unit,
+                }], ver2);
+              }
+            }
+            showToast(`${reborrowLines.reduce((n, c) => n + c.qty, 0)}개를 반납 후 다시 대여했습니다. (대여일 갱신)`, "ok");
+          } catch (reErr: any) {
+            showToast(`반납은 완료했지만 재대여에 실패했습니다: ${reErr.message}`, "warn");
+          }
+        }
+      }
+
+      // 처리에 성공한 줄만 장바구니에서 지운다. 실패한 그룹은 남아서 다시 시도할 수 있다.
+      setCart((prev) => prev.filter((c) => !doneKeys.has(c.key)));
+      addHistoryRef.current = addHistoryRef.current.filter((k) => !doneKeys.has(k));
+      if (!anyFailed) setReborrowAfter(false); // 전부 성공했을 때만 해제 (실패분 재시도 시 유지)
       reloadActive(true); // 정합성은 백그라운드로 맞춘다
-    } catch (e: any) {
-      showToast(`반납 처리 실패: ${e.message}`, "error");
     } finally {
       setSubmitting(false);
     }
@@ -935,8 +982,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       <div style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
           <Undo2 size={19} style={{ color: C.accentText }} />
-          <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>{processMode === "대여" ? "대여 확인" : "반납 처리"}</h1>
-          {category === "warehouse" && processMode === "반납" ? (
+          <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, flex: 1 }}>대여 및 반납</h1>
+          {category === "warehouse" ? (
             <button
               onClick={openWhLend}
               style={{ ...inputStyle, cursor: "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 800, color: "#fff", background: C.accent, border: `1px solid ${C.accent}` }}
@@ -950,14 +997,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </button>
         </div>
 
-        {/* 대여 확인 ↔ 반납 처리 전환. 같은 장바구니를 그대로 쓰고 어느 처리를 할지만 바꾼다. */}
-        <div style={{ display: "flex", gap: "6px", marginBottom: "10px" }}>
+        {/* 새로 담을 물품의 기본 처리(확인/반납)를 고른다. 장바구니에 이미 담긴 줄은 안 바뀌고,
+            줄마다 따로 확인/반납을 바꿀 수도 있다 — 그래서 전환해도 장바구니를 비우지 않는다. */}
+        <div style={{ display: "flex", gap: "6px", marginBottom: "6px" }}>
           {([["대여", "📦 대여 확인"], ["반납", "↩️ 반납 처리"]] as const).map(([v, label]) => {
             const on = processMode === v;
             return (
               <button
                 key={v}
-                onClick={() => { if (cart.length > 0) { showToast("장바구니를 먼저 비우거나 처리한 뒤 전환해주세요.", "warn"); return; } setProcessMode(v); }}
+                onClick={() => setProcessMode(v)}
                 style={{
                   flex: 1, padding: "10px", borderRadius: "11px", cursor: "pointer",
                   fontSize: "13px", fontWeight: 800,
@@ -971,9 +1019,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             );
           })}
         </div>
+        <div style={{ fontSize: "10.5px", color: C.label, marginBottom: "10px" }}>
+          새로 담는 물품의 기본값일 뿐입니다 — 이미 담긴 줄은 오른쪽 장바구니에서 따로 확인/반납을 바꿀 수 있고, 처리도 각자 따로 됩니다.
+        </div>
 
-        {/* 분야 탭 — 반납 처리 방식이 달라 분리해서 다룬다. 대여 확인은 시나리오·일반 대여만 해당한다. */}
-        {processMode === "반납" ? (
+        {/* 분야 탭 — 반납 처리 방식이 달라 분리해서 다룬다. */}
         <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
           {([["scenario", "🧩 시나리오 물품"], ["warehouse", "🔧 공구 및 부품류"]] as const).map(([v, label]) => {
             const on = category === v;
@@ -994,7 +1044,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             );
           })}
         </div>
-        ) : null}
 
         <div style={{ position: "relative", marginBottom: "12px" }}>
           <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
@@ -1008,13 +1057,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
         <div style={{ fontSize: "11.5px", color: C.label, marginBottom: "10px", lineHeight: 1.6 }}>
           {category === "scenario" ? <><b style={{ color: C.accentText }}>우클릭</b> 다른 물품으로 교체 · </> : null}<b style={{ color: C.accentText }}>A</b> {category === "scenario" ? "사진 확인 → 한 번 더 눌러 담기" : "한 개 담기"} · <b style={{ color: C.accentText }}>P</b> 다음 물품 ·{" "}
-          <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> {processMode === "대여" ? "대여 확인" : "반납 완료"} ·{" "}
-          <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제) · <b style={{ color: C.accentText }}>R</b> {processMode === "대여" ? "반납 처리로 전환" : "대여 확인으로 전환"}
-          {processMode === "반납" ? <> · <b style={{ color: C.accentText }}>T</b> {category === "scenario" ? "공구 및 부품류로 전환" : "시나리오 물품으로 전환"}</> : null}
+          <b style={{ color: C.accentText }}>O</b> 이전 물품 · <b style={{ color: C.accentText }}>B</b> 장바구니 처리 (줄마다 확인/반납 따로) ·{" "}
+          <b style={{ color: C.accentText }}>C</b> 하나 되돌리기 (꾹 누르면 전체 해제) · <b style={{ color: C.accentText }}>R</b> 기본값 대여 확인 ↔ 반납 전환 · <b style={{ color: C.accentText }}>T</b> {category === "scenario" ? "공구 및 부품류로 전환" : "시나리오 물품으로 전환"}
         </div>
 
         {/* 연체 예외로 등록된 사람 */}
-        {processMode === "반납" && Object.keys(exempt).length > 0 ? (
+        {Object.keys(exempt).length > 0 ? (
           <div style={{ marginBottom: "12px", border: `1px solid ${C.border}`, background: C.cardSub, borderRadius: "12px", padding: "10px 13px" }}>
             <div style={{ fontSize: "11.5px", fontWeight: 800, color: C.label, marginBottom: "7px" }}>
               연체 예외 {Object.keys(exempt).length}명 <span style={{ fontWeight: 500 }}>(연체 목록·DM 대상에서 제외)</span>
@@ -1041,8 +1089,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </div>
         ) : null}
 
-        {/* 반납이 늦은 사람: 7일 이상 / 2일 이상 (대여 확인 모드에는 해당 없음) */}
-        {processMode === "반납" && (overdue.severe.length > 0 || overdue.mild.length > 0) ? (
+        {/* 반납이 늦은 사람: 7일 이상 / 2일 이상 */}
+        {(overdue.severe.length > 0 || overdue.mild.length > 0) ? (
           <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
             {([
               { list: overdue.severe, title: `7일 이상 기한 초과`, tone: C.error, toneSoft: C.errorSoft, note: "10종류 제한 페널티 대상" },
@@ -1100,7 +1148,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         ) : borrowers.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
             <Check size={34} style={{ color: C.border, marginBottom: "8px" }} />
-            <div>{processMode === "대여" ? "확인할 대여 물품이 없습니다." : "미반납 물품이 없습니다."}</div>
+            <div>미반납 물품이 없습니다.</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -1124,7 +1172,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           </span>
                         ))}
                       </div>
-                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 {processMode === "대여" ? "확인 대기" : "미반납"}</div>
+                      <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>{g.items.length}종 · {g.qty}개 미반납</div>
                     </div>
                     {category === "scenario" ? (
                     <button
@@ -1189,6 +1237,18 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
                                         <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                        {category === "scenario" ? (
+                                          <span
+                                            title={it.pickedUp ? "관리자가 실물 확인을 마쳤습니다" : "아직 실물 확인 전입니다"}
+                                            style={{
+                                              flexShrink: 0, fontSize: "9.5px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px",
+                                              color: it.pickedUp ? C.success : C.label,
+                                              background: it.pickedUp ? C.successSoft : C.cardSub,
+                                            }}
+                                          >
+                                            {it.pickedUp ? "✓ 확인됨" : "미확인"}
+                                          </span>
+                                        ) : null}
                                         {(() => {
                                           const d = daysOverdue(it.borrowDate, it.shift);
                                           if (d === null) return null;
@@ -1598,7 +1658,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}` }}>
           <Undo2 size={17} style={{ color: C.accentText }} />
           <span style={{ fontSize: "15px", fontWeight: 800, flex: 1 }}>
-            {processMode === "대여" ? "대여 확인 장바구니" : "반납 장바구니"} <span style={{ color: C.accentText }}>{cart.length}종 · {cartTotal}개</span>
+            처리 장바구니 <span style={{ color: C.accentText }}>{cart.length}종 · {cartTotal}개</span>
           </span>
           {cHeld ? (
             <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.error, background: C.errorSoft, borderRadius: "999px", padding: "3px 10px" }}>
@@ -1649,7 +1709,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                     >
                       {c.disposition === "소모" ? "🔥 소모" : "반납"}
                     </button>
-                  ) : null}
+                  ) : (
+                    <button
+                      onClick={() => toggleAction(c.key)}
+                      title="이 줄만 대여 확인 / 반납 처리로 전환"
+                      style={{
+                        flexShrink: 0, padding: "5px 9px", borderRadius: "7px", cursor: "pointer",
+                        border: `1px solid ${c.action === "반납" ? C.success : C.accent}`,
+                        background: c.action === "반납" ? C.successSoft : C.accentSoft,
+                        color: c.action === "반납" ? C.success : C.accentText,
+                        fontSize: "11px", fontWeight: 800, whiteSpace: "nowrap",
+                      }}
+                    >
+                      {c.action === "반납" ? "↩️ 반납" : "📦 확인"}
+                    </button>
+                  )}
                   <button onClick={() => changeQty(c.key, -1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>−</button>
                   <span style={{ minWidth: "34px", textAlign: "center", fontSize: "13px", fontWeight: 800 }}>{c.qty}<span style={{ fontSize: "10.5px", color: C.label, fontWeight: 600 }}>/{c.max}</span></span>
                   <button onClick={() => changeQty(c.key, 1)} disabled={c.qty >= c.max} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: c.qty >= c.max ? C.label : C.text, cursor: c.qty >= c.max ? "not-allowed" : "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>+</button>
@@ -1663,7 +1737,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         </div>
 
         <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}` }}>
-          {processMode === "반납" ? (
+          {cart.some((c) => c.sheetType === "warehouse" || c.action === "반납") ? (
           <label
             style={{
               display: "flex", alignItems: "center", gap: "9px", padding: "10px 12px", marginBottom: "10px",
@@ -1678,7 +1752,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 반납 후 재대여 (대여일 갱신)
               </span>
               <span style={{ display: "block", fontSize: "10.5px", color: C.label, marginTop: "2px", lineHeight: 1.5 }}>
-                실물은 그대로 두고 대여 기록만 오늘로 새로 남깁니다.
+                반납으로 표시된 줄만 적용됩니다. 실물은 그대로 두고 대여 기록만 오늘로 새로 남깁니다.
               </span>
             </span>
           </label>
@@ -1698,11 +1772,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             {submitting ? (
               <>
                 <RotateCcw size={15} className="ar-spin" />
-                {processMode === "대여" ? "대여 확인 처리 중..." : "반납 처리 중..."}
+                처리 중...
               </>
-            ) : processMode === "대여"
-              ? `대여 확인하기 (${cartTotal}개) · B`
-              : reborrowAfter ? `반납 후 재대여 (${cartTotal}개) · B` : `반납 처리하기 (${cartTotal}개) · B`}
+            ) : `장바구니 처리하기 (${cartTotal}개) · B`}
           </button>
         </div>
       </div>
