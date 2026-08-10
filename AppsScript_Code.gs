@@ -1877,7 +1877,7 @@ function getFormHtml(inventory) {
 //  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
 //  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
 //  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "Slack App API Key";
+var SLACK_BOT_TOKEN = "API Key";
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
@@ -2031,7 +2031,7 @@ function getObjectItems() {
   if (lastRow < 2) return [];
 
   var lastCol = sheet.getLastColumn();
-  var colsToRead = Math.min(lastCol, 15); // O열(request 대상)까지 읽는다
+  var colsToRead = Math.min(lastCol, 16); // P열(개인 물품 소유자)까지 읽는다
   if (colsToRead < 1) return [];
 
   var data = sheet.getRange(2, 1, lastRow - 1, colsToRead).getValues();
@@ -2060,9 +2060,11 @@ function getObjectItems() {
       excludeFromRanking = String(row[9] || "").trim().toUpperCase() === "Y";
     }
     // M열(12): 깨질 위험 / N열(13): 화재 위험 / O열(14): 특정 업체 request용 물품(업체명, 빈 값이면 해당 없음)
+    // P열(15): 개인 물품 여부(소유자명, 빈 값이면 개인 물품 아님)
     var fragile = colsToRead > 12 ? String(row[12] || "").trim().toUpperCase() === "Y" : false;
     var fireRisk = colsToRead > 13 ? String(row[13] || "").trim().toUpperCase() === "Y" : false;
     var requestFor = colsToRead > 14 ? (String(row[14] || "").trim() || undefined) : undefined;
+    var personalOwner = colsToRead > 15 ? (String(row[15] || "").trim() || undefined) : undefined;
 
     result.push({
       id: id,
@@ -2077,7 +2079,8 @@ function getObjectItems() {
       excludeFromRanking: excludeFromRanking,
       fragile: fragile,
       fireRisk: fireRisk,
-      requestFor: requestFor
+      requestFor: requestFor,
+      personalOwner: personalOwner
     });
   }
   // 시트에 수동으로 유지되는 '대여' 카운터 대신, 실제 미반납 로그에서 방금 집계한
@@ -2098,6 +2101,7 @@ function getObjectItems() {
 // 시나리오 오브젝트 관리 (WMS 관리자 모드용)
 // 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9) 랭킹제외(10/J열)
 //         K/L열은 비워둠 · 깨질위험(13/M열) 화재위험(14/N열) request 대상 업체명(15/O열, 빈값=해당없음)
+//         개인 물품 소유자(16/P열, 빈값=개인 물품 아님)
 // 사진: 창고물품과 동일하게 data:image/... 가 오면 드라이브 업로드 후 링크 저장
 // ─────────────────────────────────────────────
 function getScenarioImageFolderId_() {
@@ -2110,7 +2114,7 @@ function getScenarioObjectsForAdmin_(forceRefresh) {
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  var lastCol = Math.max(sheet.getLastColumn(), 15);
+  var lastCol = Math.max(sheet.getLastColumn(), 16);
   var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var result = [];
   for (var i = 0; i < data.length; i++) {
@@ -2130,7 +2134,8 @@ function getScenarioObjectsForAdmin_(forceRefresh) {
       excludeFromRanking: String(row[9] || "").trim().toUpperCase() === "Y",
       fragile: String(row[12] || "").trim().toUpperCase() === "Y",
       fireRisk: String(row[13] || "").trim().toUpperCase() === "Y",
-      requestFor: String(row[14] || "").trim() || undefined
+      requestFor: String(row[14] || "").trim() || undefined,
+      personalOwner: String(row[15] || "").trim() || undefined
     });
   }
   // 시트의 수동 '대여' 카운터 대신 실제 미반납 로그에서 집계한 값으로 덮어쓴다.
@@ -2154,7 +2159,7 @@ function updateScenarioObject_(item) {
   if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
   var rowIndex = Number(item.rowIndex);
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
-  var lastCol = Math.max(sheet.getLastColumn(), 15);
+  var lastCol = Math.max(sheet.getLastColumn(), 16);
   var range = sheet.getRange(rowIndex, 1, 1, lastCol);
   var cur = range.getValues()[0];
 
@@ -2184,6 +2189,9 @@ function updateScenarioObject_(item) {
   if (item.requestFor !== undefined) {
     cur[14] = String(item.requestFor || "").trim();
   }
+  if (item.personalOwner !== undefined) {
+    cur[15] = String(item.personalOwner || "").trim();
+  }
   range.setValues([cur]);
   return {
     rowIndex: rowIndex, id: padSlot_(String(cur[0]).trim()), name: String(cur[1]).trim(),
@@ -2195,7 +2203,8 @@ function updateScenarioObject_(item) {
     excludeFromRanking: String(cur[9] || "").trim().toUpperCase() === "Y",
     fragile: String(cur[12] || "").trim().toUpperCase() === "Y",
     fireRisk: String(cur[13] || "").trim().toUpperCase() === "Y",
-    requestFor: String(cur[14] || "").trim() || undefined
+    requestFor: String(cur[14] || "").trim() || undefined,
+    personalOwner: String(cur[15] || "").trim() || undefined
   };
 }
 
@@ -2221,20 +2230,22 @@ function addScenarioObject_(item) {
   ];
   sheet.getRange(nextRow, 1, 1, rowValuesAJ.length).setValues([rowValuesAJ]);
 
-  // M~O열: 깨질 위험 / 화재 위험 / request 대상 업체명 — K, L열과 별개 범위로 따로 쓴다
-  var rowValuesMO = [
-    item.fragile ? "Y" : "N",             // M열: 깨질 위험
-    item.fireRisk ? "Y" : "N",            // N열: 화재 위험
-    String(item.requestFor || "").trim()  // O열: request 대상 업체명 (빈 값이면 해당 없음)
+  // M~P열: 깨질 위험 / 화재 위험 / request 대상 업체명 / 개인 물품 소유자 — K, L열과 별개 범위로 따로 쓴다
+  var rowValuesMP = [
+    item.fragile ? "Y" : "N",                // M열: 깨질 위험
+    item.fireRisk ? "Y" : "N",               // N열: 화재 위험
+    String(item.requestFor || "").trim(),    // O열: request 대상 업체명 (빈 값이면 해당 없음)
+    String(item.personalOwner || "").trim()  // P열: 개인 물품 소유자 (빈 값이면 개인 물품 아님)
   ];
-  sheet.getRange(nextRow, 13, 1, rowValuesMO.length).setValues([rowValuesMO]);
+  sheet.getRange(nextRow, 13, 1, rowValuesMP.length).setValues([rowValuesMP]);
 
-  var rowValues = rowValuesAJ.concat(["", ""], rowValuesMO); // 반환값 조립용 (실제로 K/L엔 아무것도 안 씀)
+  var rowValues = rowValuesAJ.concat(["", ""], rowValuesMP); // 반환값 조립용 (실제로 K/L엔 아무것도 안 씀)
   return {
     rowIndex: nextRow, id: rowValues[0], name: rowValues[1], sector: rowValues[2], rootSlot: rowValues[3],
     category: rowValues[4], subcategory: rowValues[5], image: rowValues[6], stock: rowValues[7], rented: 0,
     excludeFromRanking: rowValues[9] === "Y",
-    fragile: rowValues[12] === "Y", fireRisk: rowValues[13] === "Y", requestFor: rowValuesMO[2] || undefined
+    fragile: rowValuesMP[0] === "Y", fireRisk: rowValuesMP[1] === "Y", requestFor: rowValuesMP[2] || undefined,
+    personalOwner: rowValuesMP[3] || undefined
   };
 }
 
