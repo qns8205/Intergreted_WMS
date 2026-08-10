@@ -2393,6 +2393,30 @@ export default function MobileViewPage({
                   </span>
                 </label>
 
+                {/* 개인 물품 — 체크하면 소유자 이름 입력창이 나타난다 */}
+                <div style={{ padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.personalOwner !== undefined ? ACCENT : BORDER}`, background: CARD_BG }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <input
+                      type="checkbox"
+                      checked={sciForm.personalOwner !== undefined}
+                      onChange={(e) => setSciForm((f) => ({ ...f, personalOwner: e.target.checked ? "" : undefined }))}
+                    />
+                    <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.personalOwner !== undefined ? ACCENT_LIGHT : TEXT_MAIN }}>
+                      👤 개인 물품
+                    </span>
+                  </label>
+                  {sciForm.personalOwner !== undefined ? (
+                    <input
+                      className="mvp-input"
+                      type="text"
+                      value={sciForm.personalOwner}
+                      onChange={(e) => setSciForm((f) => ({ ...f, personalOwner: e.target.value }))}
+                      placeholder="소유자 이름을 입력하세요"
+                      style={{ ...inputBaseStyle, marginTop: "9px" }}
+                    />
+                  ) : null}
+                </div>
+
                 {/* 특정 업체 request용 물품 — 체크하면 업체명 입력창이 나타난다 */}
                 <div style={{ padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.requestFor !== undefined ? ACCENT : BORDER}`, background: CARD_BG }}>
                   <label style={{ display: "flex", alignItems: "center", gap: "10px" }}>
