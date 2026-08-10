@@ -347,12 +347,17 @@ export default function App() {
         setCurrentView("seatmap");
       }
 
-      // 관리자 화면을 새 탭으로 바로 열었을 때, 사이드바가 선택 화면부터 보이지 않고
-      // 곧바로 해당 하위 메뉴(물품 관리/대여 & 반납 관리)로 열리도록 같이 맞춰준다.
-      if (path === "monitor" || path === "scenario" || path === "defect") {
-        setAdminSection("items");
-      } else if (path === "adminReturn" || path === "rent" || path === "seatmap") {
-        setAdminSection("rental");
+      // 관리자 화면을 사이드바의 "새 탭으로 열기" 버튼으로 열었을 때만(URL에 /direct 표시가
+      // 붙어 있을 때만) 사이드바가 선택 화면을 건너뛰고 바로 해당 하위 메뉴로 열리게 한다.
+      // 로그인 직후에도 기본적으로 같은 해시(#/monitor)로 이동하는데, 그 일반 흐름까지
+      // 이 로직을 타면 원래 보여야 할 "물품 관리 / 대여 & 반납 관리" 선택 화면이 사라진다.
+      const isDirectSectionLink = hash.split("/")[2] === "direct";
+      if (isDirectSectionLink) {
+        if (path === "monitor" || path === "scenario" || path === "defect") {
+          setAdminSection("items");
+        } else if (path === "adminReturn" || path === "rent" || path === "seatmap") {
+          setAdminSection("rental");
+        }
       }
     };
 
@@ -2483,7 +2488,7 @@ export default function App() {
                     // 지금 탭은 그대로 두고, 반대쪽 섹션을 새 탭으로 연다.
                     const targetView = otherSection === "items" ? "monitor" : "adminReturn";
                     const base = window.location.href.split("#")[0];
-                    window.open(`${base}#/${targetView}`, "_blank");
+                    window.open(`${base}#/${targetView}/direct`, "_blank");
                   }}
                   title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리를 새 탭으로 열기" : "대여 & 반납 관리를 새 탭으로 열기") : undefined}
                   style={{
