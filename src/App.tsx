@@ -2452,11 +2452,16 @@ export default function App() {
               );
             }
 
-            // 하위 메뉴 안: 상단에 뒤로가기, 아래에 해당 메뉴 항목들
+            // 하위 메뉴 안: 상단에 "다른 메뉴로 전환" 버튼, 아래에 해당 메뉴 항목들
+            const otherSection: "items" | "rental" = adminSection === "items" ? "rental" : "items";
             return (
               <>
                 <button
-                  onClick={() => setAdminSection(null)}
+                  onClick={() => {
+                    setAdminSection(otherSection);
+                    setCurrentView(otherSection === "items" ? "monitor" : "adminReturn");
+                  }}
+                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리로 전환" : "대여 & 반납 관리로 전환") : undefined}
                   style={{
                     width: "100%", padding: sidebarCollapsed ? "8px 0" : "7px 12px", borderRadius: 8,
                     display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 8, cursor: "pointer",
@@ -2465,8 +2470,8 @@ export default function App() {
                     color: "var(--text-dim, #94a3b8)", fontSize: 12, fontWeight: 700, marginBottom: 4,
                   }}
                 >
-                  <ArrowLeft size={15} />
-                  {!sidebarCollapsed && <span>{adminSection === "items" ? "물품 관리" : "대여 & 반납 관리"}</span>}
+                  {otherSection === "items" ? <Package size={15} /> : <Undo2 size={15} />}
+                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리로 전환" : "대여 & 반납 관리로 전환"}</span>}
                 </button>
 
                 {adminSection === "items" ? (
