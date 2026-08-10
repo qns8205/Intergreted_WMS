@@ -364,7 +364,15 @@ export default function App() {
     };
   }, []);
 
+  // 마운트 직후엔 아직 read-effect가 URL 해시를 읽어 currentView를 맞추기 전이라,
+  // currentView의 초기값("landing")을 그대로 해시에 덮어쓰면 새 탭을 특정 해시(#/monitor 등)로
+  // 열었을 때 그 값이 "#/landing"으로 지워져버린다. 그래서 첫 번째 실행은 건너뛴다.
+  const hashWriteSkippedFirst = useRef(false);
   useEffect(() => {
+    if (!hashWriteSkippedFirst.current) {
+      hashWriteSkippedFirst.current = true;
+      return;
+    }
     const currentHash = window.location.hash.split("/")[1] || "";
     if (currentView && currentHash !== currentView) {
       if (currentView === "monitor" && window.location.hash.startsWith("#/register")) {
