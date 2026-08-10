@@ -1877,8 +1877,8 @@ function getFormHtml(inventory) {
 //  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
 //  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
 //  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "슬랙 앱 API 키";
-var SLACK_CHANNEL_ID = "채널 ID";
+var SLACK_BOT_TOKEN = "API Key";
+var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
 // ─────────────────────────────────────────────────────────────
@@ -4036,7 +4036,10 @@ function getScenarioAllLogs_(recentDays, scope, slim) {
       if (!row[0] && !row[2]) return; // 빈 행
       var returned = String(row[5]).trim() === "O";
       if (!inScope_(returned)) return;
-      if (!withinCutoff_(returned, formatDateTimeFull_(row[6]), formatDateTimeFull_(row[3]))) return;
+      // 같은 셀을 여러 번 포맷하지 않도록 한 번씩만 계산해서 재사용한다 (행이 많을 때 체감이 크다)
+      var borrowDT = formatDateTimeFull_(row[3]);
+      var returnDT = formatDateTimeFull_(row[6]);
+      if (!withinCutoff_(returned, returnDT, borrowDT)) return;
       var label = row[2] || "(물품 미등록)";
       var idMatch = String(label).match(/^\[(\d+)\]/);
       var itemId = idMatch ? padSlot_(idMatch[1]) : "";
@@ -4049,11 +4052,11 @@ function getScenarioAllLogs_(recentDays, scope, slim) {
         sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1],
         itemLabel: label, itemKind: row[11] || "추가 대여물품",
         location: itemId ? (locations[itemId] || "") : "", itemId: itemId, itemName: parsedLabel.name || label,
-        quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowDateTime: (formatDateTimeFull_(row[3]) || formatDateTimeFull_(row[10])), borrowPurpose: row[4],
+        quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowDateTime: (borrowDT || formatDateTimeFull_(row[10])), borrowPurpose: row[4],
         email: String(row[7] || "").trim(), batchId: batchId,
         floor: seatLoc.floor || "", unit: seatLoc.unit || "",
         returned: returned, returnedMark: String(row[5] || "").trim(),
-        returnDate: formatDateTimeFull_(row[6]),
+        returnDate: returnDT,
         shift: computeShiftFromRaw_(row[3]),
         image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
       });
@@ -4067,7 +4070,9 @@ function getScenarioAllLogs_(recentDays, scope, slim) {
       if (!row[0] && !row[2]) return;
       var returned = String(row[6]).trim() === "O";
       if (!inScope_(returned)) return;
-      if (!withinCutoff_(returned, formatDateTimeFull_(row[7]), formatDateTimeFull_(row[4]))) return;
+      var borrowDT2 = formatDateTimeFull_(row[4]);
+      var returnDT2 = formatDateTimeFull_(row[7]);
+      if (!withinCutoff_(returned, returnDT2, borrowDT2)) return;
       var id = String(row[1] || "").trim(), qty = row[3] || 1;
       var pid = padSlot_(id);
       var obj = objectMap[pid] || {};
@@ -4078,12 +4083,12 @@ function getScenarioAllLogs_(recentDays, scope, slim) {
         sheetType: "general", rowIndex: i + 2, borrowerName: row[0],
         itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""),
         location: locations[pid] || "", itemId: pid, itemName: row[2],
-        quantity: qty, borrowDate: formatDateValue_(row[4]), borrowDateTime: (formatDateTimeFull_(row[4]) || formatDateTimeFull_(row[11])),
+        quantity: qty, borrowDate: formatDateValue_(row[4]), borrowDateTime: (borrowDT2 || formatDateTimeFull_(row[11])),
         submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5],
         email: String(row[8] || "").trim(), batchId: batchId, generalOption: String(row[12] || ""),
         floor: seatLoc.floor || "", unit: seatLoc.unit || "",
         returned: returned, returnedMark: String(row[6] || "").trim(),
-        returnDate: formatDateTimeFull_(row[7]),
+        returnDate: returnDT2,
         shift: computeShiftFromRaw_(row[4]),
         image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0
       });
@@ -4453,9 +4458,21 @@ function formatDateValue_(value) {
 
 // 반납일처럼 "언제 처리됐는지"가 정렬 기준이 되는 값은 시간까지 살려서 문자열로 만든다.
 // (formatDateValue_는 표시용이라 Date를 날짜만 남기고 시간을 버리기 때문에 정렬에 쓸 수 없다.)
+// ⚠️ 이 함수는 로그 조회에서 수천 행을 훑는 반복문 안에서 행마다 여러 번 불린다.
+// Utilities.formatDate()/Session.getScriptTimeZone()은 겉보기엔 평범한 함수 같아도
+// 내부적으로 Apps Script 서비스 호출(원격 호출과 비슷한 오버헤드)이라, 반복문 안에서
+// 수천 번 부르면 그것만으로 수십 초가 걸릴 수 있다. 그래서 순수 JS Date getter로 직접
+// 조립한다 — 시트에서 읽은 Date 값은 이미 스크립트 시간대 기준으로 해석되어 있으므로
+// getFullYear()/getHours() 등을 그냥 쓰면 Utilities.formatDate()와 결과가 동일하다.
 function formatDateTimeFull_(value) {
   if (value instanceof Date) {
-    return Utilities.formatDate(value, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+    var y = value.getFullYear();
+    var mo = String(value.getMonth() + 1).padStart(2, "0");
+    var da = String(value.getDate()).padStart(2, "0");
+    var hh = String(value.getHours()).padStart(2, "0");
+    var mi = String(value.getMinutes()).padStart(2, "0");
+    var ss = String(value.getSeconds()).padStart(2, "0");
+    return y + "-" + mo + "-" + da + " " + hh + ":" + mi + ":" + ss;
   }
   var text = String(value || "").trim();
   if (!text) return "";
@@ -4463,11 +4480,11 @@ function formatDateTimeFull_(value) {
   if (/오전|오후/.test(text)) {
     var km = text.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2}).*?(오전|오후)\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/);
     if (km) {
-      var hh = parseInt(km[5], 10) % 12;
-      if (km[4] === "오후") hh += 12;
+      var hh2 = parseInt(km[5], 10) % 12;
+      if (km[4] === "오후") hh2 += 12;
       var d2 = new Date(
         parseInt(km[1], 10), parseInt(km[2], 10) - 1, parseInt(km[3], 10),
-        hh, parseInt(km[6], 10), parseInt(km[7] || "0", 10)
+        hh2, parseInt(km[6], 10), parseInt(km[7] || "0", 10)
       );
       if (!isNaN(d2.getTime())) {
         return Utilities.formatDate(d2, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
