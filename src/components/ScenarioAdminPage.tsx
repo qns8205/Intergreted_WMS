@@ -647,6 +647,27 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                 </label>
 
                 <div>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: editing.personalOwner !== undefined ? C.accentText : C.text }}>
+                    <input
+                      type="checkbox"
+                      // undefined = 체크 안 함 / "" 이상 문자열 = 체크됨 (빈 값이어도 "체크는 됐지만 소유자명 미입력" 상태로 구분)
+                      checked={editing.personalOwner !== undefined}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, personalOwner: e.target.checked ? "" : undefined } : p))}
+                      style={{ width: 16, height: 16, accentColor: C.accent }}
+                    />
+                    👤 개인 물품
+                  </label>
+                  {editing.personalOwner !== undefined ? (
+                    <input
+                      value={editing.personalOwner}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, personalOwner: e.target.value } : p))}
+                      placeholder="소유자 이름을 입력하세요"
+                      style={{ ...inputStyle, marginTop: "8px" }}
+                    />
+                  ) : null}
+                </div>
+
+                <div>
                   <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px", color: editing.requestFor !== undefined ? C.accentText : C.text }}>
                     <input
                       type="checkbox"
