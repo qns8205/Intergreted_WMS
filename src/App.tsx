@@ -158,7 +158,7 @@ export default function App() {
   // 1. 상태 선언
   // 열람 화면에 어느 단계로 들어갈지 (SID 열람 등)
   const [browseInitialStep, setBrowseInitialStep] = useState<"sid" | null>(null);
-  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap">("landing");
+  const [currentView, setCurrentView] = useState<"landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap" | "adminReturn">("landing");
   // 서버(GAS)가 새 버전으로 재배포되면, 이미 열려 있던 탭은 구버전 상태로 남는다.
   // 최초 접속 시 버전을 기억해두고, 주기적으로 서버 버전과 비교해서 달라지면
   // 새로고침 전까지 안 사라지는 경고 배너를 화면 어디서든 띄운다.
@@ -339,6 +339,20 @@ export default function App() {
         setCurrentView("defect");
       } else if (path === "register") {
         setCurrentView("monitor");
+      } else if (path === "adminReturn") {
+        setCurrentView("adminReturn");
+      } else if (path === "scenario") {
+        setCurrentView("scenario");
+      } else if (path === "seatmap") {
+        setCurrentView("seatmap");
+      }
+
+      // 관리자 화면을 새 탭으로 바로 열었을 때, 사이드바가 선택 화면부터 보이지 않고
+      // 곧바로 해당 하위 메뉴(물품 관리/대여 & 반납 관리)로 열리도록 같이 맞춰준다.
+      if (path === "monitor" || path === "scenario" || path === "defect") {
+        setAdminSection("items");
+      } else if (path === "adminReturn" || path === "rent" || path === "seatmap") {
+        setAdminSection("rental");
       }
     };
 
@@ -2458,10 +2472,12 @@ export default function App() {
               <>
                 <button
                   onClick={() => {
-                    setAdminSection(otherSection);
-                    setCurrentView(otherSection === "items" ? "monitor" : "adminReturn");
+                    // 지금 탭은 그대로 두고, 반대쪽 섹션을 새 탭으로 연다.
+                    const targetView = otherSection === "items" ? "monitor" : "adminReturn";
+                    const base = window.location.href.split("#")[0];
+                    window.open(`${base}#/${targetView}`, "_blank");
                   }}
-                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리로 전환" : "대여 & 반납 관리로 전환") : undefined}
+                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리를 새 탭으로 열기" : "대여 & 반납 관리를 새 탭으로 열기") : undefined}
                   style={{
                     width: "100%", padding: sidebarCollapsed ? "8px 0" : "7px 12px", borderRadius: 8,
                     display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 8, cursor: "pointer",
@@ -2471,7 +2487,8 @@ export default function App() {
                   }}
                 >
                   {otherSection === "items" ? <Package size={15} /> : <Undo2 size={15} />}
-                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리로 전환" : "대여 & 반납 관리로 전환"}</span>}
+                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리 새 탭으로 열기" : "대여 & 반납 관리 새 탭으로 열기"}</span>}
+                  {!sidebarCollapsed && <ExternalLink size={12} style={{ marginLeft: "auto", opacity: 0.6 }} />}
                 </button>
 
                 {adminSection === "items" ? (
