@@ -87,6 +87,9 @@ export interface BorrowEntry {
   generalOption?: string;
   floor?: string; // 층수 (예: "B2") — 좌석 위치 기록용
   unit?: string;  // 유닛 (예: "Unit 1") — 좌석 위치 기록용
+  // 관리자가 반납 처리 화면에서 "추가 대여"로 직접 처리하는 경우: 실물을 관리자가 바로
+  // 건네주므로 별도의 "대여 확인" 단계 없이 이 요청만으로 바로 확인 완료 처리한다.
+  autoConfirmPickup?: boolean;
 }
 
 export interface ReturnRequest {
