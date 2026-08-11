@@ -375,7 +375,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [lendCart, setLendCart] = useState<{ id: string; name: string; quantity: number; stock: number }[]>([]);
   const [lendSubmitting, setLendSubmitting] = useState(false);
   // 깨질 위험/화재 위험/특정 업체 request용 물품이 대여 목록에 있을 때, 제출 직전 확인 모달
-  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string }[]; onConfirm: () => void } | null>(null);
+  const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string; personalOwner?: string }[]; onConfirm: () => void } | null>(null);
 
   async function openLend(g: { name: string; items: UnreturnedItem[] }) {
     const first = g.items[0];
@@ -433,6 +433,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         generalOption: "추가 물품 대여",
         floor: lendTarget.floor,
         unit: lendTarget.unit,
+        // 관리자가 직접 처리하는 대여라 별도의 "대여 확인" 단계를 거치지 않고 바로 확인 완료 처리한다.
+        autoConfirmPickup: true,
       }], ver);
 
       if (!res.success && isVersionMismatchMessage(res.message)) { signalVersionOutdated(); return; }
