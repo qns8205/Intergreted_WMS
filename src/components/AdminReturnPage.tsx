@@ -1235,7 +1235,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                   <div
                                     key={`${it.sheetType}-${it.rowIndex}`}
                                     ref={atCursor ? cursorElRef : undefined}
-                                    onClick={() => { setCursor(idx); if (!done) addOne(it); }}
+                                    onClick={() => setCursor(idx)}
                                     onContextMenu={(e) => {
                                       if (category === "warehouse") return;
                                       e.preventDefault(); setCursor(idx); openSwap(it);
