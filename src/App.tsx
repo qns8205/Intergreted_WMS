@@ -2490,7 +2490,7 @@ export default function App() {
                     const base = window.location.href.split("#")[0];
                     window.open(`${base}#/${targetView}/direct`, "_blank");
                   }}
-                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리" : "대여 & 반납 관리") : undefined}
+                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리를 새 탭으로 열기" : "대여 & 반납 관리를 새 탭으로 열기") : undefined}
                   style={{
                     width: "100%", padding: sidebarCollapsed ? "8px 0" : "7px 12px", borderRadius: 8,
                     display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 8, cursor: "pointer",
@@ -2500,7 +2500,7 @@ export default function App() {
                   }}
                 >
                   {otherSection === "items" ? <Package size={15} /> : <Undo2 size={15} />}
-                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리" : "대여 & 반납 관리"}</span>}
+                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리 새 탭으로 열기" : "대여 & 반납 관리 새 탭으로 열기"}</span>}
                   {!sidebarCollapsed && <ExternalLink size={12} style={{ marginLeft: "auto", opacity: 0.6 }} />}
                 </button>
 
@@ -2919,6 +2919,7 @@ export default function App() {
               connected={connected}
               isLightMode={isLightMode}
               showToast={showToast}
+              onInventoryChanged={handleRefresh}
             />
           </div>
         ) : currentView === "rent" ? (
