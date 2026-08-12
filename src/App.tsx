@@ -1823,6 +1823,7 @@ export default function App() {
         initialIdentity={borrowIdentity}
         initialKind={borrowKind}
         onBackToWarehouseBrowse={() => { setBorrowKind(null); setCurrentView("browse"); }}
+        onInventoryChanged={handleRefresh}
       />
     );
   }
