@@ -20,6 +20,9 @@ interface Props {
   connected: boolean;
   isLightMode: boolean;
   showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
+  // 공구 및 부품류 처리(반납/소모/직접대여) 성공 시, "물품 관리" 화면이 쓰는 앱 전체 재고
+  // 상태도 즉시 갱신되도록 알려준다. 안 주면(선택 prop) 이 화면 안의 목록만 갱신된다.
+  onInventoryChanged?: () => void;
 }
 
 // 반납 장바구니 한 줄 = 특정 대여 행에서 몇 개를 반납할지
@@ -41,7 +44,7 @@ interface ReturnCartLine {
   disposition?: "반납" | "소모";
 }
 
-export default function AdminReturnPage({ scriptUrl, connected, isLightMode, showToast }: Props) {
+export default function AdminReturnPage({ scriptUrl, connected, isLightMode, showToast, onInventoryChanged }: Props) {
   const C = {
     bg: isLightMode ? "#f8fafc" : "#0b0f19",
     card: isLightMode ? "#ffffff" : "#161f30",
@@ -309,6 +312,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       setWhLendOpen(false);
       setWhLendCart([]);
       loadWarehouse(true);
+      onInventoryChanged?.(); // 재고가 줄었으니 "물품 관리" 화면 데이터도 즉시 갱신
     } catch (e: any) {
       showToast(`대여 처리 실패: ${e.message}`, "error");
     } finally {
@@ -901,6 +905,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 })
                 .filter(Boolean) as UnreturnedItem[]
             );
+            onInventoryChanged?.(); // 공구 재고가 실제로 바뀌었으니 "물품 관리" 화면 데이터도 즉시 갱신
           }
         } catch (e: any) {
           showToast(`공구 반납 처리 실패: ${e.message}`, "error");
@@ -963,6 +968,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               }
             }
             showToast(`${reborrowLines.reduce((n, c) => n + c.qty, 0)}개를 반납 후 다시 대여했습니다. (대여일 갱신)`, "ok");
+            onInventoryChanged?.();
           } catch (reErr: any) {
             showToast(`반납은 완료했지만 재대여에 실패했습니다: ${reErr.message}`, "warn");
           }
