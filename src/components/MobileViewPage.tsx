@@ -277,9 +277,10 @@ export default function MobileViewPage({
   }, [mode, sciLoaded, sciLoading, loadScenarioItems]);
 
   const filteredScenarioItems = useMemo(() => {
-    const base = !searchQuery.trim()
+    const base = (!searchQuery.trim()
       ? sciItems
-      : sciItems.filter((it) => smartMatch([it.name, it.id, it.rootSlot, it.category, it.subcategory], searchQuery));
+      : sciItems.filter((it) => smartMatch([it.name, it.id, it.rootSlot, it.category, it.subcategory], searchQuery))
+    ).filter((it) => !it.archived); // 보관 처리된 물품은 목록에서 뺀다 (PC 화면과 동일)
     return [...base].sort((a, b) => {
       const na = parseInt(String(a.rootSlot || "").replace(/\D/g, ""), 10);
       const nb = parseInt(String(b.rootSlot || "").replace(/\D/g, ""), 10);
@@ -2390,6 +2391,18 @@ export default function MobileViewPage({
                     onChange={(e) => setSciForm((f) => ({ ...f, fireRisk: e.target.checked }))} />
                   <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.fireRisk ? DANGER : TEXT_MAIN }}>
                     🔥 화재 위험이 있는 물품
+                  </span>
+                </label>
+
+                {/* 보관 처리 — 파손 등으로 오브젝트로 쓰기 어려운 물품을 목록·대여 카탈로그에서 치워둔다 */}
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", padding: "11px 12px", borderRadius: "12px", border: `1px solid ${sciForm.archived ? AMBER : BORDER}`, background: sciForm.archived ? "rgba(245,158,11,0.10)" : CARD_BG }}>
+                  <input
+                    type="checkbox"
+                    checked={!!sciForm.archived}
+                    onChange={(e) => setSciForm((f) => ({ ...f, archived: e.target.checked }))}
+                  />
+                  <span style={{ fontSize: "12.5px", fontWeight: 600, color: sciForm.archived ? AMBER : TEXT_MAIN }}>
+                    🗄️ 보관 처리 (파손 등으로 사용 불가 — 목록·대여 카탈로그에서 제외됩니다)
                   </span>
                 </label>
 
