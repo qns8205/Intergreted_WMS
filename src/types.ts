@@ -74,6 +74,7 @@ export interface ScenarioObjectItem {
   fireRisk?: boolean;  // 화재 위험 (N열)
   requestFor?: string; // 특정 업체 request용 물품 — 업체명 (O열, 빈 값이면 해당 없음)
   personalOwner?: string; // 개인 물품 — 소유자명 (P열, 빈 값이면 개인 물품 아님)
+  archived?: boolean; // 보관 처리 — 파손/오브젝트로 사용 불가 등으로 목록·대여 카탈로그에서 치워둠 (Q열)
 }
 
 export type Affiliation = "cfgw" | "configds" | "other";
