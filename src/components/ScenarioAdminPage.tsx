@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import {
-  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History, ChevronRight, Package,
+  Search, Plus, X, Pencil, Trash2, MapPin, Boxes, Upload, Save, Image as ImageIcon, Users, RotateCcw, ClipboardCheck, ArrowUpDown, History, ChevronRight, Package, Archive, ArchiveRestore,
 } from "lucide-react";
 import StockAdjustModal from "./StockAdjustModal";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -50,6 +50,9 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState("");
+  // 기본은 활성(=보관 안 된) 물품만 보여준다. "보관함" 모드에서는 반대로 보관 처리된 것만 보여준다.
+  // 파손 등으로 오브젝트로 쓰기 어려운 물품을 목록/대여 카탈로그에서 치워두는 용도.
+  const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<EditForm | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -328,6 +331,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const filtered = useMemo(() => {
     const q = search.trim();
     return items.filter((it) => {
+      if (!!it.archived !== showArchived) return false; // 보관함 모드에 따라 서로 배타적으로 보여준다
       if (cat && it.category !== cat) return false;
       if (!q) return true;
       const slotPad = padSlot(it.rootSlot);
@@ -341,7 +345,9 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       if (va !== vb) return va - vb;
       return a.name.localeCompare(b.name);
     });
-  }, [items, search, cat]);
+  }, [items, search, cat, showArchived]);
+
+  const archivedCount = useMemo(() => items.filter((it) => it.archived).length, [items]);
 
   function openEdit(it: ScenarioObjectAdmin) {
     setEditing({ ...it });
@@ -397,6 +403,18 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       setItems((p) => p.filter((x) => x.rowIndex !== it.rowIndex));
       showToast("삭제했습니다.", "ok");
     } catch (e: any) { showToast(`삭제 실패: ${e.message}`, "error"); }
+  }
+
+  // 파손 등으로 오브젝트로 쓰기 어려운 물품을 보관함으로 치우거나(archived: true), 다시 꺼낸다.
+  // 보관 처리된 물품은 대여 카탈로그와 "가장 적게 대여된 물품" 랭킹에서 자동으로 빠진다.
+  async function toggleArchive(it: ScenarioObjectAdmin) {
+    const next = !it.archived;
+    if (next && !window.confirm(`'${it.name}'을(를) 보관함으로 옮길까요?\n대여 카탈로그·랭킹 목록에서 더 이상 안 보이게 됩니다.`)) return;
+    try {
+      if (connected && scriptUrl) await updateScenarioObject(scriptUrl, { rowIndex: it.rowIndex, archived: next });
+      setItems((p) => p.map((x) => (x.rowIndex === it.rowIndex ? { ...x, archived: next } : x)));
+      showToast(next ? "보관함으로 옮겼습니다." : "보관함에서 꺼냈습니다.", "ok");
+    } catch (e: any) { showToast(`처리 실패: ${e.message}`, "error"); }
   }
 
   const inputStyle: React.CSSProperties = {
@@ -471,12 +489,28 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         <button onClick={() => load(true)} disabled={loading} title="지금 새로고침" style={{ display: "flex", alignItems: "center", gap: "5px", padding: "11px 13px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.accentText, cursor: loading ? "wait" : "pointer", fontSize: "13px", fontWeight: 700, opacity: loading ? 0.7 : 1 }}>
           <RotateCcw size={15} className={loading ? "sap-spin-btn2" : undefined} />
         </button>
+        <button
+          onClick={() => setShowArchived((v) => !v)}
+          title={showArchived ? "보관함 닫기" : "보관함 열기 (파손 등으로 치워둔 물품)"}
+          style={{
+            display: "flex", alignItems: "center", gap: "6px", padding: "11px 14px", borderRadius: "10px",
+            border: `1px solid ${showArchived ? C.accent : C.border}`,
+            background: showArchived ? C.accent : C.card,
+            color: showArchived ? "#fff" : C.text,
+            cursor: "pointer", fontSize: "13px", fontWeight: 700, whiteSpace: "nowrap",
+          }}
+        >
+          {showArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+          보관함{archivedCount > 0 ? ` (${archivedCount})` : ""}
+        </button>
         <button onClick={openNew} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "11px 16px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, whiteSpace: "nowrap" }}>
           <Plus size={15} /> 새 물품
         </button>
         </div>
       </div>
-      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded ? `${filtered.length} / ${items.length}개 시나리오 물품` : ""}</div>
+      <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
+        {loaded ? (showArchived ? `보관함 · ${filtered.length}개 물품 (파손 등으로 목록·대여 카탈로그에서 제외됨)` : `${filtered.length} / ${items.length - archivedCount}개 시나리오 물품`) : ""}
+      </div>
 
       {loading && !loaded ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 불러오는 중...</div>
@@ -510,6 +544,17 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                     <button onClick={() => remove(it)} style={{ flex: "0 0 auto", padding: "8px 10px", borderRadius: "9px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
                   </div>
                   <button onClick={() => setStockAdjustItem(it)} style={{ padding: "8px", borderRadius: "9px", border: "none", background: C.accentSoft, color: C.accentText, cursor: "pointer", fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px" }}><ArrowUpDown size={13} /> 재고 변경</button>
+                  <button
+                    onClick={() => toggleArchive(it)}
+                    style={{
+                      padding: "8px", borderRadius: "9px", border: "none", cursor: "pointer",
+                      fontSize: "12px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "5px",
+                      background: it.archived ? C.successSoft : C.warnSoft,
+                      color: it.archived ? C.success : C.warn,
+                    }}
+                  >
+                    {it.archived ? <><ArchiveRestore size={13} /> 보관함에서 꺼내기</> : <><Archive size={13} /> 보관 처리 (파손 등)</>}
+                  </button>
                 </div>
               </div>
             </div>
