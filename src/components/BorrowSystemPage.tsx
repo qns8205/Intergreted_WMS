@@ -51,11 +51,14 @@ interface BorrowSystemPageProps {
   initialKind?: "scenario" | "warehouse" | null;
   /** 뒤로가기 시 창고 열람으로 복귀해야 하는 경우 */
   onBackToWarehouseBrowse?: () => void;
+  // 공구 및 부품류 대여/반납/소모 성공 시, "물품 관리" 화면이 쓰는 앱 전체 재고
+  // 상태도 즉시 갱신되도록 알려준다.
+  onInventoryChanged?: () => void;
 }
 
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
-export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse }: BorrowSystemPageProps) {
+export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast, entry = "borrow", initialIdentity = null, initialKind = null, onBackToWarehouseBrowse, onInventoryChanged }: BorrowSystemPageProps) {
   // 열람에서 공구 및 부품류를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
   const rootMode: Mode = initialKind === "warehouse" ? "wbname"
     : initialKind === "scenario" ? "b1"
@@ -1096,6 +1099,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             })
           );
           if (!bulkBorrowRes.success) throw new Error(bulkBorrowRes.error || "일부 물품의 기록에 실패했습니다.");
+          onInventoryChanged?.(); // 재고가 줄었으니 "물품 관리" 화면 데이터도 즉시 갱신
 
           setResultInfo((prev: any) => ({
             ...prev,
@@ -1206,6 +1210,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             }))
           );
           if (!bulkRes.success) throw new Error(bulkRes.error || "일부 물품의 반납 기록에 실패했습니다.");
+          onInventoryChanged?.(); // 재고가 늘었으니 "물품 관리" 화면 데이터도 즉시 갱신
           
           setResultInfo((prev: any) => ({
             ...prev,
