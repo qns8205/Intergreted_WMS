@@ -14,26 +14,8 @@ interface ItemFormModalProps {
   onClose: () => void;
   defaultManager?: string;
   inventory: InventoryItem[];
+  isLightMode?: boolean;
 }
-
-const PANEL = "var(--panel-bg, #1e293b)";
-const PANEL_BORDER = "var(--panel-border, #334155)";
-const TEXT_MAIN = "var(--text-main, #f1f5f9)";
-const TEXT_DIM = "var(--text-dim, #94a3b8)";
-const ACCENT = "#2563eb";
-const ACCENT_SOFT = "#94a3b8";
-const ACCENT_TEXT = "var(--accent-text, #60a5fa)";
-const CARD_SUB = "var(--input-bg, #0f172a)";
-const ERROR = "#ef4444";
-
-// 시나리오 물품 편집 화면과 같은 라벨 스타일 (파란색 굵은 글씨)
-const lblStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: "12px",
-  fontWeight: 700,
-  color: ACCENT_TEXT,
-  marginBottom: "5px",
-};
 
 export default function ItemFormModal({
   item,
@@ -45,7 +27,36 @@ export default function ItemFormModal({
   onClose,
   defaultManager,
   inventory,
+  isLightMode = false,
 }: ItemFormModalProps) {
+  // 시나리오 물품 편집 모달(ScenarioAdminPage)과 완전히 같은 색 팔레트를 쓴다.
+  const C = {
+    card: isLightMode ? "#ffffff" : "#161f30",
+    cardSub: isLightMode ? "#f4f6f9" : "#0f172a",
+    border: isLightMode ? "#e6e9ef" : "#26324a",
+    text: isLightMode ? "#111827" : "#f1f5f9",
+    label: isLightMode ? "#2563eb" : "#94a3b8",
+    accent: "#2563eb",
+    accentSoft: isLightMode ? "rgba(37,99,235,0.09)" : "rgba(148,163,184,0.14)",
+    accentText: isLightMode ? "#111827" : "#f1f5f9",
+    error: isLightMode ? "#dc2626" : "#f87171",
+  };
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "11px 13px", fontSize: "14px", borderRadius: "10px",
+    border: `1px solid ${C.border}`, background: isLightMode ? "#ffffff" : "#0f172a",
+    color: C.text, outline: "none", boxSizing: "border-box",
+  };
+  const lblStyle: React.CSSProperties = { display: "block", fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "5px" };
+
+  function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
+    return (
+      <div style={style}>
+        <label style={lblStyle}>{label}</label>
+        {children}
+      </div>
+    );
+  }
+
   const parsedLoc = defaultLocation ? parseLocation(defaultLocation) : null;
   const initialRack = item 
     ? parseLocation(item.location).rack 
@@ -179,33 +190,40 @@ export default function ItemFormModal({
       <div
         className="item-modal"
         style={{
-          width: "min(540px, 100%)",
+          width: "min(520px, 100%)",
           maxHeight: "90vh",
           overflowY: "auto",
-          background: PANEL,
-          border: `1px solid ${PANEL_BORDER}`,
+          background: C.card,
+          border: `1px solid ${C.border}`,
           borderRadius: "14px",
         }}
       >
         <style>{`
           .item-modal input, .item-modal select, .item-modal textarea {
-            background: var(--input-bg, #0f172a) !important;
-            color: var(--text-main, #f1f5f9) !important;
-            border: 1px solid var(--panel-border, #334155) !important;
-            border-radius: 6px !important;
-            padding: 8px 12px !important;
-            font-size: 13px !important;
+            background: ${isLightMode ? "#ffffff" : "#0f172a"} !important;
+            color: ${C.text} !important;
+            border: 1px solid ${C.border} !important;
+            border-radius: 10px !important;
+            padding: 11px 13px !important;
+            font-size: 14px !important;
             outline: none !important;
+            box-sizing: border-box !important;
             transition: border-color 0.15s ease-in-out !important;
           }
+          .item-modal input[type="checkbox"] {
+            border-radius: 3px !important;
+            padding: 0 !important;
+            width: 16px !important;
+            height: 16px !important;
+          }
           .item-modal input:focus, .item-modal select:focus, .item-modal textarea:focus {
-            border-color: #2563eb !important;
+            border-color: ${C.accent} !important;
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
           }
         `}</style>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${PANEL_BORDER}`, position: "sticky", top: 0, background: PANEL, zIndex: 1 }}>
-          <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0, color: TEXT_MAIN }}>{item ? "품목 수정" : "품목 추가"}</h2>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: TEXT_DIM, cursor: "pointer", display: "flex" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
+          <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0, color: C.text }}>{item ? "품목 수정" : "품목 추가"}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.label, cursor: "pointer", display: "flex" }}>
             <X size={20} />
           </button>
         </div>
@@ -225,7 +243,7 @@ export default function ItemFormModal({
               }}
               style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}
             >
-              <div style={{ flex: "0 0 96px", width: 96, height: 96, borderRadius: "12px", overflow: "hidden", border: `1px solid ${isDragging ? ACCENT : PANEL_BORDER}`, background: CARD_SUB, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <div style={{ flex: "0 0 96px", width: 96, height: 96, borderRadius: "12px", overflow: "hidden", border: `1px solid ${isDragging ? C.accent : C.border}`, background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {form.photo ? (
                   <img
                     src={form.photo.startsWith("data:image/") ? form.photo : getGoogleDriveImageUrl(form.photo)}
@@ -233,14 +251,14 @@ export default function ItemFormModal({
                     referrerPolicy="no-referrer"
                     style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   />
-                ) : <ImageIcon size={28} style={{ color: PANEL_BORDER }} />}
+                ) : <ImageIcon size={28} style={{ color: C.border }} />}
               </div>
               <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
                 <button
                   type="button"
                   onClick={() => document.getElementById("pc-item-photo-upload")?.click()}
                   disabled={isUploadingImage}
-                  style={{ padding: "10px", borderRadius: "10px", border: `1px dashed ${ACCENT}`, background: "rgba(37,99,235,0.09)", color: ACCENT_TEXT, cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+                  style={{ padding: "10px", borderRadius: "10px", border: `1px dashed ${C.accent}`, background: "rgba(37,99,235,0.09)", color: C.accentText, cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
                 >
                   <Upload size={14} /> {isUploadingImage ? "처리 중..." : "이미지 업로드"}
                 </button>
@@ -262,7 +280,7 @@ export default function ItemFormModal({
                   <button
                     type="button"
                     onClick={() => update("photo", "")}
-                    style={{ fontSize: "11px", color: ERROR, background: "none", border: "none", cursor: "pointer", textAlign: "left", fontWeight: 600, padding: 0 }}
+                    style={{ fontSize: "11px", color: C.error, background: "none", border: "none", cursor: "pointer", textAlign: "left", fontWeight: 600, padding: 0 }}
                   >
                     이미지 제거
                   </button>
@@ -288,7 +306,7 @@ export default function ItemFormModal({
                     setRackId(e.target.value);
                     setShelfPick("");
                   }}
-                  style={{ width: "100%", background: "var(--input-bg, #0f172a)", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "8px 12px", borderRadius: 6, fontSize: 13 }}
+                  style={inputStyle}
                 >
                   {racks.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -305,8 +323,8 @@ export default function ItemFormModal({
                     style={{
                       flex: 1,
                       background: shelfMode === "existing" ? "rgba(168,166,160,0.12)" : "transparent",
-                      border: `1px solid ${shelfMode === "existing" ? ACCENT_SOFT : PANEL_BORDER}`,
-                      color: shelfMode === "existing" ? TEXT_MAIN : TEXT_DIM,
+                      border: `1px solid ${shelfMode === "existing" ? C.accentSoft : C.border}`,
+                      color: shelfMode === "existing" ? C.text : C.label,
                       borderRadius: 6,
                       padding: "6px 8px",
                       fontSize: 11.5,
@@ -321,8 +339,8 @@ export default function ItemFormModal({
                     style={{
                       flex: 1,
                       background: shelfMode === "new" ? "rgba(168,166,160,0.12)" : "transparent",
-                      border: `1px solid ${shelfMode === "new" ? ACCENT_SOFT : PANEL_BORDER}`,
-                      color: shelfMode === "new" ? TEXT_MAIN : TEXT_DIM,
+                      border: `1px solid ${shelfMode === "new" ? C.accentSoft : C.border}`,
+                      color: shelfMode === "new" ? C.text : C.label,
                       borderRadius: 6,
                       padding: "6px 8px",
                       fontSize: 11.5,
@@ -337,7 +355,7 @@ export default function ItemFormModal({
                     <select
                       value={shelfPick}
                       onChange={(e) => setShelfPick(e.target.value)}
-                      style={{ width: "100%", background: "var(--input-bg, #0f172a)", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "8px 12px", borderRadius: 6, fontSize: 13 }}
+                      style={inputStyle}
                     >
                       <option value="">선반을 선택하세요</option>
                       {existingShelves.map((s) => (
@@ -347,13 +365,13 @@ export default function ItemFormModal({
                       ))}
                     </select>
                   ) : (
-                    <div style={{ fontSize: 12, color: TEXT_DIM }}>
+                    <div style={{ fontSize: 12, color: C.label }}>
                       이 랙에는 아직 활성 선반 위치가 없습니다. "새 선반 위치 만들기"를 진행해주세요.
                     </div>
                   )
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span className="mono" style={{ fontSize: 13, color: TEXT_DIM }}>
+                    <span className="mono" style={{ fontSize: 13, color: C.label }}>
                       {rackId}-
                     </span>
                     <input
@@ -369,7 +387,7 @@ export default function ItemFormModal({
           )}
 
           <div>
-            <label style={lblStyle}>품목명 <span style={{ color: ERROR }}>*</span></label>
+            <label style={lblStyle}>품목명 <span style={{ color: C.error }}>*</span></label>
             <input
               value={form.name}
               onChange={(e) => update("name", e.target.value)}
@@ -380,14 +398,14 @@ export default function ItemFormModal({
 
           <div style={{ marginBottom: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 700, color: ACCENT_TEXT }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: C.accentText }}>
                 선반 내 서브 분류 (예: 공구, M2 규격, M3 규격 등)
               </label>
               {existingSubcategories.length > 0 ? (
                 <button
                   type="button"
                   onClick={() => setSubMode((m) => (m === "select" ? "custom" : "select"))}
-                  style={{ background: "none", border: "none", color: ACCENT, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                  style={{ background: "none", border: "none", color: C.accent, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}
                 >
                   {subMode === "select" ? "직접 입력" : "목록에서 선택"}
                 </button>
@@ -397,17 +415,7 @@ export default function ItemFormModal({
               <select
                 value={form.spec}
                 onChange={(e) => update("spec", e.target.value)}
-                style={{
-                  width: "100%",
-                  background: "var(--input-bg, #0f172a)",
-                  color: TEXT_MAIN,
-                  border: "1px solid var(--panel-border, #334155)",
-                  borderRadius: "6px",
-                  padding: "10px 14px",
-                  fontSize: "13px",
-                  outline: "none",
-                  boxSizing: "border-box",
-                }}
+                style={inputStyle}
               >
                 <option value="">선택 안 함 (기타)</option>
                 {existingSubcategories.map((sub) => (
@@ -471,15 +479,16 @@ export default function ItemFormModal({
                   type="button"
                   onClick={() => update("stock", "N/A")}
                   style={{
-                    background: form.stock === "N/A" ? "#2563eb" : "rgba(255, 255, 255, 0.05)",
-                    border: "1px solid var(--panel-border, #334155)",
-                    borderRadius: "6px",
-                    padding: "0 10px",
-                    fontSize: "11px",
-                    color: form.stock === "N/A" ? "#ffffff" : "var(--text-dim, #94a3b8)",
+                    background: form.stock === "N/A" ? C.accent : C.accentSoft,
+                    border: `1px solid ${form.stock === "N/A" ? C.accent : C.border}`,
+                    borderRadius: "10px",
+                    padding: "0 12px",
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: form.stock === "N/A" ? "#ffffff" : C.label,
                     cursor: "pointer",
                     whiteSpace: "nowrap",
-                    height: "36px"
+                    flexShrink: 0,
                   }}
                 >
                   N/A 지정
@@ -491,10 +500,7 @@ export default function ItemFormModal({
                 value={form.manager}
                 onChange={(e) => update("manager", e.target.value)}
                 placeholder="담당자명"
-                style={{
-                  width: "100%",
-                  height: "36px"
-                }}
+                style={{ width: "100%" }}
               />
             </Field>
           </div>
@@ -510,16 +516,16 @@ export default function ItemFormModal({
 
           {/* 체크박스 묶음 — 시나리오 물품 편집과 동일하게 본문 맨 아래에 모아둔다 */}
           <div style={{ display: "flex", flexDirection: "column", gap: "10px", paddingTop: "4px" }}>
-            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer", fontSize: "13px", color: TEXT_MAIN, lineHeight: 1.5 }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer", fontSize: "13px", color: C.text, lineHeight: 1.5 }}>
               <input
                 type="checkbox"
                 checked={!!form.isConsumable}
                 onChange={(e) => update("isConsumable", e.target.checked)}
-                style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 1, flexShrink: 0 }}
+                style={{ width: 16, height: 16, accentColor: C.accent, marginTop: 1, flexShrink: 0 }}
               />
               <span>
                 🔥 소모성 물품
-                <span style={{ display: "block", fontSize: "11px", color: TEXT_DIM, marginTop: 2 }}>
+                <span style={{ display: "block", fontSize: "11px", color: C.label, marginTop: 2 }}>
                   대여자가 "대여"를 눌러도 자동으로 소모 처리되어 반납 대상에서 제외됩니다.
                 </span>
               </span>
@@ -527,10 +533,10 @@ export default function ItemFormModal({
           </div>
         </div>
 
-        <div style={{ padding: "16px 20px", borderTop: `1px solid ${PANEL_BORDER}`, display: "flex", gap: "10px", position: "sticky", bottom: 0, background: PANEL }}>
+        <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: "10px", position: "sticky", bottom: 0, background: C.card }}>
           <button
             onClick={onClose}
-            style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${PANEL_BORDER}`, background: "transparent", color: TEXT_DIM, cursor: "pointer", fontSize: "14px", fontWeight: 700 }}
+            style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${C.border}`, background: "transparent", color: C.label, cursor: "pointer", fontSize: "14px", fontWeight: 700 }}
           >
             취소
           </button>
@@ -542,7 +548,7 @@ export default function ItemFormModal({
               padding: "13px",
               borderRadius: "11px",
               border: "none",
-              background: ACCENT,
+              background: C.accent,
               color: "#fff",
               cursor: canSave ? "pointer" : "not-allowed",
               fontSize: "14px",
@@ -560,14 +566,5 @@ export default function ItemFormModal({
       </div>
     </div>,
     document.body
-  );
-}
-
-function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={style}>
-      <label style={lblStyle}>{label}</label>
-      {children}
-    </div>
   );
 }
