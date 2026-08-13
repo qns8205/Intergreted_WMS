@@ -2491,7 +2491,7 @@ export default function App() {
                     const base = window.location.href.split("#")[0];
                     window.open(`${base}#/${targetView}/direct`, "_blank");
                   }}
-                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리를 새 탭으로 열기" : "대여 & 반납 관리를 새 탭으로 열기") : undefined}
+                  title={sidebarCollapsed ? (otherSection === "items" ? "물품 관리" : "대여 & 반납 관리") : undefined}
                   style={{
                     width: "100%", padding: sidebarCollapsed ? "8px 0" : "7px 12px", borderRadius: 8,
                     display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 8, cursor: "pointer",
@@ -2501,7 +2501,7 @@ export default function App() {
                   }}
                 >
                   {otherSection === "items" ? <Package size={15} /> : <Undo2 size={15} />}
-                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리 새 탭으로 열기" : "대여 & 반납 관리 새 탭으로 열기"}</span>}
+                  {!sidebarCollapsed && <span>{otherSection === "items" ? "물품 관리" : "대여 & 반납 관리"}</span>}
                   {!sidebarCollapsed && <ExternalLink size={12} style={{ marginLeft: "auto", opacity: 0.6 }} />}
                 </button>
 
@@ -2878,7 +2878,7 @@ export default function App() {
             시나리오 물품 관리는 관리자만 사용할 수 있습니다.
           </div>
         ) : currentView === "scenario" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
             <ScenarioAdminPage
               scriptUrl={scriptUrl}
               connected={connected}
