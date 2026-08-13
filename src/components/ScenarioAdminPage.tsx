@@ -323,10 +323,17 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     return scoped.length > 0 ? scoped : allSubcategories;
   }, [items, editing?.category, allSubcategories]);
 
-  // 카테고리/서브카테고리를 드롭다운(select)으로 고를지, 직접 텍스트로 입력할지.
+  const sectors = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((it) => { if (it.sector) set.add(it.sector); });
+    return Array.from(set).sort();
+  }, [items]);
+
+  // 카테고리/서브카테고리/Sector를 드롭다운(select)으로 고를지, 직접 텍스트로 입력할지.
   // 기존 목록에 없는 값으로 편집을 열면(레거시 데이터), 값이 사라져 보이지 않도록 직접입력 모드로 시작한다.
   const [catCustom, setCatCustom] = useState(false);
   const [subcatCustom, setSubcatCustom] = useState(false);
+  const [sectorCustom, setSectorCustom] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim();
@@ -355,12 +362,14 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     // 기존 목록에 없는 값이면(레거시 데이터) 드롭다운에 안 보여서 값이 사라진 것처럼 보이니, 직접입력 모드로 연다.
     setCatCustom(!!it.category && !categories.includes(it.category));
     setSubcatCustom(!!it.subcategory && !allSubcategories.includes(it.subcategory));
+    setSectorCustom(!!it.sector && !sectors.includes(it.sector));
   }
   function openNew() {
     setEditing({ id: "", name: "", sector: "", rootSlot: "", category: "", subcategory: "", image: "", stock: 0 });
     setIsNew(true);
     setCatCustom(false);
     setSubcatCustom(false);
+    setSectorCustom(false);
   }
 
   async function handleFile(file: File) {
@@ -658,8 +667,24 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "4px" }}>
                 <div>
-                  <label style={lblStyle}>Sector</label>
-                  <input value={editing.sector || ""} onChange={(e) => setEditing((p) => (p ? { ...p, sector: e.target.value } : p))} placeholder="예: Seoul-Root" style={inputStyle} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <label style={lblStyle}>Sector</label>
+                    <button type="button" onClick={() => setSectorCustom((v) => !v)} style={{ background: "none", border: "none", color: C.accentText, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0, marginBottom: "5px" }}>
+                      {sectorCustom ? "목록에서 선택" : "직접 입력"}
+                    </button>
+                  </div>
+                  {sectorCustom ? (
+                    <input value={editing.sector || ""} onChange={(e) => setEditing((p) => (p ? { ...p, sector: e.target.value } : p))} placeholder="예: Seoul-Root" style={inputStyle} />
+                  ) : (
+                    <select
+                      value={sectors.includes(editing.sector || "") ? editing.sector : ""}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, sector: e.target.value } : p))}
+                      style={inputStyle}
+                    >
+                      <option value="">선택 안 함</option>
+                      {sectors.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label style={lblStyle}>재고</label>
