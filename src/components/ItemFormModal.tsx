@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { InventoryItem, Rack } from "../types";
-import { parseLocation, resizeAndCompressImage } from "../utils/drive";
-import { Upload, X, Camera, ImageIcon } from "lucide-react";
+import { parseLocation, resizeAndCompressImage, getGoogleDriveImageUrl } from "../utils/drive";
+import { Upload, X, Camera, ImageIcon, Save } from "lucide-react";
 
 interface ItemFormModalProps {
   item: InventoryItem | null;
@@ -22,6 +22,18 @@ const TEXT_MAIN = "var(--text-main, #f1f5f9)";
 const TEXT_DIM = "var(--text-dim, #94a3b8)";
 const ACCENT = "#2563eb";
 const ACCENT_SOFT = "#94a3b8";
+const ACCENT_TEXT = "var(--accent-text, #60a5fa)";
+const CARD_SUB = "var(--input-bg, #0f172a)";
+const ERROR = "#ef4444";
+
+// 시나리오 물품 편집 화면과 같은 라벨 스타일 (파란색 굵은 글씨)
+const lblStyle: React.CSSProperties = {
+  display: "block",
+  fontSize: "12px",
+  fontWeight: 700,
+  color: ACCENT_TEXT,
+  marginBottom: "5px",
+};
 
 export default function ItemFormModal({
   item,
@@ -153,12 +165,12 @@ export default function ItemFormModal({
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(10,10,11,0.7)",
+        zIndex: 2000,
+        background: "rgba(0,0,0,0.6)",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 2000,
-        backdropFilter: "blur(2px)",
+        padding: "16px",
       }}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -167,15 +179,12 @@ export default function ItemFormModal({
       <div
         className="item-modal"
         style={{
-          width: 540,
-          maxWidth: "94vw",
-          maxHeight: "88vh",
+          width: "min(540px, 100%)",
+          maxHeight: "90vh",
           overflowY: "auto",
           background: PANEL,
           border: `1px solid ${PANEL_BORDER}`,
-          borderRadius: 12,
-          padding: 24,
-          boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+          borderRadius: "14px",
         }}
       >
         <style>{`
@@ -194,14 +203,73 @@ export default function ItemFormModal({
             box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2) !important;
           }
         `}</style>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 16, fontWeight: 700 }}>{item ? "품목 수정" : "품목 추가"}</div>
-          <button onClick={onClose} style={{ background: "transparent", border: "none", color: TEXT_DIM, fontSize: 18, cursor: "pointer" }}>
-            ✕
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${PANEL_BORDER}`, position: "sticky", top: 0, background: PANEL, zIndex: 1 }}>
+          <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0, color: TEXT_MAIN }}>{item ? "품목 수정" : "품목 추가"}</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: TEXT_DIM, cursor: "pointer", display: "flex" }}>
+            <X size={20} />
           </button>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "20px" }}>
+          {/* 사진 — 시나리오 물품 편집과 동일하게 맨 위에 썸네일+업로드 버튼 형태로 배치 */}
+          <div>
+            <label style={lblStyle}>사진</label>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={async (e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file && file.type.startsWith("image/")) await processAndUploadFile(file);
+              }}
+              style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}
+            >
+              <div style={{ flex: "0 0 96px", width: 96, height: 96, borderRadius: "12px", overflow: "hidden", border: `1px solid ${isDragging ? ACCENT : PANEL_BORDER}`, background: CARD_SUB, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {form.photo ? (
+                  <img
+                    src={form.photo.startsWith("data:image/") ? form.photo : getGoogleDriveImageUrl(form.photo)}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : <ImageIcon size={28} style={{ color: PANEL_BORDER }} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => document.getElementById("pc-item-photo-upload")?.click()}
+                  disabled={isUploadingImage}
+                  style={{ padding: "10px", borderRadius: "10px", border: `1px dashed ${ACCENT}`, background: "rgba(37,99,235,0.09)", color: ACCENT_TEXT, cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+                >
+                  <Upload size={14} /> {isUploadingImage ? "처리 중..." : "이미지 업로드"}
+                </button>
+                <input
+                  type="file"
+                  id="pc-item-photo-upload"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={handlePhotoFileChange}
+                />
+                <input
+                  value={form.photo && form.photo.startsWith("data:image/") ? "" : form.photo}
+                  disabled={!!(form.photo && form.photo.startsWith("data:image/"))}
+                  onChange={(e) => update("photo", e.target.value)}
+                  placeholder={form.photo && form.photo.startsWith("data:image/") ? "파일이 업로드되었습니다" : "드라이브 공유 링크 직접 입력"}
+                  style={{ width: "100%", fontSize: "12px", opacity: form.photo && form.photo.startsWith("data:image/") ? 0.6 : 1 }}
+                />
+                {form.photo ? (
+                  <button
+                    type="button"
+                    onClick={() => update("photo", "")}
+                    style={{ fontSize: "11px", color: ERROR, background: "none", border: "none", cursor: "pointer", textAlign: "left", fontWeight: 600, padding: 0 }}
+                  >
+                    이미지 제거
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
           {item ? (
             <Field label="위치 (코드)">
               <input
@@ -220,7 +288,7 @@ export default function ItemFormModal({
                     setRackId(e.target.value);
                     setShelfPick("");
                   }}
-                  style={{ width: "100%", background: "#101114", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "6px 10px", borderRadius: 6 }}
+                  style={{ width: "100%", background: "var(--input-bg, #0f172a)", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "8px 12px", borderRadius: 6, fontSize: 13 }}
                 >
                   {racks.map((r) => (
                     <option key={r.id} value={r.id}>
@@ -269,7 +337,7 @@ export default function ItemFormModal({
                     <select
                       value={shelfPick}
                       onChange={(e) => setShelfPick(e.target.value)}
-                      style={{ width: "100%", background: "#101114", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "6px 10px", borderRadius: 6 }}
+                      style={{ width: "100%", background: "var(--input-bg, #0f172a)", color: TEXT_MAIN, border: `1px solid ${PANEL_BORDER}`, padding: "8px 12px", borderRadius: 6, fontSize: 13 }}
                     >
                       <option value="">선반을 선택하세요</option>
                       {existingShelves.map((s) => (
@@ -300,18 +368,19 @@ export default function ItemFormModal({
             </>
           )}
 
-          <Field label="품목명">
+          <div>
+            <label style={lblStyle}>품목명 <span style={{ color: ERROR }}>*</span></label>
             <input
               value={form.name}
               onChange={(e) => update("name", e.target.value)}
               placeholder="품목 이름 입력"
               style={{ width: "100%" }}
             />
-          </Field>
+          </div>
 
           <div style={{ marginBottom: "16px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "6px" }}>
-              <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: ACCENT_TEXT }}>
                 선반 내 서브 분류 (예: 공구, M2 규격, M3 규격 등)
               </label>
               {existingSubcategories.length > 0 ? (
@@ -364,18 +433,6 @@ export default function ItemFormModal({
               placeholder="특이사항 또는 주의사항 입력"
               style={{ width: "100%" }}
             />
-          </Field>
-
-          <Field label="소모성 물품">
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", fontSize: "13px" }}>
-              <input
-                type="checkbox"
-                checked={!!form.isConsumable}
-                onChange={(e) => update("isConsumable", e.target.checked)}
-                style={{ width: 16, height: 16, accentColor: "#2563eb" }}
-              />
-              이 물품은 항상 소모로 처리 (대여자가 "대여"를 눌러도 자동으로 소모 처리되어 반납 대상에서 제외됩니다)
-            </label>
           </Field>
 
           <Field label="🔎 한글 검색어 (선택)">
@@ -442,105 +499,6 @@ export default function ItemFormModal({
             </Field>
           </div>
 
-          <Field label="사진 등록 (구글 드라이브 주소 또는 이미지 파일 직접 업로드)">
-            <input
-              value={form.photo && form.photo.startsWith("data:image/") ? "" : form.photo}
-              disabled={!!(form.photo && form.photo.startsWith("data:image/"))}
-              onChange={(e) => update("photo", e.target.value)}
-              placeholder={form.photo && form.photo.startsWith("data:image/") ? "파일이 업로드되었습니다" : "구글 드라이브 공유 링크나 이미지 URL 주소를 입력하세요"}
-              style={{ width: "100%", opacity: form.photo && form.photo.startsWith("data:image/") ? 0.6 : 1 }}
-            />
-            
-            <div
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={async (e) => {
-                e.preventDefault();
-                setIsDragging(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file && file.type.startsWith("image/")) {
-                  await processAndUploadFile(file);
-                }
-              }}
-              style={{
-                border: `1px dashed ${isDragging ? "#2563eb" : PANEL_BORDER}`,
-                background: isDragging ? "rgba(37, 99, 235, 0.05)" : "rgba(255, 255, 255, 0.02)",
-                borderRadius: 8,
-                padding: "14px",
-                textAlign: "center",
-                cursor: "pointer",
-                marginTop: 8,
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6
-              }}
-              onClick={() => document.getElementById("pc-item-photo-upload")?.click()}
-            >
-              <input
-                type="file"
-                id="pc-item-photo-upload"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={handlePhotoFileChange}
-              />
-              {form.photo && form.photo.startsWith("data:image/") ? (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%" }}>
-                  <img
-                    src={form.photo}
-                    alt="Preview"
-                    style={{ width: 40, height: 40, borderRadius: 6, objectFit: "cover" }}
-                  />
-                  <div style={{ textAlign: "left" }}>
-                    <span style={{ fontSize: 11, fontWeight: "bold", color: "#5b6472", display: "block" }}>
-                      📸 이미지 직접 등록 준비 완료
-                    </span>
-                    <span style={{ fontSize: 9.5, color: TEXT_DIM, display: "block" }}>
-                      저장 시 클라우드 드라이브에 자동 업로드됩니다.
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      update("photo", "");
-                    }}
-                    style={{
-                      background: "rgba(239, 68, 68, 0.15)",
-                      color: "#f43f5e",
-                      border: "none",
-                      borderRadius: 4,
-                      padding: "2px 6px",
-                      fontSize: 10,
-                      cursor: "pointer",
-                      fontWeight: "bold",
-                      marginLeft: "auto"
-                    }}
-                  >
-                    삭제
-                  </button>
-                </div>
-              ) : isUploadingImage ? (
-                <span style={{ fontSize: 11, color: TEXT_DIM }}>이미지 변환 및 등록 대기 중...</span>
-              ) : (
-                <>
-                  <Upload size={16} color={isDragging ? "#2563eb" : TEXT_DIM} />
-                  <span style={{ fontSize: 11.5, color: TEXT_MAIN, fontWeight: 500 }}>
-                    클릭하거나 이미지 파일을 여기로 드래그하여 직접 업로드
-                  </span>
-                  <span style={{ fontSize: 9.5, color: TEXT_DIM }}>
-                    (선택한 이미지는 구글 드라이브 지정 폴더에 자동 업로드되어 안전하게 관리됩니다)
-                  </span>
-                </>
-              )}
-            </div>
-            
-            <span style={{ fontSize: 10, color: TEXT_DIM, marginTop: 4, display: "block" }}>
-              * 드라이브 공유 링크를 직접 입력하거나, 이미지 파일을 직접 업로드해 오브젝트 이름으로 관리할 수 있습니다.
-            </span>
-          </Field>
-
           <Field label="구매링크">
             <input
               value={form.link}
@@ -549,41 +507,54 @@ export default function ItemFormModal({
               style={{ width: "100%" }}
             />
           </Field>
+
+          {/* 체크박스 묶음 — 시나리오 물품 편집과 동일하게 본문 맨 아래에 모아둔다 */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", paddingTop: "4px" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer", fontSize: "13px", color: TEXT_MAIN, lineHeight: 1.5 }}>
+              <input
+                type="checkbox"
+                checked={!!form.isConsumable}
+                onChange={(e) => update("isConsumable", e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: ACCENT, marginTop: 1, flexShrink: 0 }}
+              />
+              <span>
+                🔥 소모성 물품
+                <span style={{ display: "block", fontSize: "11px", color: TEXT_DIM, marginTop: 2 }}>
+                  대여자가 "대여"를 눌러도 자동으로 소모 처리되어 반납 대상에서 제외됩니다.
+                </span>
+              </span>
+            </label>
+          </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+        <div style={{ padding: "16px 20px", borderTop: `1px solid ${PANEL_BORDER}`, display: "flex", gap: "10px", position: "sticky", bottom: 0, background: PANEL }}>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: "13px", borderRadius: "11px", border: `1px solid ${PANEL_BORDER}`, background: "transparent", color: TEXT_DIM, cursor: "pointer", fontSize: "14px", fontWeight: 700 }}
+          >
+            취소
+          </button>
           <button
             onClick={() => onSave({ ...form, location })}
             disabled={!canSave}
             style={{
-              flex: 1,
+              flex: 2,
+              padding: "13px",
+              borderRadius: "11px",
+              border: "none",
               background: ACCENT,
-              border: `1px solid ${ACCENT}`,
-              color: "#15161A",
-              borderRadius: 7,
-              padding: "11px 0",
-              fontSize: 13.5,
-              fontWeight: 600,
+              color: "#fff",
+              cursor: canSave ? "pointer" : "not-allowed",
+              fontSize: "14px",
+              fontWeight: 700,
               opacity: !canSave ? 0.5 : 1,
-              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
             }}
           >
-            저장
-          </button>
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1,
-              background: "transparent",
-              border: `1px solid ${PANEL_BORDER}`,
-              color: TEXT_DIM,
-              borderRadius: 7,
-              padding: "11px 0",
-              fontSize: 13.5,
-              cursor: "pointer",
-            }}
-          >
-            취소
+            <Save size={15} /> {item ? "저장하기" : "추가하기"}
           </button>
         </div>
       </div>
@@ -595,7 +566,7 @@ export default function ItemFormModal({
 function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={style}>
-      <label style={{ fontSize: 11.5, color: TEXT_DIM, display: "block", marginBottom: 5 }}>{label}</label>
+      <label style={lblStyle}>{label}</label>
       {children}
     </div>
   );
