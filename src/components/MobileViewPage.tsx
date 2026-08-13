@@ -240,6 +240,11 @@ export default function MobileViewPage({
     sciItems.forEach((it) => { if (it.category) set.add(it.category); });
     return Array.from(set).sort();
   }, [sciItems]);
+  const sciSectors = useMemo(() => {
+    const set = new Set<string>();
+    sciItems.forEach((it) => { if (it.sector) set.add(it.sector); });
+    return Array.from(set).sort();
+  }, [sciItems]);
   const sciAllSubcategories = useMemo(() => {
     const set = new Set<string>();
     sciItems.forEach((it) => { if (it.subcategory) set.add(it.subcategory); });
@@ -254,6 +259,7 @@ export default function MobileViewPage({
     return scoped.length > 0 ? scoped : sciAllSubcategories;
   }, [sciItems, sciForm.category, sciAllSubcategories]);
   const [sciCatCustom, setSciCatCustom] = useState(false);
+  const [sciSectorCustom, setSciSectorCustom] = useState(false);
   const [sciSubcatCustom, setSciSubcatCustom] = useState(false);
   const [sciEditing, setSciEditing] = useState(false);
   const [sciSaving, setSciSaving] = useState(false);
@@ -294,6 +300,7 @@ export default function MobileViewPage({
     setScenarioTab("register");
     setSciCatCustom(false);
     setSciSubcatCustom(false);
+    setSciSectorCustom(false);
   }
   function openSciEdit(item: ScenarioObjectAdmin) {
     setSciForm({ ...item });
@@ -302,6 +309,7 @@ export default function MobileViewPage({
     // 기존 목록에 없는 값이면(레거시 데이터) 드롭다운에 안 보이니 직접입력 모드로 연다.
     setSciCatCustom(!!item.category && !sciCategories.includes(item.category));
     setSciSubcatCustom(!!item.subcategory && !sciAllSubcategories.includes(item.subcategory));
+    setSciSectorCustom(!!item.sector && !sciSectors.includes(item.sector));
   }
 
   async function handleSciPhoto(file: File) {
@@ -2340,9 +2348,29 @@ export default function MobileViewPage({
                       value={sciForm.stock} onChange={(e) => setSciForm((f) => ({ ...f, stock: Math.max(0, Number(e.target.value)) }))} style={inputBaseStyle} />
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>구역(sector)</label>
-                    <input className="mvp-input" type="text" placeholder="예: Seoul-Root"
-                      value={sciForm.sector} onChange={(e) => setSciForm((f) => ({ ...f, sector: e.target.value }))} style={inputBaseStyle} />
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <label style={{ fontSize: "12px", fontWeight: 700, color: TEXT_DIM }}>구역(sector)</label>
+                      <button type="button" onClick={() => setSciSectorCustom((v) => !v)} style={{ background: "none", border: "none", color: ACCENT_LIGHT, fontSize: "11px", fontWeight: 700, cursor: "pointer", padding: 0 }}>
+                        {sciSectorCustom ? "목록에서 선택" : "직접 입력"}
+                      </button>
+                    </div>
+                    {sciSectorCustom ? (
+                      <input className="mvp-input" type="text" placeholder="예: Seoul-Root"
+                        value={sciForm.sector} onChange={(e) => setSciForm((f) => ({ ...f, sector: e.target.value }))} style={inputBaseStyle} />
+                    ) : (
+                      <div style={{ position: "relative" }}>
+                        <select
+                          className="mvp-input"
+                          value={sciSectors.includes(sciForm.sector || "") ? sciForm.sector : ""}
+                          onChange={(e) => setSciForm((f) => ({ ...f, sector: e.target.value }))}
+                          style={{ ...inputBaseStyle, appearance: "none", WebkitAppearance: "none", paddingRight: "34px" }}
+                        >
+                          <option value="">선택 안 함</option>
+                          {sciSectors.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <ChevronDown size={16} color={TEXT_DIM} style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                      </div>
+                    )}
                   </div>
                 </div>
 
