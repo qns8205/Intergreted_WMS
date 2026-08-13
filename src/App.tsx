@@ -3025,6 +3025,7 @@ export default function App() {
       {(showAddForm || editingItem) && (
         <ItemFormModal
           item={editingItem}
+          isLightMode={isLightMode}
           defaultRackId={selectedRack ? selectedRack.id : racks[0] ? racks[0].id : ""}
           defaultLocation={defaultLocationForNewItem}
           defaultSpec={defaultSpecForNewItem}
