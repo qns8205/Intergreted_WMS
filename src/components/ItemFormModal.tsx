@@ -183,9 +183,6 @@ export default function ItemFormModal({
         justifyContent: "center",
         padding: "16px",
       }}
-      onPointerDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
     >
       <div
         className="item-modal"
