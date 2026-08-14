@@ -1478,11 +1478,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
       {swapTarget ? (
         <div
-          onClick={() => !swapping && setSwapTarget(null)}
           style={{ position: "fixed", inset: 0, zIndex: 4100, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
         >
           <div
-            onClick={(e) => e.stopPropagation()}
             style={{ width: "min(560px, 100%)", maxHeight: "84vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px" }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
