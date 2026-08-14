@@ -145,7 +145,10 @@ function doGet(e) {
     
     // ─────────────── 대여 시스템(구 BorrowForm) GET 액션 ───────────────
     if (action === "getObjectItems") {
-      return responseJSON({ success: true, items: getObjectItems() });
+      // 대여자가 실제로 고를 수 있는 카탈로그이므로, 보관 처리된(파손 등으로 치워둔) 물품은 뺀다.
+      // (getObjectItems() 자체는 다른 내부 조회에서도 두루 쓰이므로 함수 안에서는 안 거르고,
+      //  여기 이 응답에서만 거른다)
+      return responseJSON({ success: true, items: getObjectItems().filter(function (o) { return !o.archived; }) });
     }
     if (action === "getScenarioObjectsForAdmin") {
       return responseJSON({ success: true, items: getScenarioObjectsForAdmin_(e.parameter.forceRefresh === "1") });
@@ -462,6 +465,7 @@ function doPost(e) {
         // 로그는 한 번에 append, 재고는 시트를 한 번만 읽고 바뀐 행만 쓴다.
         var okCount = 0, failed = [];
         var logRows = [];
+        var stockChangeRows = []; // 소모 처리분을 모아뒀다가 재고변경이력에도 한 번에 쓴다
         var nowStr = formatDate(new Date());
 
         var invLastRow = bulkSheet.getLastRow();
@@ -506,8 +510,8 @@ function doPost(e) {
                 // 소모는 재고가 실제로 영구히 줄어드는 것이므로 재고변경이력에도 정확한
                 // 스냅샷(그 시점까지의 누적 반영 전/후 값)으로 남긴다.
                 if (it.type === "소모") {
-                  logStockChange_(ss, "공구 및 부품류", it.location || "", it.name || "", cur, nextStock,
-                    "소모 처리" + (it.note ? " (" + it.note + ")" : ""), it.user || "-");
+                  stockChangeRows.push([nowStr, "공구 및 부품류", it.location || "", it.name || "", cur, nextStock, nextStock - cur,
+                    "소모 처리" + (it.note ? " (" + it.note + ")" : ""), it.user || "-"]);
                 }
               }
             }
@@ -520,6 +524,7 @@ function doPost(e) {
         if (logRows.length) {
           bulkRentSheet.getRange(bulkRentSheet.getLastRow() + 1, 1, logRows.length, 7).setValues(logRows);
         }
+        appendStockChangeRows_(ss, stockChangeRows);
 
         // 대여/소모 신청이 들어오면 관리자들에게 DM으로 알린다 (반납은 제외)
         try {
@@ -1451,19 +1456,36 @@ function getSeatLocationMapCached_(ss) {
 // 대여/반납/교체 등 로그가 바뀌는 작업 뒤에 호출해 관련 캐시를 모두 비운다.
 function invalidateLogCaches_() {
   bumpDataVersion_(); // 계산 중이던 다른 요청이 낡은 결과로 캐시를 덮어쓰지 못하게 세대를 올린다
-  cacheRemoveLarge_("unreturnedItems_v2");
-  cacheRemoveLarge_("objectItems_v1");
-  cacheRemoveLarge_("seatLocMap_v1");
-  cacheRemoveLarge_("rentedCounts_v1");
-  var scopes = ["all", "unreturned", "returned"];
-  var days = ["0", "4", "7", "14"];
-  for (var d = 0; d < days.length; d++) {
-    for (var sc = 0; sc < scopes.length; sc++) {
-      cacheRemoveLarge_("scenarioAllLogs_v2_" + days[d] + "_" + scopes[sc] + "_s");
-      cacheRemoveLarge_("scenarioAllLogs_v2_" + days[d] + "_" + scopes[sc] + "_f");
+
+  // 대여/반납 같은 액션마다 이 함수가 불리는데, cacheRemoveLarge_()를 반복 호출하면
+  // 그때마다 CacheService 왕복이 두 번씩(get + removeAll) 일어나 액션 하나에만 56번 가까이
+  // 왕복이 생겼다 — 이게 사이트 전체가 느려진 주된 원인이었다. 여기서는 필요한 "_n" 키를
+  // 한 번에 조회하고, 지울 키를 전부 모아 removeAll을 딱 한 번만 부르도록 묶는다.
+  try {
+    var cache = CacheService.getScriptCache();
+    var baseKeys = ["unreturnedItems_v2", "objectItems_v1", "seatLocMap_v1", "rentedCounts_v1"];
+    var scopes = ["all", "unreturned", "returned"];
+    var days = ["0", "4", "7", "14"];
+    for (var d = 0; d < days.length; d++) {
+      for (var sc = 0; sc < scopes.length; sc++) {
+        baseKeys.push("scenarioAllLogs_v2_" + days[d] + "_" + scopes[sc] + "_s");
+        baseKeys.push("scenarioAllLogs_v2_" + days[d] + "_" + scopes[sc] + "_f");
+      }
     }
-  }
-  try { CacheService.getScriptCache().remove("leastBorrowed_v1_20"); } catch (e) {}
+
+    var nKeys = baseKeys.map(function (k) { return k + "_n"; });
+    var chunkCounts = cache.getAll(nKeys); // 한 번의 왕복으로 전부 조회
+
+    var allKeysToRemove = nKeys.concat(["leastBorrowed_v1_20"]);
+    baseKeys.forEach(function (k) {
+      var n = parseInt(chunkCounts[k + "_n"], 10);
+      if (n && !isNaN(n)) {
+        for (var i = 0; i < n; i++) allKeysToRemove.push(k + "_p" + i);
+      }
+    });
+
+    cache.removeAll(allKeysToRemove); // 한 번의 왕복으로 전부 삭제
+  } catch (e) { /* 캐시 실패는 무시 — 다음 조회가 캐시 미스로 처리되면 그만이다 */ }
 }
 
 // getAll 캐시를 강제로 비운다. 물품/로그 등 데이터가 바뀌는 모든 쓰기 작업 뒤에 호출해,
@@ -1877,7 +1899,7 @@ function getFormHtml(inventory) {
 //  3) 테스트 채널을 만들고 봇 초대(/invite @봇이름) → 그 채널 ID를 SLACK_CHANNEL_ID 에 입력
 //  4) 메뉴 "물품 관리 → Slack 스레드 댓글 테스트" 로 검증 후, 실채널 ID로 교체
 //  ※ Incoming Webhook, 웹훅 URL은 더 이상 필요 없습니다.
-var SLACK_BOT_TOKEN = "API Key";
+var SLACK_BOT_TOKEN = "xoxb-8631374157207-11505697586832-8LylhPWxS5eAuAroKpLnRAc6";
 var SLACK_CHANNEL_ID = "C0BBYDMTQUB";
 var OBJECT_DETAIL_BASE_URL = "http://scenario-manager.tailb971f6.ts.net/object_detail/";
 
@@ -2031,7 +2053,7 @@ function getObjectItems() {
   if (lastRow < 2) return [];
 
   var lastCol = sheet.getLastColumn();
-  var colsToRead = Math.min(lastCol, 16); // P열(개인 물품 소유자)까지 읽는다
+  var colsToRead = Math.min(lastCol, 17); // Q열(보관 처리 여부)까지 읽는다
   if (colsToRead < 1) return [];
 
   var data = sheet.getRange(2, 1, lastRow - 1, colsToRead).getValues();
@@ -2061,10 +2083,12 @@ function getObjectItems() {
     }
     // M열(12): 깨질 위험 / N열(13): 화재 위험 / O열(14): 특정 업체 request용 물품(업체명, 빈 값이면 해당 없음)
     // P열(15): 개인 물품 여부(소유자명, 빈 값이면 개인 물품 아님)
+    // Q열(16): 보관 처리(파손/오브젝트로 사용 불가 등으로 목록·대여 카탈로그에서 치워둠)
     var fragile = colsToRead > 12 ? String(row[12] || "").trim().toUpperCase() === "Y" : false;
     var fireRisk = colsToRead > 13 ? String(row[13] || "").trim().toUpperCase() === "Y" : false;
     var requestFor = colsToRead > 14 ? (String(row[14] || "").trim() || undefined) : undefined;
     var personalOwner = colsToRead > 15 ? (String(row[15] || "").trim() || undefined) : undefined;
+    var archived = colsToRead > 16 ? String(row[16] || "").trim().toUpperCase() === "Y" : false;
 
     result.push({
       id: id,
@@ -2080,7 +2104,8 @@ function getObjectItems() {
       fragile: fragile,
       fireRisk: fireRisk,
       requestFor: requestFor,
-      personalOwner: personalOwner
+      personalOwner: personalOwner,
+      archived: archived
     });
   }
   // 시트에 수동으로 유지되는 '대여' 카운터 대신, 실제 미반납 로그에서 방금 집계한
@@ -2114,7 +2139,7 @@ function getScenarioObjectsForAdmin_(forceRefresh) {
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  var lastCol = Math.max(sheet.getLastColumn(), 16);
+  var lastCol = Math.max(sheet.getLastColumn(), 17);
   var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var result = [];
   for (var i = 0; i < data.length; i++) {
@@ -2135,7 +2160,8 @@ function getScenarioObjectsForAdmin_(forceRefresh) {
       fragile: String(row[12] || "").trim().toUpperCase() === "Y",
       fireRisk: String(row[13] || "").trim().toUpperCase() === "Y",
       requestFor: String(row[14] || "").trim() || undefined,
-      personalOwner: String(row[15] || "").trim() || undefined
+      personalOwner: String(row[15] || "").trim() || undefined,
+      archived: String(row[16] || "").trim().toUpperCase() === "Y"
     });
   }
   // 시트의 수동 '대여' 카운터 대신 실제 미반납 로그에서 집계한 값으로 덮어쓴다.
@@ -2159,7 +2185,7 @@ function updateScenarioObject_(item) {
   if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
   var rowIndex = Number(item.rowIndex);
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
-  var lastCol = Math.max(sheet.getLastColumn(), 16);
+  var lastCol = Math.max(sheet.getLastColumn(), 17);
   var range = sheet.getRange(rowIndex, 1, 1, lastCol);
   var cur = range.getValues()[0];
 
@@ -2178,19 +2204,22 @@ function updateScenarioObject_(item) {
     }
   }
   if (item.excludeFromRanking !== undefined) {
-    cur[9] = item.excludeFromRanking ? "Y" : "N";
+    cur[9] = item.excludeFromRanking ? "Y" : "";
   }
   if (item.fragile !== undefined) {
-    cur[12] = item.fragile ? "Y" : "N";
+    cur[12] = item.fragile ? "Y" : "";
   }
   if (item.fireRisk !== undefined) {
-    cur[13] = item.fireRisk ? "Y" : "N";
+    cur[13] = item.fireRisk ? "Y" : "";
   }
   if (item.requestFor !== undefined) {
     cur[14] = String(item.requestFor || "").trim();
   }
   if (item.personalOwner !== undefined) {
     cur[15] = String(item.personalOwner || "").trim();
+  }
+  if (item.archived !== undefined) {
+    cur[16] = item.archived ? "Y" : "";
   }
   range.setValues([cur]);
   return {
@@ -2204,7 +2233,8 @@ function updateScenarioObject_(item) {
     fragile: String(cur[12] || "").trim().toUpperCase() === "Y",
     fireRisk: String(cur[13] || "").trim().toUpperCase() === "Y",
     requestFor: String(cur[14] || "").trim() || undefined,
-    personalOwner: String(cur[15] || "").trim() || undefined
+    personalOwner: String(cur[15] || "").trim() || undefined,
+    archived: String(cur[16] || "").trim().toUpperCase() === "Y"
   };
 }
 
@@ -2226,14 +2256,14 @@ function addScenarioObject_(item) {
     img,
     (item.stock === "" || item.stock == null) ? 0 : Number(item.stock),
     0,
-    item.excludeFromRanking ? "Y" : "N"
+    item.excludeFromRanking ? "Y" : ""
   ];
   sheet.getRange(nextRow, 1, 1, rowValuesAJ.length).setValues([rowValuesAJ]);
 
   // M~P열: 깨질 위험 / 화재 위험 / request 대상 업체명 / 개인 물품 소유자 — K, L열과 별개 범위로 따로 쓴다
   var rowValuesMP = [
-    item.fragile ? "Y" : "N",                // M열: 깨질 위험
-    item.fireRisk ? "Y" : "N",               // N열: 화재 위험
+    item.fragile ? "Y" : "",                // M열: 깨질 위험
+    item.fireRisk ? "Y" : "",               // N열: 화재 위험
     String(item.requestFor || "").trim(),    // O열: request 대상 업체명 (빈 값이면 해당 없음)
     String(item.personalOwner || "").trim()  // P열: 개인 물품 소유자 (빈 값이면 개인 물품 아님)
   ];
@@ -2947,6 +2977,11 @@ function onOpen() {
     .addItem("현재 버전을 최신으로 등록(배포 직후 실행)", "publishCurrentVersion")
     .addItem("현재 서버 버전 확인", "현재버전확인")
     .addItem("로그 시트 헤더 보강(최초 1회)", "migrateGeneralSheetColumns")
+    .addSeparator()
+    .addItem("🗄 보관 대상 미리보기(옮기지 않음)", "previewArchiveOldLogs")
+    .addItem("🗄 오래된 완료 로그 지금 보관", "archiveOldLogs")
+    .addItem("🗄 자동 보관 설정(매주 일요일 새벽 4시)", "setupArchiveTrigger")
+    .addItem("🗄 자동 보관 해제", "removeArchiveTrigger")
     .addToUi();
 }
 
@@ -3625,8 +3660,10 @@ function recordBorrow(borrowList, clientVersion) {
     var ts = postSlackMessage_(boxWrap_(mainText));
     var slackNote = "";
     if (ts) {
-      generalRows.forEach(function (r) { generalSheet.getRange(r, 10).setValue(ts); });
-      scenarioRows.forEach(function (r) { scenarioSheet.getRange(r, 9).setValue(ts); });
+      // 물품 하나마다 setValue를 부르면 그 개수만큼 시트 왕복이 생겨 느려진다.
+      // 행 번호는 대체로 연속이므로, 연속 구간끼리 묶어 한 번에 쓴다.
+      writeSameValueToRows_(generalSheet, generalRows, 10, ts);
+      writeSameValueToRows_(scenarioSheet, scenarioRows, 9, ts);
       if (objLines.length) postThreadReply_(replyText, ts);
     } else {
       // 봇 메인 메시지 실패 시: 스레드 없이 단일 메시지로라도 재시도
@@ -3636,16 +3673,30 @@ function recordBorrow(borrowList, clientVersion) {
         : " (Slack 발송 실패: " + lastSlackError_ + " — 봇을 채널에 초대했는지 확인하세요)";
     }
     // 재고변경이력에도 남긴다. 재고(총 보유수량) 자체는 안 바뀌지만, "대여 중" 수량 변화를 추적한다.
+    // (물품이 여러 종류여도 시트 쓰기는 한 번만 — 안 그러면 물품 수만큼 왕복이 생겨 느려진다)
     try {
       var borrowerNameForLog = borrowList[0].borrowerName || "-";
+      var borrowLogRows = [];
+      var logStamp = formatDate(new Date());
       for (var logId in serverRequestedTotals) {
         var logReq = serverRequestedTotals[logId];
         var logInv = inventoryMap[logId];
         var logOldRented = logInv ? (logInv.rented || 0) : 0;
-        logStockChange_(ss, "시나리오 물품", logId, logReq.name, logOldRented, logOldRented + logReq.quantity,
-          "대여 처리 (" + borrowerNameForLog + ") — 재고 아님, 대여 중 수량 변화", borrowerNameForLog);
+        var logNewRented = logOldRented + logReq.quantity;
+        borrowLogRows.push([logStamp, "시나리오 물품", logId, logReq.name, logOldRented, logNewRented, logNewRented - logOldRented,
+          "대여 처리 (" + borrowerNameForLog + ") — 재고 아님, 대여 중 수량 변화", borrowerNameForLog]);
       }
+      appendStockChangeRows_(ss, borrowLogRows);
     } catch (logErr) { /* 이력 기록 실패는 대여 처리 자체를 막지 않는다 */ }
+
+    // 관리자가 "추가 대여"로 직접 처리한 경우: 실물을 관리자가 바로 건네주는 것이므로
+    // 별도의 "대여 확인" 단계 없이 이 자리에서 바로 확인 완료 처리한다.
+    // (일반 신청자의 셀프서비스 대여는 이 플래그가 없어 기존처럼 확인 단계를 거친다)
+    if (borrowList[0] && borrowList[0].autoConfirmPickup) {
+      var pickupStamp = formatDate(new Date());
+      writeSameValueToRows_(scenarioSheet, scenarioRows, 13, pickupStamp); // M열
+      writeSameValueToRows_(generalSheet, generalRows, 14, pickupStamp);   // N열
+    }
 
     return { success: true, message: "SID " + scenarioCount + "건, 일반 물품 " + generalCount + "개를 기록했습니다." + slackNote };
   } catch (e) { return { success: false, message: "대여 기록 중 오류: " + e.message }; }
@@ -3789,15 +3840,16 @@ function getLeastBorrowedItems_(ss, limit) {
   } catch (e) { /* 캐시 실패 시 그냥 계산 */ }
 
   // 1) 카탈로그: 이름을 0으로 깔아둔다 (한 번도 대여 안 된 물품이 상위에 오도록).
-  //    랭킹 제외(J열 = "Y") 물품은 아예 제외한다.
+  //    랭킹 제외(J열 = "Y") 물품과 보관 처리(Q열 = "Y") 물품은 아예 제외한다.
   var counts = {};
   var objSheet = ss.getSheetByName(OBJECT_SHEET_NAME);
   if (objSheet && objSheet.getLastRow() > 1) {
-    var objRows = objSheet.getRange(2, 1, objSheet.getLastRow() - 1, 10).getValues();
+    var objRows = objSheet.getRange(2, 1, objSheet.getLastRow() - 1, Math.max(objSheet.getLastColumn(), 17)).getValues();
     for (var i = 0; i < objRows.length; i++) {
       var nm = String(objRows[i][1] || "").trim();
       if (!nm) continue;
       if (String(objRows[i][9] || "").trim().toUpperCase() === "Y") continue; // 랭킹 제외
+      if (String(objRows[i][16] || "").trim().toUpperCase() === "Y") continue; // 보관 처리됨
       counts[nm] = 0;
     }
   }
@@ -4224,8 +4276,13 @@ function swapBorrowItem_(ss, payload) {
       newRow = [borrower, newId, newObj.name, newQty, today, purpose, "X", "", email, "", batchId, now, generalOption];
     }
     sheet.appendRow(newRow);
+    var newSwapRowIndex = sheet.getLastRow();
     accInventory_(swapChanges, newId, newQty);
     updateInventoryBatch_(swapChanges);
+
+    // 물품 교체는 항상 관리자가 직접 처리하는 작업이라(실물을 관리자가 바로 건네줌),
+    // 새로 대여 기록된 물품도 별도의 "대여 확인" 단계 없이 바로 확인 완료로 처리한다.
+    sheet.getRange(newSwapRowIndex, isScenario ? 13 : 14).setValue(today); // M열(시나리오) / N열(일반)
 
     // 재고변경이력에 두 줄 남긴다 — 기존 물품은 반납(대여 중 감소), 새 물품은 대여(대여 중 증가)
     try {
@@ -4283,21 +4340,37 @@ function confirmPickup_(items) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var scenarioSheet = ss.getSheetByName(SCENARIO_SHEET_NAME);
   var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
-  var now = new Date();
-  var stamp = Utilities.formatDate(now, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+  var stamp = formatDate(new Date());
   var processed = 0;
 
-  items.forEach(function (it) {
-    var isScenario = it.sheetType === "scenario";
-    var sheet = isScenario ? scenarioSheet : generalSheet;
-    if (!sheet || !it.rowIndex || it.rowIndex < 2) return;
-    var returnedCol = isScenario ? 6 : 7; // F열 / G열
-    var pickedCol = isScenario ? 13 : 14; // M열 / N열
-    var rowVals = sheet.getRange(it.rowIndex, 1, 1, Math.max(returnedCol, pickedCol)).getValues()[0];
-    if (String(rowVals[returnedCol - 1] || "").trim() === "O") return; // 이미 반납된 행은 건드리지 않는다
-    if (String(rowVals[pickedCol - 1] || "").trim()) return; // 이미 확인된 행은 건너뛴다 (중복 기록 방지)
-    sheet.getRange(it.rowIndex, pickedCol).setValue(stamp);
-    processed += 1;
+  // 행마다 읽기+쓰기를 각각 하면 물품 개수만큼 시트 왕복이 곱해져 느려진다.
+  // 시트별로 필요한 범위를 한 번에 읽고, 실제로 쓸 행만 모아 연속 구간 단위로 한 번에 쓴다.
+  [
+    { sheet: scenarioSheet, type: "scenario", returnedCol: 6, pickedCol: 13 },
+    { sheet: generalSheet, type: "general", returnedCol: 7, pickedCol: 14 }
+  ].forEach(function (cfg) {
+    if (!cfg.sheet) return;
+    var targets = items.filter(function (it) {
+      var isScenario = it.sheetType === "scenario";
+      return (cfg.type === "scenario" ? isScenario : !isScenario) && it.rowIndex && it.rowIndex >= 2;
+    });
+    if (!targets.length) return;
+
+    var lastRow = cfg.sheet.getLastRow();
+    var width = Math.max(cfg.returnedCol, cfg.pickedCol);
+    if (lastRow < 2) return;
+    var all = cfg.sheet.getRange(2, 1, lastRow - 1, width).getValues(); // 한 번에 읽는다
+
+    var rowsToStamp = [];
+    targets.forEach(function (it) {
+      var r = all[it.rowIndex - 2];
+      if (!r) return;
+      if (String(r[cfg.returnedCol - 1] || "").trim() === "O") return; // 이미 반납된 행은 건드리지 않는다
+      if (String(r[cfg.pickedCol - 1] || "").trim()) return;           // 이미 확인된 행은 건너뛴다 (중복 기록 방지)
+      rowsToStamp.push(it.rowIndex);
+      processed += 1;
+    });
+    writeSameValueToRows_(cfg.sheet, rowsToStamp, cfg.pickedCol, stamp);
   });
 
   if (processed === 0) return { success: false, message: "확인 처리할 항목을 찾지 못했습니다. (이미 처리되었거나 이미 반납된 건일 수 있습니다)" };
@@ -4320,12 +4393,27 @@ function processReturn(returnRequests, clientVersion) {
     var returnedNames = {}; // 이력 기록용 — itemId별 물품명
     var seatLocMap = getSeatLocationMapCached_(ss);
 
+    // 행마다 읽기/쓰기를 각각 하면 물품 개수만큼 시트 왕복이 곱해져 느려진다.
+    // 시트 내용을 한 번씩만 통째로 읽어두고, 전체 반납 행들은 모아서 마지막에 한 번에 쓴다.
+    var sheetCache_ = {};
+    function readAllRows_(sheet, colCount) {
+      var key = sheet.getSheetId() + "_" + colCount;
+      if (!sheetCache_[key]) {
+        var lastRow = sheet.getLastRow();
+        sheetCache_[key] = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, colCount).getValues() : [];
+      }
+      return sheetCache_[key];
+    }
+    var fullReturnRows_ = { scenario: [], general: [] }; // 전체 반납 처리할 행 번호들
+
     returnRequests.forEach(function (request) {
       var isScenario = request.sheetType === "scenario";
       var sheet = isScenario ? scenarioSheet : generalSheet;
       if (!sheet || !request.rowIndex || request.rowIndex < 2) return;
       var colCount = isScenario ? SCENARIO_LOG_ITEM_KIND_COL : Math.max(sheet.getLastColumn(), GENERAL_COL_COUNT);
-      var data = sheet.getRange(request.rowIndex, 1, 1, colCount).getValues()[0];
+      var allRows = readAllRows_(sheet, colCount);
+      var data = allRows[request.rowIndex - 2];
+      if (!data) return;
       var returnedCol = isScenario ? 6 : 7;
       if (String(data[returnedCol - 1]).trim() === "O") return;
 
@@ -4359,8 +4447,8 @@ function processReturn(returnRequests, clientVersion) {
         }
         sheet.appendRow(returnedRow);
       } else {
-        // 반납여부 + 반납일을 한 번에 쓴다 (setValue 두 번 → setValues 한 번)
-        sheet.getRange(request.rowIndex, returnedCol, 1, 2).setValues([["O", today]]);
+        // 전체 반납은 여기서 바로 쓰지 않고 모아뒀다가, 반복문이 끝난 뒤 한 번에 쓴다.
+        fullReturnRows_[isScenario ? "scenario" : "general"].push(request.rowIndex);
       }
       processed += reqQty;
       if (item) item = { id: item.id, name: item.name, quantity: reqQty };
@@ -4388,6 +4476,12 @@ function processReturn(returnRequests, clientVersion) {
       }
     });
 
+    // 모아둔 "전체 반납" 행들을 시트별로 한 번에 기록한다 (연속 구간 단위로 묶어서 씀)
+    writeSameValueToRows_(scenarioSheet, fullReturnRows_.scenario, 6, "O");
+    writeSameValueToRows_(scenarioSheet, fullReturnRows_.scenario, 7, today);
+    writeSameValueToRows_(generalSheet, fullReturnRows_.general, 7, "O");
+    writeSameValueToRows_(generalSheet, fullReturnRows_.general, 8, today);
+
     // 모아둔 재고 변경을 한 번에 반영
     var beforeRented_ = {};
     getObjectItemsCached_().forEach(function (o) { beforeRented_[o.id] = o.rented || 0; });
@@ -4395,13 +4489,17 @@ function processReturn(returnRequests, clientVersion) {
     invalidateLogCaches_();
 
     // 재고변경이력에도 남긴다 (재고 자체는 안 바뀌지만, "대여 중" 수량 변화를 추적한다)
+    // (물품이 여러 종류여도 시트 쓰기는 한 번만)
     try {
+      var returnLogRows = [];
+      var returnLogStamp = formatDate(new Date());
       for (var retId in invChanges) {
         var retOld = beforeRented_[retId] || 0;
         var retNew = Math.max(0, retOld + invChanges[retId]); // invChanges는 반납이라 음수
-        logStockChange_(ss, "시나리오 물품", retId, returnedNames[retId] || "", retOld, retNew,
-          "반납 처리 — 재고 아님, 대여 중 수량 변화", "-");
+        returnLogRows.push([returnLogStamp, "시나리오 물품", retId, returnedNames[retId] || "", retOld, retNew, retNew - retOld,
+          "반납 처리 — 재고 아님, 대여 중 수량 변화", "-"]);
       }
+      appendStockChangeRows_(ss, returnLogRows);
     } catch (logErr) { /* 이력 기록 실패는 반납 처리 자체를 막지 않는다 */ }
 
     // ── Slack: 메인 메시지와 댓글을 연이어 보낸다 ──
@@ -4594,19 +4692,41 @@ function normalizeItemId_(rawId) {
 // "재고변경이력" 시트에 한 줄 남긴다. adjustStock_(수동 조정)과 자동 기록(대여/반납/교체/소모)이
 // 전부 이 함수를 거치게 해서 기록 형식을 하나로 통일한다.
 function logStockChange_(ss, category, itemIdOrLoc, itemName, oldVal, newVal, reason, manager) {
+  appendStockChangeRows_(ss, [[
+    formatDate(new Date()), category, itemIdOrLoc, itemName, oldVal, newVal, newVal - oldVal, reason, manager || "-"
+  ]]);
+}
+
+// 물품 여러 개를 한 번에 대여/반납/소모할 때, logStockChange_()를 물품 수만큼 반복 호출하면
+// 그때마다 시트 쓰기(appendRow) 왕복이 따로 일어나 처리 하나가 물품 개수만큼 느려진다.
+// 이 함수는 여러 줄을 모아뒀다가 한 번의 쓰기로 끝낸다 — recordBorrow/processReturn/
+// rentInventoryItemsBulk처럼 여러 물품을 반복 처리하는 곳에서 쓴다.
+// 여러 행의 같은 열에 동일한 값을 쓴다. 행마다 setValue()를 부르면 그 개수만큼
+// 시트 왕복이 생기므로, 행 번호를 정렬해 "연속된 구간"끼리 묶어 setValues()로 한 번에 쓴다.
+// (대여 기록처럼 방금 append한 행들은 대부분 연속이라 보통 왕복 1~2번으로 끝난다)
+function writeSameValueToRows_(sheet, rowNumbers, col, value) {
+  if (!sheet || !rowNumbers || !rowNumbers.length) return;
+  var rows = rowNumbers.slice().sort(function (a, b) { return a - b; });
+  var start = rows[0];
+  var prev = rows[0];
+  for (var i = 1; i <= rows.length; i++) {
+    var cur = rows[i];
+    if (cur === prev + 1) { prev = cur; continue; } // 아직 연속 구간
+    var len = prev - start + 1;
+    var block = [];
+    for (var k = 0; k < len; k++) block.push([value]);
+    sheet.getRange(start, col, len, 1).setValues(block);
+    start = cur;
+    prev = cur;
+  }
+}
+
+function appendStockChangeRows_(ss, rows) {
+  if (!rows || !rows.length) return;
   try {
     var logSheet = getOrCreateSheet_(ss, "재고변경이력", ["변경시각", "구분", "물품ID/위치", "물품명", "기존재고", "변경재고", "증감", "사유", "담당자"]);
-    logSheet.appendRow([
-      formatDate(new Date()),
-      category,
-      itemIdOrLoc,
-      itemName,
-      oldVal,
-      newVal,
-      newVal - oldVal,
-      reason,
-      manager || "-"
-    ]);
+    var startRow = logSheet.getLastRow() + 1;
+    logSheet.getRange(startRow, 1, rows.length, 9).setValues(rows);
   } catch (e) { /* 이력 기록 실패는 원래 하려던 작업(대여/반납 등)을 막지 않는다 */ }
 }
 
@@ -5603,4 +5723,169 @@ function getStockFormulaStatus_(ss, itemId) {
     }
   }
   return { found: false, stockIsFormula: false, rentedIsFormula: false };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 오래된 완료 로그 자동 보관 (아카이빙)
+//
+// 왜 필요한가: 미반납 목록·대여중 개수·좌석 배치도 등은 매번 로그 시트를 통째로 읽어서
+// 그중 미반납 건만 골라낸다. 반납이 끝난 오래된 행도 계속 읽히기 때문에, 거래가 쌓일수록
+// 실제로 필요한 건 몇십 건인데 수천~수만 줄을 매번 훑게 되어 전체가 점점 느려진다.
+// 그래서 "반납이 완전히 끝났고 + 충분히 오래된" 행만 보관 시트로 옮긴다.
+//
+// 안전 원칙 (중요):
+//  - 미반납 건은 아무리 오래돼도 절대 옮기지 않는다.
+//  - 반납일을 읽을 수 없는(형식이 이상한) 행도 건드리지 않는다 — 판단이 안 서면 남긴다.
+//  - 원본을 지우기 전에 보관 시트 쓰기가 성공했는지 먼저 확인한다.
+//  - 락을 잡아 대여/반납 처리와 동시에 실행되지 않게 한다.
+// ══════════════════════════════════════════════════════════════════
+
+var ARCHIVE_AFTER_DAYS_ = 7;          // 반납 완료 후 이 일수가 지나면 보관 대상
+var ARCHIVE_MAX_ROWS_PER_RUN_ = 2000;   // 한 번 실행에서 옮길 최대 행 수 (실행시간 초과 방지)
+
+// 로그 시트별 설정: 반납여부/반납일이 몇 번째 열인지 (1부터 셈)
+function getArchiveTargets_() {
+  return [
+    { sheetName: SCENARIO_SHEET_NAME, archiveName: SCENARIO_SHEET_NAME + "_보관", returnedCol: 6, returnDateCol: 7 },
+    { sheetName: GENERAL_SHEET_NAME, archiveName: GENERAL_SHEET_NAME + "_보관", returnedCol: 7, returnDateCol: 8 }
+  ];
+}
+
+// 문자열/Date 어느 쪽이 와도 시각으로 바꿔본다. 못 읽으면 null (→ 그 행은 안 건드린다)
+function parseArchiveDate_(value) {
+  if (value instanceof Date) return value.getTime();
+  var text = String(value || "").trim();
+  if (!text) return null;
+  var t = Date.parse(text.replace(" ", "T"));
+  if (!isNaN(t)) return t;
+  t = Date.parse(text);
+  return isNaN(t) ? null : t;
+}
+
+// 실제로 옮기지 않고 "몇 건이 대상인지"만 세어본다 (미리보기용)
+function previewArchiveOldLogs() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var cutoff = Date.now() - ARCHIVE_AFTER_DAYS_ * 24 * 60 * 60 * 1000;
+  var lines = [];
+  getArchiveTargets_().forEach(function (cfg) {
+    var sheet = ss.getSheetByName(cfg.sheetName);
+    if (!sheet || sheet.getLastRow() < 2) { lines.push(cfg.sheetName + ": 시트 없음 또는 비어 있음"); return; }
+    var total = sheet.getLastRow() - 1;
+    var width = Math.max(sheet.getLastColumn(), cfg.returnDateCol);
+    var rows = sheet.getRange(2, 1, total, width).getValues();
+    var n = 0;
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][cfg.returnedCol - 1]).trim() !== "O") continue;
+      var ts = parseArchiveDate_(rows[i][cfg.returnDateCol - 1]);
+      if (ts === null || ts >= cutoff) continue;
+      n++;
+    }
+    lines.push(cfg.sheetName + ": 전체 " + total + "행 중 " + n + "행이 보관 대상 (남는 행: " + (total - n) + ")");
+  });
+  var msg = "보관 기준: 반납 완료 후 " + ARCHIVE_AFTER_DAYS_ + "일 경과\n\n" + lines.join("\n");
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) { /* 트리거 실행 등 UI 없는 환경 */ }
+  Logger.log(msg);
+  return msg;
+}
+
+// 실제 보관 실행. 시간 트리거로 자동 실행되며, 메뉴에서 수동 실행도 가능하다.
+function archiveOldLogs() {
+  var lock = LockService.getScriptLock();
+  // 대여/반납 처리 도중에 행이 밀리면 안 되므로, 락을 못 잡으면 이번 회차는 조용히 건너뛴다.
+  if (!lock.tryLock(30000)) {
+    Logger.log("보관 작업: 다른 작업이 진행 중이라 이번 실행은 건너뜁니다.");
+    return "다른 작업이 진행 중이라 건너뛰었습니다.";
+  }
+
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var cutoff = Date.now() - ARCHIVE_AFTER_DAYS_ * 24 * 60 * 60 * 1000;
+    var summary = [];
+
+    getArchiveTargets_().forEach(function (cfg) {
+      var sheet = ss.getSheetByName(cfg.sheetName);
+      if (!sheet || sheet.getLastRow() < 2) return;
+
+      var width = Math.max(sheet.getLastColumn(), cfg.returnDateCol);
+      var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, width).getValues();
+
+      var toArchive = [];      // 옮길 행 내용
+      var toDeleteRows = [];   // 지울 실제 행 번호 (2부터)
+      for (var i = 0; i < rows.length; i++) {
+        if (toArchive.length >= ARCHIVE_MAX_ROWS_PER_RUN_) break; // 이번 회차 한도까지만
+        var row = rows[i];
+        if (String(row[cfg.returnedCol - 1]).trim() !== "O") continue; // 미반납은 절대 안 건드림
+        var ts = parseArchiveDate_(row[cfg.returnDateCol - 1]);
+        if (ts === null) continue;   // 반납일을 못 읽으면 판단 보류 — 남긴다
+        if (ts >= cutoff) continue;  // 아직 기준일이 안 지남
+        toArchive.push(row);
+        toDeleteRows.push(i + 2);
+      }
+
+      if (!toArchive.length) { summary.push(cfg.sheetName + ": 옮길 행 없음"); return; }
+
+      // 1) 보관 시트에 먼저 쓴다 (헤더가 없으면 원본 헤더를 그대로 복사해 만든다)
+      var archive = ss.getSheetByName(cfg.archiveName);
+      if (!archive) {
+        archive = ss.insertSheet(cfg.archiveName);
+        archive.getRange(1, 1, 1, width).setValues([sheet.getRange(1, 1, 1, width).getValues()[0]]);
+      }
+      archive.getRange(archive.getLastRow() + 1, 1, toArchive.length, width).setValues(toArchive);
+      SpreadsheetApp.flush(); // 쓰기가 확정된 뒤에 지우기 시작한다
+
+      // 2) 원본에서 삭제 — 행 번호가 밀리지 않도록 아래쪽부터 지운다.
+      //    연속 구간은 묶어서 한 번에 지운다 (행마다 지우면 매우 느리다).
+      toDeleteRows.sort(function (a, b) { return b - a; });
+      var blockEnd = toDeleteRows[0];
+      var blockStart = toDeleteRows[0];
+      for (var j = 1; j <= toDeleteRows.length; j++) {
+        var r = toDeleteRows[j];
+        if (r === blockStart - 1) { blockStart = r; continue; } // 아직 연속
+        sheet.deleteRows(blockStart, blockEnd - blockStart + 1);
+        blockStart = r;
+        blockEnd = r;
+      }
+
+      summary.push(cfg.sheetName + ": " + toArchive.length + "행을 '" + cfg.archiveName + "'로 옮김");
+    });
+
+    invalidateGetAllCache_();
+    invalidateLogCaches_(); // 행이 바뀌었으니 캐시를 비운다 (rowIndex 기준 캐시가 낡으면 위험)
+
+    var msg = summary.length ? summary.join("\n") : "보관할 로그가 없습니다.";
+    Logger.log("보관 작업 완료:\n" + msg);
+    return msg;
+  } catch (e) {
+    Logger.log("보관 작업 실패: " + e.message);
+    return "보관 작업 실패: " + e.message;
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// 매주 일요일 새벽 4시에 자동 실행되도록 트리거를 건다. (한 번만 실행하면 된다)
+function setupArchiveTrigger() {
+  // 같은 트리거가 중복으로 쌓이지 않도록 기존 것을 먼저 지운다
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "archiveOldLogs") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("archiveOldLogs")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY)
+    .atHour(4)
+    .create();
+  var msg = "자동 보관 트리거를 등록했습니다.\n매주 일요일 새벽 4시에 실행됩니다.\n(기준: 반납 완료 후 " + ARCHIVE_AFTER_DAYS_ + "일 경과)";
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+  return msg;
+}
+
+// 자동 보관을 중단하고 싶을 때
+function removeArchiveTrigger() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "archiveOldLogs") { ScriptApp.deleteTrigger(t); n++; }
+  });
+  var msg = n ? "자동 보관 트리거를 해제했습니다." : "등록된 자동 보관 트리거가 없습니다.";
+  try { SpreadsheetApp.getUi().alert(msg); } catch (e) {}
+  return msg;
 }
