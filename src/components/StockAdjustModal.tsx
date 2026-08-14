@@ -116,8 +116,8 @@ export default function StockAdjustModal({
   }
 
   return createPortal(
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 3000, background: C.overlay, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "min(440px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}` }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: C.overlay, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+      <div style={{ width: "min(440px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.card, zIndex: 1 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 style={{ fontSize: "16px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: "6px", color: C.text }}>
