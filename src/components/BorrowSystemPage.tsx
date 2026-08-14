@@ -3384,20 +3384,6 @@ function ItemPicker({
 
   const filtered = objectItems.filter((it) => matchesFilters(it, search, cat, sub));
 
-  const toggleItem = (it: any) => {
-    const inCart = list.some((x) => x.id === it.id);
-    if (inCart) {
-      setList((prev: CartItem[]) => prev.filter((x) => x.id !== it.id));
-    } else {
-      const stock = Number(it.stock || 0);
-      if (stock <= 0) {
-        showToast("재고가 없는 물품입니다.", "warn");
-        return;
-      }
-      setList((prev: CartItem[]) => [...prev, { id: it.id, name: it.name, quantity: 1 }]);
-    }
-  };
-
   return (
     <div style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: "16px", padding: "14px", display: "flex", flexDirection: "column", gap: "10px" }}>
       <div style={{ position: "relative" }}>
@@ -3434,13 +3420,19 @@ function ItemPicker({
               <div
                 key={it.id}
                 onClick={(e) => {
-                  if (soldOut && !inCart) { showToast("재고가 없는 물품입니다.", "warn"); return; }
-                  // 누를 때마다 1개씩 늘린다 (재고 한도까지). 빼기는 아래 취소 버튼으로만.
-                  const cur = list.find((x) => x.id === it.id);
-                  if (cur && cur.quantity >= stock) { showToast(`재고(${stock}개)를 초과할 수 없습니다.`, "warn"); return; }
+                  if (soldOut) { showToast("재고가 없는 물품입니다.", "warn"); return; }
+                  // 담기/수량 증가를 한 번의 함수형 업데이트로 처리한다.
+                  // 이전에는 바깥의 list 값을 먼저 읽고 분기했는데, 그 값이 갱신 전 상태(stale)일 수 있어
+                  // 빠르게 여러 번 누르면 같은 물품이 장바구니에 중복으로 들어가는 문제가 있었다.
+                  let overStock = false;
+                  setList((prev: CartItem[]) => {
+                    const idx = prev.findIndex((x) => x.id === it.id);
+                    if (idx === -1) return [...prev, { id: it.id, name: it.name, quantity: 1 }];
+                    if (prev[idx].quantity >= stock) { overStock = true; return prev; }
+                    return prev.map((x, i) => (i === idx ? { ...x, quantity: x.quantity + 1 } : x));
+                  });
+                  if (overStock) { showToast(`재고(${stock}개)를 초과할 수 없습니다.`, "warn"); return; }
                   if (onFly) onFly(e.currentTarget.getBoundingClientRect());
-                  if (!cur) toggleItem(it);
-                  else setList(list.map((x) => (x.id === it.id ? { ...x, quantity: x.quantity + 1 } : x)));
                 }}
                 style={{
                   border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`,
@@ -3473,7 +3465,7 @@ function ItemPicker({
                     </div>
                     {/* 취소는 이 버튼으로만 (카드 클릭은 담기 전용) */}
                     <button
-                      onClick={(e) => { e.stopPropagation(); setList(list.filter((x) => x.id !== it.id)); }}
+                      onClick={(e) => { e.stopPropagation(); setList((prev: CartItem[]) => prev.filter((x) => x.id !== it.id)); }}
                       title="담은 물품 빼기"
                       style={{ flexShrink: 0, width: "30px", height: "26px", borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontSize: "13px", fontWeight: 800 }}
                     >
