@@ -106,14 +106,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     if (!silent) setLoading(true);
     try {
       // 수동으로 새로고침 버튼을 눌렀을 때(silent=false)는 서버 캐시를 무시하고 시트를 다시 읽는다.
-      // 자동 15초 새로고침(silent=true)까지 매번 무시하면 시트를 너무 자주 통째로 읽게 되니,
+      // 자동 새로고침(silent=true)까지 매번 무시하면 시트를 너무 자주 통째로 읽게 되니,
       // 그건 기존처럼 캐시를 쓴다.
       const list = await fetchUnreturnedItems(scriptUrl, !silent);
       setItems(list);
       setLoaded(true);
       try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch (e) { /* 무시 */ }
     } catch (e: any) {
-      showToast(`미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      // 자동 새로고침(silent)이 실패한 건 사용자가 한 일이 아니고, 화면에는 이미 직전
+      // 목록이 그대로 남아 있다. 이때까지 빨간 오류를 띄우면 작업만 방해하므로 조용히 넘긴다.
+      // (다음 주기에 다시 시도한다) 직접 새로고침을 눌렀을 때만 알린다.
+      if (!silent) showToast(`미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
       // 실패해도 "시도는 끝났다"고 표시해야 재요청이 무한 반복되지 않는다.
       setLoaded(true);
     } finally {
@@ -167,7 +170,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const activeLoading = category === "warehouse" ? whLoading : loading;
   const reloadActive = (silent = false) => (category === "warehouse" ? loadWarehouse(silent) : load(silent));
 
-  // 15초마다 자동 새로고침.
+  // 60초마다 자동 새로고침.
+  // (원래 15초였는데, 그 정도로 자주 부르면 구글이 반복 요청으로 보고 응답 대신
+  //  오류 페이지를 돌려보내는 일이 있었다. 화면을 처음 열 때는 이미 데이터를 받아둔
+  //  상태라, 주기를 늘려도 체감 차이는 거의 없고 실패는 크게 줄어든다)
   // 다른 관리자가 처리한 내용이 바로 반영되도록 하되, 담아둔 장바구니와 선택은 유지한다.
   const submittingRef = useRef(false);
   submittingRef.current = pendingJobs.length > 0;
@@ -177,7 +183,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (submittingRef.current) return;      // 처리 중에는 건너뛴다
       if (document.hidden) return;            // 다른 탭을 보고 있으면 굳이 부르지 않는다
       reloadActive(true);                     // 조용히 갱신 (로딩 표시 없음)
-    }, 15000);
+    }, 60000);
     return () => window.clearInterval(timer);
   }, [connected, scriptUrl, load]);
 
@@ -1018,7 +1024,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               + 직접 대여
             </button>
           ) : null}
-          <span style={{ fontSize: "11px", color: C.label }}>15초마다 자동 새로고침</span>
+          <span style={{ fontSize: "11px", color: C.label }}>60초마다 자동 새로고침</span>
           <button onClick={() => reloadActive()} disabled={activeLoading} title="지금 새로고침" style={{ ...inputStyle, cursor: activeLoading ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText, opacity: activeLoading ? 0.7 : 1 }}>
             <RotateCcw size={14} className={activeLoading ? "ar-spin" : undefined} />
           </button>
