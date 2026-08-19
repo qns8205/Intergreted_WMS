@@ -170,10 +170,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const activeLoading = category === "warehouse" ? whLoading : loading;
   const reloadActive = (silent = false) => (category === "warehouse" ? loadWarehouse(silent) : load(silent));
 
-  // 60초마다 자동 새로고침.
-  // (원래 15초였는데, 그 정도로 자주 부르면 구글이 반복 요청으로 보고 응답 대신
-  //  오류 페이지를 돌려보내는 일이 있었다. 화면을 처음 열 때는 이미 데이터를 받아둔
-  //  상태라, 주기를 늘려도 체감 차이는 거의 없고 실패는 크게 줄어든다)
+  // 2분마다 자동 새로고침.
+  // (원래 15초였는데, 여러 명이 동시에 켜두면 시간당 수천 번의 무거운 조회가 나가
+  //  구글이 응답 대신 오류 페이지를 돌려보냈다. 사람마다 되기도 하고 안 되기도 했던
+  //  이유가 이것이다. 대여/반납을 처리한 직후에는 코드에서 즉시 갱신을 따로 부르므로
+  //  주기를 늘려도 실제 작업 흐름에는 지장이 없다)
   // 다른 관리자가 처리한 내용이 바로 반영되도록 하되, 담아둔 장바구니와 선택은 유지한다.
   const submittingRef = useRef(false);
   submittingRef.current = pendingJobs.length > 0;
@@ -183,8 +184,20 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       if (submittingRef.current) return;      // 처리 중에는 건너뛴다
       if (document.hidden) return;            // 다른 탭을 보고 있으면 굳이 부르지 않는다
       reloadActive(true);                     // 조용히 갱신 (로딩 표시 없음)
-    }, 60000);
-    return () => window.clearInterval(timer);
+    }, 120000);
+
+    // 다른 탭을 보다 돌아오면 즉시 한 번 최신화한다.
+    // 이러면 주기를 길게 잡아도, 실제로 화면을 보는 순간의 최신성은 유지된다.
+    const onVisible = () => {
+      if (document.hidden || submittingRef.current) return;
+      reloadActive(true);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [connected, scriptUrl, load]);
 
   // 자동 새로고침으로 사라진 행(다른 사람이 먼저 반납한 경우)은 장바구니에서 정리한다.
@@ -1024,7 +1037,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               + 직접 대여
             </button>
           ) : null}
-          <span style={{ fontSize: "11px", color: C.label }}>60초마다 자동 새로고침</span>
+          <span style={{ fontSize: "11px", color: C.label }}>2분마다 자동 새로고침</span>
           <button onClick={() => reloadActive()} disabled={activeLoading} title="지금 새로고침" style={{ ...inputStyle, cursor: activeLoading ? "wait" : "pointer", display: "flex", alignItems: "center", gap: "5px", fontWeight: 700, color: C.accentText, opacity: activeLoading ? 0.7 : 1 }}>
             <RotateCcw size={14} className={activeLoading ? "ar-spin" : undefined} />
           </button>
