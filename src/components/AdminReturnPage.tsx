@@ -100,6 +100,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [reborrowAfter, setReborrowAfter] = useState(false);
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
+  // 장바구니 처리 확인 모달 상태 (window.confirm 대신 인앱 모달로 안정적 처리)
+  const [confirmBatch, setConfirmBatch] = useState<{ parts: string[]; batch: ReturnCartLine[]; reborrow: boolean } | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!connected || !scriptUrl) { setLoaded(true); return; }
@@ -266,16 +268,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   function toggleExempt(name: string) {
     if (exempt[name]) {
-      if (!window.confirm(`${name}님을 예외에서 해제할까요? 다시 연체 목록에 표시됩니다.`)) return;
       const next = { ...exempt };
       delete next[name];
       saveExempt(next);
       showToast(`${name}님을 예외에서 해제했습니다.`, "ok");
       return;
     }
-    const reason = window.prompt(`${name}님을 연체 목록에서 제외합니다.\n\n사유를 입력해주세요. (예: 장기 프로젝트 대여 승인)`, "");
-    if (reason === null) return;
-    saveExempt({ ...exempt, [name]: reason.trim() || "사유 미기재" });
+    saveExempt({ ...exempt, [name]: "관리자 연체 제외 등록" });
     showToast(`${name}님을 연체 예외로 등록했습니다.`, "ok");
   }
 
@@ -806,15 +805,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     );
   }
 
-  const submitReturnRef = useRef<() => Promise<void>>();
+  const submitReturnRef = useRef<() => void>();
 
-  async function submitReturn() {
+  function submitReturn() {
     if (!cart.length) { showToast("담긴 물품이 없습니다.", "warn"); return; }
 
-    // 지금 담긴 내용을 스냅샷으로 떼어낸다. 실제 서버 처리는 이 스냅샷을 들고
-    // 아래에서 백그라운드로 진행되고, 장바구니는 확인을 누르는 순간 바로 비워져서
-    // 처리가 끝나길 기다리지 않고 곧바로 다른 사람의 대여 확인/반납을 담을 수 있다.
-    const batch = cart;
+    const batch = [...cart];
     const batchReborrow = reborrowAfter;
 
     const pickupLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
@@ -828,12 +824,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       const consumeN = warehouseLines.filter((c) => c.disposition === "소모").length;
       parts.push(consumeN > 0 ? `공구 ${warehouseLines.length}종 (그중 소모 ${consumeN}종)` : `공구 반납 ${warehouseLines.length}종`);
     }
-    if (!window.confirm(`${parts.join(" · ")}을(를) 처리할까요?`)) return; // 취소하면 장바구니는 그대로 남는다
+
+    setConfirmBatch({ parts, batch, reborrow: batchReborrow });
+  }
+
+  async function executeBatch(batch: ReturnCartLine[], batchReborrow: boolean) {
+    setConfirmBatch(null);
 
     // 확인을 누른 순간 장바구니를 비운다 — 이 시점부터 화면은 새 작업을 받을 준비가 된다.
     setCart([]);
     addHistoryRef.current = [];
     setReborrowAfter(false);
+
+    const pickupLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
+    const returnLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action === "반납");
+    const warehouseLines = batch.filter((c) => c.sheetType === "warehouse");
 
     const jobId = ++jobIdRef.current;
     const jobQty = batch.reduce((n, c) => n + c.qty, 0);
@@ -1009,7 +1014,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   }
 
   submitReturnRef.current = submitReturn;
-  handlersRef.current.submit = async () => { await submitReturnRef.current?.(); };
+  handlersRef.current.submit = () => { submitReturnRef.current?.(); };
 
   const inputStyle: React.CSSProperties = {
     padding: "10px 12px", borderRadius: "10px", border: `1px solid ${C.border}`,
@@ -1498,6 +1503,72 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           C={C}
           onConfirm={() => { const fn = hazardModal.onConfirm; setHazardModal(null); fn(); }}
         />
+      ) : null}
+
+      {/* ── 장바구니 일괄 처리 확인 모달 ── */}
+      {confirmBatch ? (
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 4500, background: "rgba(15,23,42,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", backdropFilter: "blur(2px)" }}
+        >
+          <div
+            style={{ width: "min(520px, 100%)", maxHeight: "88vh", display: "flex", flexDirection: "column", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "20px", boxShadow: "0 20px 25px -5px rgba(0,0,0,0.3)" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+              <Check size={19} style={{ color: C.success }} />
+              <span style={{ fontSize: "16px", fontWeight: 800, flex: 1 }}>장바구니 처리 확인</span>
+              <button onClick={() => setConfirmBatch(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={19} /></button>
+            </div>
+
+            <div style={{ padding: "12px 14px", borderRadius: "10px", background: C.accentSoft, border: `1px solid ${C.border}`, marginBottom: "12px" }}>
+              <div style={{ fontSize: "13.5px", fontWeight: 800, color: C.accentText, marginBottom: "4px" }}>
+                {confirmBatch.parts.join(" · ")} (총 {confirmBatch.batch.reduce((n, c) => n + c.qty, 0)}개)
+              </div>
+              <div style={{ fontSize: "11.5px", color: C.label }}>
+                선택한 항목들을 시트에 반영하고 처리를 완료할까요?
+              </div>
+              {confirmBatch.reborrow ? (
+                <div style={{ marginTop: "8px", fontSize: "11.5px", fontWeight: 700, color: C.warn }}>
+                  🔄 반납 후 재대여 적용 (대여일 갱신)
+                </div>
+              ) : null}
+            </div>
+
+            <div style={{ flex: 1, minHeight: "80px", maxHeight: "240px", overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: "10px", padding: "8px", marginBottom: "16px", display: "flex", flexDirection: "column", gap: "6px" }}>
+              {confirmBatch.batch.map((c) => {
+                const badgeText = c.sheetType === "warehouse" ? (c.disposition === "소모" ? "🔥 소모" : "반납") : (c.action === "반납" ? "↩️ 반납" : "📦 확인");
+                const badgeColor = c.disposition === "소모" ? C.warn : (c.action === "반납" || c.sheetType === "warehouse" ? C.success : C.accentText);
+                return (
+                  <div key={c.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "7px 10px", borderRadius: "8px", background: C.cardSub, fontSize: "12px" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.itemLabel}</div>
+                      <div style={{ fontSize: "10.5px", color: C.label }}>{c.borrower}{c.location ? ` · ${c.location}` : ""}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                      <span style={{ fontWeight: 800, color: badgeColor, fontSize: "11px" }}>{badgeText}</span>
+                      <span style={{ fontWeight: 800, color: C.text, minWidth: "28px", textAlign: "right" }}>{c.qty}개</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: "flex", gap: "10px" }}>
+              <button
+                onClick={() => setConfirmBatch(null)}
+                style={{ flex: 1, padding: "12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13.5px", fontWeight: 700, cursor: "pointer" }}
+              >
+                취소
+              </button>
+              <button
+                onClick={() => executeBatch(confirmBatch.batch, confirmBatch.reborrow)}
+                style={{ flex: 2, padding: "12px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", fontSize: "13.5px", fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+              >
+                <Check size={16} />
+                처리하기
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {swapTarget ? (
