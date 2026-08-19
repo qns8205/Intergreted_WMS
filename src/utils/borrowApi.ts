@@ -213,18 +213,20 @@ async function apiGetImpl_(scriptUrl: string, action: string, params: Record<str
   const timeoutMs = opts.timeoutMs ?? 30000;
   const retries = opts.retries ?? 1;
   const qs = new URLSearchParams({ action, ...params }).toString();
-  const url = buildUrl(scriptUrl, qs);
 
-  let res: Response | null = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    // 매 시도마다 버스터(_ts)를 새로 붙인다 — 재시도 시 URL이 똑같으면 브라우저가
+    // 방금 실패한(이미 소모됐거나 404난) 리다이렉트를 캐시에서 그대로 재사용할 수 있다.
+    const url = buildUrl(scriptUrl, qs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs); // 무한로딩 방지
+    let res: Response | null = null;
     try {
       // cache: "no-store" — 위 캐시 방지 파라미터와 함께, 브라우저가 예전 리다이렉트를
       // 재사용해 만료된 일회용 토큰으로 404를 받는 일을 막는다.
       res = await fetch(url, { signal: controller.signal, cache: "no-store" });
-      break; // 성공 시 루프 종료
     } catch (e: any) {
+      clearTimeout(timer);
       if (e?.name === "AbortError") {
         if (attempt < retries) continue; // 타임아웃 → 조용히 재시도
         throw new Error(`서버 응답이 지연되어 요청을 취소했습니다. (액션: ${action}, ${attempt + 1}회 시도, 네트워크 상태를 확인하고 다시 시도해주세요.)`);
@@ -237,33 +239,43 @@ async function apiGetImpl_(scriptUrl: string, action: string, params: Record<str
     } finally {
       clearTimeout(timer);
     }
-  }
-  if (!res) throw new Error(`요청에 실패했습니다. (액션: ${action})`);
-  const text = await res.text();
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    const trimmedText = text.trim();
-    if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
-      throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. Apps Script에서 '배포 > 새 배포 > 웹앱'으로 배포하여 생성된 '.../exec'로 끝나는 배포 URL을 입력해주세요.");
+
+    const text = await res.text();
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      const trimmedText = text.trim();
+      if (trimmedText.includes("google.com/spreadsheets") || scriptUrl.includes("docs.google.com/spreadsheets")) {
+        // 재시도해도 소용없는, 설정 자체가 잘못된 경우 — 바로 던진다.
+        throw new Error("설정된 연동 URL이 '구글 스프레드시트 자체 링크'입니다. Apps Script에서 '배포 > 새 배포 > 웹앱'으로 배포하여 생성된 '.../exec'로 끝나는 배포 URL을 입력해주세요.");
+      }
+      if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
+        // 이것도 재시도로 해결되지 않는 권한 설정 문제 — 바로 던진다.
+        throw new Error("Apps Script 웹앱의 액세스 권한 설정 오류입니다. Apps Script 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 로그인이 불필요합니다.");
+      }
+      // 그 외의 비-JSON 응답(대표적으로 응답이 커서 구글이 임시 주소로 리다이렉트했다가
+      // 그 주소가 404를 낸 경우, script.googleusercontent.com/macros/echo 404)은 대부분
+      // 일시적인 현상이라 짧게 쉬었다가 재시도하면 다음 시도에서 정상 응답이 온다.
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 400 + attempt * 400));
+        continue;
+      }
+      const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
+      throw new Error(`서버가 올바르지 않은 응답(HTML)을 반환했습니다. 응답이 커서 발생하는 일시적 오류일 수 있습니다 — 다시 시도해주세요. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
     }
-    if (trimmedText.includes("Google Accounts") || trimmedText.includes("Sign in") || trimmedText.includes("login")) {
-      throw new Error("Apps Script 웹앱의 액세스 권한 설정 오류입니다. Apps Script 배포 시 '액세스할 수 있는 사용자'를 반드시 '모든 사용자(Anyone)'로 설정해야 로그인이 불필요합니다.");
+    if (!data.success) {
+      // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
+      if (data.error && String(data.error).indexOf("알 수 없는") !== -1) {
+        const shown = normalizeScriptUrl(scriptUrl);
+        throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
+      }
+      throw new Error(data.error || `요청 실패 (액션: ${action})`);
     }
-    // HTML 형식의 서버 에러(런타임 에러) 메시지가 있는 경우 첫 150글자를 추출하여 노출시킵니다.
-    const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
-    throw new Error(`서버가 올바르지 않은 응답(HTML)을 반환했습니다. Apps Script 코드 오류 또는 권한 문제일 수 있습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
+    return data;
   }
-  if (!data.success) {
-    // 서버가 액션을 모른다고 답한 경우, 어떤 URL로 어떤 액션을 보냈는지 함께 노출해 원인 파악을 돕는다.
-    if (data.error && String(data.error).indexOf("알 수 없는") !== -1) {
-      const shown = normalizeScriptUrl(scriptUrl);
-      throw new Error(`${data.error} (요청 액션: '${action}'). 연동된 서버가 이 액션을 모릅니다 — 이 기기에 저장된 연동 URL이 예전 버전을 가리킬 수 있습니다. 저장된 URL: ${shown}`);
-    }
-    throw new Error(data.error || `요청 실패 (액션: ${action})`);
-  }
-  return data;
+  // 이론상 도달하지 않지만(루프 내에서 항상 return/throw), 타입 체커를 위해 남겨둔다.
+  throw new Error(`요청에 실패했습니다. (액션: ${action})`);
 }
 
 async function apiPostImpl_(scriptUrl: string, action: string, payload: any): Promise<any> {
