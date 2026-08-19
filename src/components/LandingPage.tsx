@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
-import { fetchNotices, NoticeData, fetchBorrowLock, BorrowLock } from "../utils/borrowApi";
+import { fetchNotices, NoticeData, BorrowLock } from "../utils/borrowApi";
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
 const PENALTY_RULES: { label: string; limit: string }[] = [
@@ -52,17 +52,6 @@ function useNotices(scriptUrl: string, connected: boolean) {
   return items;
 }
 
-// 대여 잠금도 같은 방식으로 즉시 그린다
-const LOCK_CACHE_KEY = "wms_borrow_lock_v1";
-
-function readLockSeed(): BorrowLock {
-  try {
-    const raw = sessionStorage.getItem(LOCK_CACHE_KEY);
-    if (raw) return JSON.parse(raw) as BorrowLock;
-  } catch (e) { /* 무시 */ }
-  return { locked: false };
-}
-
 interface LandingPageProps {
   onNavigate: (view: "borrow" | "browse" | "mylookup" | "sid" | "login") => void;
   isLightMode: boolean;
@@ -75,6 +64,9 @@ interface LandingPageProps {
   onConnect: () => void;
   onDisconnect: () => void;
   onOpenSetup: () => void;
+  /** App.tsx가 최초 마운트 시 이미 조회해둔 값을 그대로 받는다 — 이 화면에서 따로
+   *  getBorrowLock을 또 부르면 같은 데이터를 위해 GAS 요청이 두 번 나가게 된다. */
+  borrowLock: BorrowLock;
 }
 
 export default function LandingPage({
@@ -89,22 +81,12 @@ export default function LandingPage({
   onConnect,
   onDisconnect,
   onOpenSetup,
+  borrowLock,
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
   const notices = useNotices(scriptUrl, connected);
   const [openNotice, setOpenNotice] = useState<NoticeData | null>(null);
 
-  // 대여 잠금 상태 (관리자가 일시 중단한 경우 안내한다)
-  const [borrowLock, setBorrowLock] = useState<BorrowLock>(readLockSeed);
-  useEffect(() => {
-    if (!connected || !scriptUrl) return;
-    fetchBorrowLock(scriptUrl)
-      .then((l) => {
-        setBorrowLock(l);
-        try { sessionStorage.setItem(LOCK_CACHE_KEY, JSON.stringify(l)); } catch (e) { /* 무시 */ }
-      })
-      .catch(() => { /* 조회 실패는 무시 */ });
-  }, [connected, scriptUrl]);
 
   return (
     <div

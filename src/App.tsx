@@ -1797,6 +1797,7 @@ export default function App() {
           showToast("스프레드시트 연동이 해제되었습니다. 가상 데모 모드로 동작합니다.", "info");
         }}
         onOpenSetup={() => setShowSetup(true)}
+        borrowLock={borrowLockState}
       />
     );
   }
