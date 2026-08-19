@@ -894,15 +894,28 @@ export default function App() {
   useEffect(() => {
     if (!connected || !scriptUrl) return;
 
-    // 마운트 혹은 화면 전환 시 즉시 한 번 갱신 보장
+    // 접속 직후 한 번은 확실히 갱신한다
     silentRefresh();
 
     const interval = setInterval(() => {
+      // 탭이 뒤에 있거나 창이 최소화된 상태면 굳이 부르지 않는다.
+      // 사람이 안 보고 있는 화면까지 계속 갱신하면 요청만 늘고 얻는 게 없다.
+      if (document.hidden) return;
       silentRefresh();
-    }, 60000); // 60초 간격 폴링
+    }, 120000); // 2분 간격 폴링
 
-    return () => clearInterval(interval);
-  }, [connected, scriptUrl, currentView]); // eslint-disable-line
+    // 다른 탭을 보다 돌아왔을 때는 즉시 한 번 최신화해 준다.
+    // (이러면 주기를 길게 잡아도 실제로 화면을 보는 순간의 최신성은 유지된다)
+    const onVisible = () => { if (!document.hidden) silentRefresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // currentView는 일부러 뺐다. 넣으면 화면을 전환할 때마다 폴링이 재시작되면서
+    // 그때마다 요청이 한 번씩 더 나가, 화면을 자주 오갈수록 호출량이 불어난다.
+  }, [connected, scriptUrl]); // eslint-disable-line
 
   // 구글 스프레드시트 데이터와 랙 선반 정보 병합
   function racksFromServerSectors(sectors: any[], inv: InventoryItem[]): Rack[] {
@@ -2842,7 +2855,7 @@ export default function App() {
             <>
               <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981" }} />
               <span>
-                <strong>[실시간 동기화 상태]</strong> 현재 내 구글 스프레드시트({scriptUrl.substring(0, 45)}...)와 연동되어 있습니다. <strong>1분 간격으로 자동 동기화(자동 새로고침) 중</strong>이며, 다른 사용자 PC에서도 동일하게 내용이 실시간 반영됩니다.
+                <strong>[실시간 동기화 상태]</strong> 현재 내 구글 스프레드시트({scriptUrl.substring(0, 45)}...)와 연동되어 있습니다. <strong>2분 간격으로 자동 동기화 중</strong>(화면을 다시 열면 즉시 갱신)이며, 다른 사용자 PC에서도 동일하게 내용이 실시간 반영됩니다.
               </span>
             </>
           ) : (
