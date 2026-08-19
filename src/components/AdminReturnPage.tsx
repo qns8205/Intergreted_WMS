@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin, Repeat } from "lucide-react";
 import {
-  fetchUnreturnedItems, UnreturnedItem,
+  fetchUnreturnedItems, fetchUnreturnedItemsPage, UnreturnedItem,
   postProcessReturn, postConfirmPickup, fetchBorrowAppVersion,
   isVersionMismatchMessage, signalVersionOutdated,
   sendReturnReminderDm,
@@ -85,6 +85,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     return [];
   });
   const [loading, setLoading] = useState(false);
+  // 30개씩 끊어 받기 위한 상태 (서버가 전체 개수와 남은 여부를 함께 알려준다)
+  const PAGE_SIZE = 30;
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedBorrower, setSelectedBorrower] = useState<string | null>(null);
@@ -108,16 +113,40 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       // 수동으로 새로고침 버튼을 눌렀을 때(silent=false)는 서버 캐시를 무시하고 시트를 다시 읽는다.
       // 자동 15초 새로고침(silent=true)까지 매번 무시하면 시트를 너무 자주 통째로 읽게 되니,
       // 그건 기존처럼 캐시를 쓴다.
-      const list = await fetchUnreturnedItems(scriptUrl, !silent);
-      setItems(list);
+      // 미반납이 많으면 한 번에 다 받을 때 응답이 너무 커져서 구글이 본문 대신
+      // 검사 페이지(HTML)를 돌려보내는 일이 있다(특히 모바일). 그래서 30개씩 끊어 받고,
+      // 아래 "더 보기"로 이어받는다.
+      const page = await fetchUnreturnedItemsPage(scriptUrl, { limit: PAGE_SIZE, forceRefresh: !silent });
+      setItems(page.items);
+      setTotalCount(page.total);
+      setHasMore(page.hasMore);
       setLoaded(true);
-      try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(list)); } catch (e) { /* 무시 */ }
+      try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(page.items)); } catch (e) { /* 무시 */ }
     } catch (e: any) {
       showToast(`미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      // 실패해도 "시도는 끝났다"고 표시해야 재요청이 무한 반복되지 않는다.
+      setLoaded(true);
     } finally {
       if (!silent) setLoading(false);
     }
   }, [connected, scriptUrl]);
+
+  // 다음 30개를 이어서 받아온다 (이미 받은 목록 뒤에 붙인다)
+  const loadMore = useCallback(async () => {
+    if (!connected || !scriptUrl || loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await fetchUnreturnedItemsPage(scriptUrl, { offset: items.length, limit: PAGE_SIZE });
+      setItems((prev) => {
+        const seen = new Set(prev.map((x) => `${x.sheetType}:${x.rowIndex}`));
+        return prev.concat(page.items.filter((x) => !seen.has(`${x.sheetType}:${x.rowIndex}`)));
+      });
+      setTotalCount(page.total);
+      setHasMore(page.hasMore);
+    } catch (e: any) {
+      showToast(`더 불러오지 못했습니다: ${e.message}`, "warn");
+    } finally { setLoadingMore(false); }
+  }, [connected, scriptUrl, loadingMore, hasMore, items.length]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1312,6 +1341,28 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               );
             })}
           </div>
+
+            {/* 30개씩 끊어 받는다 — 남은 미반납 건이 있으면 여기서 이어받는다.
+                (시나리오 탭에만 적용: 공구 탭은 별도 목록을 쓴다) */}
+            {category === "scenario" && hasMore ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", padding: "14px 0 4px" }}>
+                <button
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  style={{
+                    padding: "11px 22px", borderRadius: "11px", border: `1px solid ${C.border}`,
+                    background: C.card, color: C.accentText, cursor: loadingMore ? "wait" : "pointer",
+                    fontSize: "12.5px", fontWeight: 700, opacity: loadingMore ? 0.7 : 1,
+                    display: "flex", alignItems: "center", gap: "7px",
+                  }}
+                >
+                  {loadingMore ? <><RotateCcw size={13} className="ar-spin" /> 불러오는 중...</> : "더 보기 (다음 30개)"}
+                </button>
+                <span style={{ fontSize: "11px", color: C.label }}>
+                  전체 {totalCount}건 중 {items.length}건을 불러왔습니다
+                </span>
+              </div>
+            ) : null}
         )}
       </div>
 
