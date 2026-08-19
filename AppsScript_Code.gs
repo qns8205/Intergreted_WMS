@@ -2209,6 +2209,18 @@ function getObjectItems() {
   return result;
 }
 
+function getObjectItemsCached_(forceRefresh) {
+  if (!forceRefresh) {
+    var cached = cacheGetLarge_("objectItems_v1");
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) { /* 파싱 실패 시 아래에서 다시 계산 */ }
+    }
+  }
+  var result = getObjectItems();
+  cachePutLarge_("objectItems_v1", JSON.stringify(result), 60);
+  return result;
+}
+
 // ─────────────────────────────────────────────
 // 시나리오 오브젝트 관리 (WMS 관리자 모드용)
 // 시트 열: id(1) name(2) sector(3) root_slot(4) Category(5) Subcategory(6) Image(7) 재고(8) 대여(9) 랭킹제외(10/J열)
@@ -2232,7 +2244,7 @@ function getScenarioObjectsForAdmin_(forceRefresh) {
     }
   }
   var result = getScenarioObjectsForAdmin_impl_(forceRefresh);
-  cachePutLarge_("scenarioObjectsForAdmin_v1", JSON.stringify(result), 30);
+  cachePutLarge_("scenarioObjectsForAdmin_v1", JSON.stringify(result), 60);
   return result;
 }
 

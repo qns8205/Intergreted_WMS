@@ -338,17 +338,38 @@ export async function fetchScenarioDefinition(scriptUrl: string, sid: string): P
 
 // 위와 같은 이유로 나눠 받되, 끝까지 이어 붙여 전체 목록을 돌려준다.
 export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boolean): Promise<UnreturnedItem[]> {
-  const all: UnreturnedItem[] = [];
-  for (let offset = 0; ; offset += PAGE_CHUNK) {
-    const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
-    if (forceRefresh && offset === 0) params.forceRefresh = "1";
+  try {
+    const params: Record<string, string> = {};
+    if (forceRefresh) params.forceRefresh = "1";
     const data = await apiGet(scriptUrl, "getUnreturnedItems", params, { timeoutMs: 60000, retries: 1 });
-    const items = (data.items || []) as UnreturnedItem[];
-    all.push(...items);
-    if (!data.hasMore || items.length === 0) break;
-    if (offset > 20000) break;
+    if (data && data.items && !data.hasMore) {
+      return data.items as UnreturnedItem[];
+    }
+    const all: UnreturnedItem[] = (data.items || []) as UnreturnedItem[];
+    if (data.hasMore) {
+      for (let offset = all.length; ; offset += PAGE_CHUNK) {
+        const pageParams: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+        const pageData = await apiGet(scriptUrl, "getUnreturnedItems", pageParams, { timeoutMs: 60000, retries: 1 });
+        const items = (pageData.items || []) as UnreturnedItem[];
+        all.push(...items);
+        if (!pageData.hasMore || items.length === 0) break;
+        if (offset > 20000) break;
+      }
+    }
+    return all;
+  } catch {
+    const all: UnreturnedItem[] = [];
+    for (let offset = 0; ; offset += PAGE_CHUNK) {
+      const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+      if (forceRefresh && offset === 0) params.forceRefresh = "1";
+      const data = await apiGet(scriptUrl, "getUnreturnedItems", params, { timeoutMs: 60000, retries: 1 });
+      const items = (data.items || []) as UnreturnedItem[];
+      all.push(...items);
+      if (!data.hasMore || items.length === 0) break;
+      if (offset > 20000) break;
+    }
+    return all;
   }
-  return all;
 }
 
 
@@ -539,17 +560,38 @@ export interface ScenarioObjectAdmin {
 const PAGE_CHUNK = 100;
 
 export async function fetchScenarioObjectsForAdmin(scriptUrl: string, forceRefresh?: boolean): Promise<ScenarioObjectAdmin[]> {
-  const all: ScenarioObjectAdmin[] = [];
-  for (let offset = 0; ; offset += PAGE_CHUNK) {
-    const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
-    if (forceRefresh && offset === 0) params.forceRefresh = "1"; // 캐시 무시는 첫 조각에서만
+  try {
+    const params: Record<string, string> = {};
+    if (forceRefresh) params.forceRefresh = "1";
     const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", params, { timeoutMs: 60000, retries: 1 });
-    const items = (data.items || []) as ScenarioObjectAdmin[];
-    all.push(...items);
-    if (!data.hasMore || items.length === 0) break;
-    if (offset > 20000) break; // 혹시 모를 무한 루프 방지
+    if (data && data.items && !data.hasMore) {
+      return data.items as ScenarioObjectAdmin[];
+    }
+    const all: ScenarioObjectAdmin[] = (data.items || []) as ScenarioObjectAdmin[];
+    if (data.hasMore) {
+      for (let offset = all.length; ; offset += PAGE_CHUNK) {
+        const pageParams: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+        const pageData = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", pageParams, { timeoutMs: 60000, retries: 1 });
+        const items = (pageData.items || []) as ScenarioObjectAdmin[];
+        all.push(...items);
+        if (!pageData.hasMore || items.length === 0) break;
+        if (offset > 20000) break;
+      }
+    }
+    return all;
+  } catch {
+    const all: ScenarioObjectAdmin[] = [];
+    for (let offset = 0; ; offset += PAGE_CHUNK) {
+      const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+      if (forceRefresh && offset === 0) params.forceRefresh = "1";
+      const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", params, { timeoutMs: 60000, retries: 1 });
+      const items = (data.items || []) as ScenarioObjectAdmin[];
+      all.push(...items);
+      if (!data.hasMore || items.length === 0) break;
+      if (offset > 20000) break;
+    }
+    return all;
   }
-  return all;
 }
 
 
