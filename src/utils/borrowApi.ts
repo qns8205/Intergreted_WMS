@@ -152,6 +152,36 @@ function normalizeScriptUrl(raw: string): string {
   return u.trim();
 }
 
+// GAS로 나가는 요청 전체(이 파일의 apiGet/apiPost뿐 아니라 App.tsx의 fetchAll/callScript도
+// 포함)를 대상으로 "동시에 최대 N개까지만" 허용하는 전역 큐.
+//
+// 왜 필요한가: 화면 하나를 열 때 여러 컴포넌트(App.tsx의 폴링, ScenarioAdminPage의 물품/미반납
+// 조회 등)가 각자 독립적으로 GAS를 부른다. 각 조회 자체는 내부적으로 순차 처리되더라도,
+// 서로 다른 조회끼리는 동시에 실행돼 실제로는 한 탭에서만도 여러 요청이 겹쳐 나간다.
+// 여기에 사용자가 여러 명이면 GAS의 동시 실행 한도(계정 종류에 따라 보통 20~30개)에
+// 걸리기 쉬운데, 이때 실패는 크기와 무관하게 "그 순간 자리를 못 잡은" 요청 전부에서
+// 무작위로 발생한다 — 작은 조회(sectors, users 등)까지 같이 실패했던 게 바로 이 증상이다.
+let gasActiveCount_ = 0;
+const gasQueue_: (() => void)[] = [];
+const GAS_MAX_CONCURRENT_ = 2;
+
+export function withGasConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      gasActiveCount_++;
+      fn()
+        .then(resolve, reject)
+        .finally(() => {
+          gasActiveCount_--;
+          const next = gasQueue_.shift();
+          if (next) next();
+        });
+    };
+    if (gasActiveCount_ < GAS_MAX_CONCURRENT_) run();
+    else gasQueue_.push(run);
+  });
+}
+
 function buildUrl(scriptUrl: string, qs: string): string {
   const base = normalizeScriptUrl(scriptUrl);
   // 매 요청마다 값이 달라지는 파라미터를 붙여 브라우저가 예전 응답을 재사용하지 못하게 한다.
@@ -175,7 +205,7 @@ interface ApiGetOptions {
   retries?: number;   // 타임아웃 시 추가 재시도 횟수 (기본 1회)
 }
 
-async function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}, opts: ApiGetOptions = {}) {
+async function apiGetImpl_(scriptUrl: string, action: string, params: Record<string, string> = {}, opts: ApiGetOptions = {}) {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
   const timeoutMs = opts.timeoutMs ?? 30000;
   const retries = opts.retries ?? 1;
@@ -233,7 +263,7 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
   return data;
 }
 
-async function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
+async function apiPostImpl_(scriptUrl: string, action: string, payload: any): Promise<any> {
   if (!scriptUrl) throw new Error("구글 스프레드시트 연동 URL이 입력되지 않았습니다.");
   const cleanUrl = normalizeScriptUrl(scriptUrl);
   let res: Response;
@@ -265,6 +295,15 @@ async function apiPost(scriptUrl: string, action: string, payload: any): Promise
     const cleanSnippet = trimmedText.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
     throw new Error(`서버가 올바르지 않은 POST 응답(HTML)을 반환했습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
   }
+}
+
+// 실제 호출부는 이 두 함수를 쓴다 — 내부 구현(...Impl_)을 동시 실행 제한 큐로 감싸서,
+// 이 파일을 통해 나가는 모든 GET/POST가 자동으로 "한 탭에서 최대 2개 동시"로 제한된다.
+function apiGet(scriptUrl: string, action: string, params: Record<string, string> = {}, opts: ApiGetOptions = {}) {
+  return withGasConcurrencyLimit(() => apiGetImpl_(scriptUrl, action, params, opts));
+}
+function apiPost(scriptUrl: string, action: string, payload: any): Promise<any> {
+  return withGasConcurrencyLimit(() => apiPostImpl_(scriptUrl, action, payload));
 }
 
 export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> {
