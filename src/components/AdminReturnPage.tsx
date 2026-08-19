@@ -1205,6 +1205,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             <div>{category === "scenario" && processMode === "대여" ? "확인할 대여 물품이 없습니다." : "미반납 물품이 없습니다."}</div>
           </div>
         ) : (
+          <>
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             {borrowers.map((g) => {
               const on = selectedBorrower === g.name;
@@ -1363,6 +1364,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 </span>
               </div>
             ) : null}
+          </>
         )}
       </div>
 
