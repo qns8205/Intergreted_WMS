@@ -827,17 +827,35 @@ export default function App() {
     try {
       const merged: any = { success: true };
       for (const part of PARTS) {
-        const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const url = `${scriptUrl}?action=getAll&part=${part}${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`;
-        const r = await withGasConcurrencyLimit(() => fetch(url, { cache: "no-store" }));
-        const t = await r.text();
-        const d = JSON.parse(t); // 조각 하나라도 JSON이 아니면 아래 catch로 넘어간다
+        // 조각 하나가 echo 404(HTML)로 실패해도, 조각별 재조회를 바로 포기하고 통짜
+        // 조회로 넘어가지 않는다 — 통짜 조회야말로 애초에 조각내서 피하려던, 가장
+        // 크고 잘 터지는 요청이기 때문이다. 짧게 쉬었다가 그 조각만 다시 시도한다.
+        const PART_RETRIES = 2;
+        let d: any = null;
+        let lastErr: any = null;
+        for (let attempt = 0; attempt <= PART_RETRIES; attempt++) {
+          const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          const url = `${scriptUrl}?action=getAll&part=${part}${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`;
+          try {
+            const r = await withGasConcurrencyLimit(() => fetch(url, { cache: "no-store" }));
+            const t = await r.text();
+            d = JSON.parse(t); // 조각이 JSON이 아니면 catch로 넘어가 재시도
+            lastErr = null;
+            break;
+          } catch (e) {
+            lastErr = e;
+            if (attempt < PART_RETRIES) {
+              await new Promise((res) => setTimeout(res, 400 + attempt * 400));
+            }
+          }
+        }
+        if (lastErr) throw lastErr; // 조각 하나가 재시도 끝까지 실패하면 아래 catch에서 통짜 조회로 폴백
         if (d && d.success) Object.assign(merged, d);
       }
       // 최소한 재고가 들어왔으면 정상 응답으로 본다
       if (merged.inventory) return merged;
     } catch (partErr) {
-      // 조각 방식이 실패하면(구버전 서버 등) 아래의 기존 통짜 조회로 넘어간다
+      // 조각 방식이 재시도까지 다 실패하면(구버전 서버 등) 아래의 기존 통짜 조회로 넘어간다
       console.warn("부분 조회 실패, 전체 조회로 대체합니다:", partErr);
     }
 
@@ -1797,7 +1815,7 @@ export default function App() {
           showToast("스프레드시트 연동이 해제되었습니다. 가상 데모 모드로 동작합니다.", "info");
         }}
         onOpenSetup={() => setShowSetup(true)}
-        borrowLock={borrowLockState}
+        borrowLock={borrowLock}
       />
     );
   }
