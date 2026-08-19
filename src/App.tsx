@@ -7,7 +7,7 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 import ConnectionBadge from "./components/ConnectionBadge";
 import SetupModal from "./components/SetupModal";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap, withGasConcurrencyLimit } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import AdminReturnPage from "./components/AdminReturnPage";
 import ItemSetManageModal from "./components/ItemSetManageModal";
@@ -788,11 +788,11 @@ export default function App() {
     
     let res;
     try {
-      res = await fetch(scriptUrl, {
+      res = await withGasConcurrencyLimit(() => fetch(scriptUrl, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" }, // CORS 프리플라이트를 피하기 위한 text/plain 설정
         body: JSON.stringify({ action, payload }),
-      });
+      }));
     } catch (e: any) {
       throw new Error(`스프레드시트 서버 연결 실패: ${e.message}.\n\n[체크리스트]\n1. 구글 Apps Script 배포 시 '액세스 권한이 있는 사용자'가 '모든 사용자(Anyone)'로 되어 있는지 확인해 주세요.\n2. 등록하신 URL이 스프레드시트 주소가 아니라 '/exec'로 끝나는 웹앱 URL인지 확인해 주세요.\n3. 회사/학교 계정의 경우 외부 외부망 접근 정책을 확인해 주세요.`);
     }
@@ -829,7 +829,7 @@ export default function App() {
       for (const part of PARTS) {
         const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const url = `${scriptUrl}?action=getAll&part=${part}${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`;
-        const r = await fetch(url, { cache: "no-store" });
+        const r = await withGasConcurrencyLimit(() => fetch(url, { cache: "no-store" }));
         const t = await r.text();
         const d = JSON.parse(t); // 조각 하나라도 JSON이 아니면 아래 catch로 넘어간다
         if (d && d.success) Object.assign(merged, d);
@@ -844,10 +844,10 @@ export default function App() {
     let res;
     try {
       const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      res = await fetch(
+      res = await withGasConcurrencyLimit(() => fetch(
         `${scriptUrl}?action=getAll${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`,
         { cache: "no-store" }
-      );
+      ));
     } catch (e: any) {
       throw new Error(`스프레드시트 연결 실패: ${e.message}.\n\n[체크리스트]\n1. 구글 Apps Script 배포 시 '액세스 권한이 있는 사용자'가 '모든 사용자(Anyone)'로 되어 있는지 확인해 주세요.\n2. 등록하신 URL이 스프레드시트 주소가 아니라 '/exec'로 끝나는 웹앱 URL인지 확인해 주세요.\n3. 회사/학교 계정의 경우 외부 외부망 접근 정책을 확인해 주세요.`);
     }
