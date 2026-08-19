@@ -108,7 +108,11 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     setHistoryLoading(true);
     try {
       if (connected && scriptUrl) {
-        const logs = await fetchScenarioAllLogs(scriptUrl);
+        // recentDays 없이 전체를 한 번에 받으면(로그가 쌓일수록) 응답이 커져 구글의 임시
+        // 리다이렉트 주소(googleusercontent.com/macros/echo)가 404를 내는 원인이 된다.
+        // 미반납 건은 recentDays와 무관하게 항상 포함되고, 반납완료 건만 최근 200일로
+        // 제한한다(자동 보관 주기 180일보다 여유를 둠 — 실제 시트에 남아있는 건 다 보이도록).
+        const logs = await fetchScenarioAllLogs(scriptUrl, { recentDays: 200 });
         const targetId = padSlot(itemId);
         setHistoryLogs(logs.filter((l) => l.itemId && padSlot(l.itemId) === targetId));
       } else {
@@ -169,9 +173,10 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     setDiagnosing(true);
     try {
       if (connected && scriptUrl) {
+        // 위 loadHistory와 같은 이유로 recentDays를 걸어 응답 크기를 줄인다.
         const [status, logs] = await Promise.all([
           fetchStockFormulaStatus(scriptUrl, borrowersItem.id),
-          fetchScenarioAllLogs(scriptUrl),
+          fetchScenarioAllLogs(scriptUrl, { recentDays: 200 }),
         ]);
         setFormulaStatus(status);
         const targetId = padSlot(borrowersItem.id);

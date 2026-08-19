@@ -248,6 +248,34 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     fetchBorrowAppVersion(scriptUrl).then(setAppVersion).catch(() => {});
   }, [connected, scriptUrl]);
 
+  // 좌석맵 로드 (대여 시 층수/유닛 선택용)
+  //
+  // 이 효과는 아래 "직접 진입 시 데이터 선로드" 효과보다 먼저 선언돼 있어야 한다.
+  // GAS 호출은 앱 전체에서 최대 GAS_MAX_CONCURRENT_개까지만 동시에 나가는 전역 큐를
+  // 공유하는데(withGasConcurrencyLimit), 물품 카탈로그(getObjectItems)나 창고재고
+  // (getWarehouseInventory+getItemSets) 로딩이 이 큐 자리를 먼저 차지해버리면 훨씬
+  // 가볍고 캐시로 빨리 끝나야 할 좌석맵 요청이 그 뒤에서 한참을 대기하게 된다 —
+  // "좌석 배치도를 불러오지 못한다"고 느껴지는 원인이 실은 이 대기시간이었다.
+  // 순서를 바꿔 좌석맵이 먼저 큐에 들어가게 한다.
+  useEffect(() => {
+    if (seatMapLoaded || !connected || !scriptUrl) return;
+    fetchSeatMap(scriptUrl)
+      .then((m) => {
+        const floors = m.floors || [];
+        setSeatMap(floors);
+        try { sessionStorage.setItem(SEAT_MAP_CACHE_KEY, JSON.stringify(floors)); } catch (e) { /* 저장 실패는 무시 */ }
+      })
+      .catch((e: any) => {
+        // 조회에 실패하면 좌석 선택 UI가 사라져 "유닛 지정이 없어졌다"로 보인다.
+        // 캐시로 이미 그려져 있으면 굳이 알리지 않는다.
+        console.error("[좌석배치도 조회 실패]", e);
+        if (seatMap.length === 0) {
+          showToast("좌석 배치도를 불러오지 못해 층/유닛 선택이 표시되지 않습니다. 새로고침해주세요.", "warn");
+        }
+      })
+      .finally(() => setSeatMapLoaded(true));
+  }, [connected, scriptUrl, seatMapLoaded]);
+
   /* 직접 진입(대여/반납) 시 필요한 데이터 선로드 */
   const bootedRef = useRef(false);
   useEffect(() => {
@@ -270,26 +298,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // 좌석맵 로드 (대여 시 층수/유닛 선택용)
-  useEffect(() => {
-    if (seatMapLoaded || !connected || !scriptUrl) return;
-    fetchSeatMap(scriptUrl)
-      .then((m) => {
-        const floors = m.floors || [];
-        setSeatMap(floors);
-        try { sessionStorage.setItem(SEAT_MAP_CACHE_KEY, JSON.stringify(floors)); } catch (e) { /* 저장 실패는 무시 */ }
-      })
-      .catch((e: any) => {
-        // 조회에 실패하면 좌석 선택 UI가 사라져 "유닛 지정이 없어졌다"로 보인다.
-        // 캐시로 이미 그려져 있으면 굳이 알리지 않는다.
-        console.error("[좌석배치도 조회 실패]", e);
-        if (seatMap.length === 0) {
-          showToast("좌석 배치도를 불러오지 못해 층/유닛 선택이 표시되지 않습니다. 새로고침해주세요.", "warn");
-        }
-      })
-      .finally(() => setSeatMapLoaded(true));
-  }, [connected, scriptUrl, seatMapLoaded]);
 
   /* ---------- 창고 재고/미반납 로드 ---------- */
   const loadWarehouse = useCallback(async (force = false) => {

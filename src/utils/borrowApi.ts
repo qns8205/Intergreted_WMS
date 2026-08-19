@@ -163,7 +163,10 @@ function normalizeScriptUrl(raw: string): string {
 // 무작위로 발생한다 — 작은 조회(sectors, users 등)까지 같이 실패했던 게 바로 이 증상이다.
 let gasActiveCount_ = 0;
 const gasQueue_: (() => void)[] = [];
-const GAS_MAX_CONCURRENT_ = 2;
+// 2 -> 3: 좌석맵/버전 확인처럼 가볍고 빠른 요청이, 물품 카탈로그·창고재고 같은
+// 무거운 요청 두 개에 슬롯을 전부 뺏겨 큐에서 오래 대기하는 일을 줄이기 위해 여유를 뒀다.
+// (근본 해결은 호출 순서 조정이고, 이건 보조적인 여유분이다)
+const GAS_MAX_CONCURRENT_ = 3;
 
 export function withGasConcurrencyLimit<T>(fn: () => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
