@@ -132,6 +132,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       setWhLoaded(true);
     } catch (e: any) {
       showToast(`공구 및 부품류 미반납 목록을 불러오지 못했습니다: ${e.message}`, "error");
+      // 실패해도 "시도는 끝났다"고 표시한다. 안 그러면 아래 useEffect가 계속 재요청해
+      // 무한 로딩에 빠진다 (모바일 시나리오 목록에서 같은 문제가 있었다).
+      setWhLoaded(true);
     } finally {
       if (!silent) setWhLoading(false);
     }
