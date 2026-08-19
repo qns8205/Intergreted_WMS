@@ -7,7 +7,7 @@ import StockAdjustModal from "./StockAdjustModal";
 import ScrollToTopButton from "./ScrollToTopButton";
 import {
   ScenarioObjectAdmin, padSlot,
-  fetchScenarioObjectsForAdmin, fetchScenarioObjectsPage, updateScenarioObject, addScenarioObject, deleteScenarioObject,
+  fetchScenarioObjectsPage, updateScenarioObject, addScenarioObject, deleteScenarioObject,
   fetchUnreturnedItems, UnreturnedItem,
   fetchStockAuditHistory, recordStockAudit, StockAuditRecord,
   fetchStockFormulaStatus, StockFormulaStatus,
