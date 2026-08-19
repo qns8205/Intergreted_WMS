@@ -821,7 +821,16 @@ export default function App() {
     
     let res;
     try {
-      res = await fetch(`${scriptUrl}?action=getAll${forceRefresh ? "&forceRefresh=1" : ""}`);
+      // 매 요청마다 값이 달라지는 파라미터를 붙이고 캐시를 쓰지 않는다.
+      // Apps Script는 응답이 크면 본문 대신 googleusercontent.com의 임시 주소로 리다이렉트하는데,
+      // 요청 URL이 매번 같으면 브라우저가 캐시에 남은 예전 리다이렉트를 재사용하고
+      // 그 주소는 이미 만료돼 404(Page Not Found) HTML이 돌아온다.
+      // (borrowApi의 apiGet에는 이미 같은 처리를 해뒀는데, 이 호출만 그걸 거치지 않아 빠져 있었다)
+      const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      res = await fetch(
+        `${scriptUrl}?action=getAll${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`,
+        { cache: "no-store" }
+      );
     } catch (e: any) {
       throw new Error(`스프레드시트 연결 실패: ${e.message}.\n\n[체크리스트]\n1. 구글 Apps Script 배포 시 '액세스 권한이 있는 사용자'가 '모든 사용자(Anyone)'로 되어 있는지 확인해 주세요.\n2. 등록하신 URL이 스프레드시트 주소가 아니라 '/exec'로 끝나는 웹앱 URL인지 확인해 주세요.\n3. 회사/학교 계정의 경우 외부 외부망 접근 정책을 확인해 주세요.`);
     }
