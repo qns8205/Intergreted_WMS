@@ -273,6 +273,10 @@ export default function MobileViewPage({
       setSciLoaded(true);
     } catch (e: any) {
       notify(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
+      // 실패해도 "시도는 끝났다"고 표시해야 한다. 이걸 안 하면 아래 useEffect의 조건
+      // (!sciLoaded && !sciLoading)이 계속 참이라 재요청 → 실패가 무한 반복되고,
+      // 화면은 영원히 "불러오는 중"에 머문다.
+      setSciLoaded(true);
     } finally {
       setSciLoading(false);
     }
