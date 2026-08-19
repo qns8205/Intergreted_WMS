@@ -117,6 +117,28 @@ function doGet(e) {
         } catch (cacheErr) { /* 캐시 조회 실패 시 그냥 아래로 진행 */ }
       }
 
+      // part 파라미터가 오면 그 부분만 따로 돌려준다.
+      //
+      // 이걸 만든 이유: 응답 JSON이 커지면 Apps Script가 본문을 바로 주지 않고
+      // script.googleusercontent.com의 임시 주소로 리다이렉트하는데, 그 주소가 404가 나는
+      // 일이 잦다(브라우저 콘솔의 macros/echo 404). 응답이 작으면 리다이렉트 자체가 생기지
+      // 않으므로, 화면에서 조각별로 나눠 받아 합치면 이 문제를 통째로 피할 수 있다.
+      var part = String(e.parameter.part || "").trim();
+      if (part) {
+        var partData = { success: true };
+        if (part === "inventory") partData.inventory = getInventoryData(sheet);
+        else if (part === "sectors") partData.sectors = getSectorLayout();
+        else if (part === "users") partData.users = getUsersData(ss);
+        else if (part === "defectLogs") partData.defectLogs = getDefectLogs(defectSheet);
+        else if (part === "rentLogs") partData.rentLogs = getRentLogs(rentSheet);
+        else if (part === "robotObjects") {
+          try { partData.robotObjects = getRobotObjects(ss); } catch (err) { partData.robotObjects = []; }
+        } else {
+          return responseJSON({ success: false, error: "알 수 없는 part: " + part });
+        }
+        return ContentService.createTextOutput(JSON.stringify(partData)).setMimeType(ContentService.MimeType.JSON);
+      }
+
       const inventory = getInventoryData(sheet);
       const sectors = getSectorLayout();
       const users = getUsersData(ss);
@@ -148,10 +170,43 @@ function doGet(e) {
       // 대여자가 실제로 고를 수 있는 카탈로그이므로, 보관 처리된(파손 등으로 치워둔) 물품은 뺀다.
       // (getObjectItems() 자체는 다른 내부 조회에서도 두루 쓰이므로 함수 안에서는 안 거르고,
       //  여기 이 응답에서만 거른다)
-      return responseJSON({ success: true, items: getObjectItems().filter(function (o) { return !o.archived; }) });
+      // 대여 화면이 실제로 쓰는 필드만 골라 보낸다. 물품이 300개가 넘어 응답이 커지면
+      // 구글이 본문 대신 오류 페이지를 돌려보내 "불러오지 못했습니다"가 났다.
+      // (sector는 대여 화면에서 쓰이지 않아 제외. 빈 값/false인 필드도 담지 않는다)
+      var catalog = [];
+      getObjectItems().forEach(function (o) {
+        if (o.archived) return; // 보관 처리된(파손 등으로 치워둔) 물품은 카탈로그에서 뺀다
+        var c = { id: o.id, name: o.name, rootSlot: o.rootSlot, stock: o.stock, rented: o.rented };
+        if (o.category) c.category = o.category;
+        if (o.subcategory) c.subcategory = o.subcategory;
+        if (o.image) c.image = o.image;
+        if (o.fragile) c.fragile = true;
+        if (o.fireRisk) c.fireRisk = true;
+        if (o.requestFor) c.requestFor = o.requestFor;
+        if (o.personalOwner) c.personalOwner = o.personalOwner;
+        catalog.push(c);
+      });
+      return responseJSON({ success: true, items: catalog });
     }
     if (action === "getScenarioObjectsForAdmin") {
-      return responseJSON({ success: true, items: getScenarioObjectsForAdmin_(e.parameter.forceRefresh === "1") });
+      // 물품이 300개가 넘으면 응답 JSON이 커져서, 구글이 본문 대신 검사 페이지(HTML)를
+      // 돌려보내 "올바르지 않은 응답" 오류가 났다(특히 모바일). 그래서 offset/limit으로
+      // 나눠서 보낼 수 있게 했다. 파라미터가 없으면 예전처럼 전체를 한 번에 돌려준다.
+      // 한 번에 다 보내면 응답이 커져서, 구글이 본문 대신 임시 주소로 리다이렉트하는데
+      // 그 주소가 404가 나는 일이 있다(브라우저 콘솔에 googleusercontent.com/macros/echo 404).
+      // 그래서 offset/limit으로 잘라 보낼 수 있게 해두고, 화면에서는 끝까지 이어 받아
+      // 결국 전체 목록을 갖게 한다. 응답 하나하나가 작으면 리다이렉트가 생기지 않는다.
+      var sciAll = getScenarioObjectsForAdmin_(e.parameter.forceRefresh === "1");
+      var sciLimit = parseInt(e.parameter.limit, 10);
+      if (sciLimit > 0) {
+        var sciOffset = parseInt(e.parameter.offset, 10) || 0;
+        var sciPage = sciAll.slice(sciOffset, sciOffset + sciLimit);
+        return responseJSON({
+          success: true, items: sciPage, total: sciAll.length,
+          hasMore: sciOffset + sciPage.length < sciAll.length
+        });
+      }
+      return responseJSON({ success: true, items: sciAll, total: sciAll.length, hasMore: false });
     }
     if (action === "getScenarioDefinition") {
       // 이 조회는 시트를 무겁게 읽는 작업이라, 짧은 캐시로 반복 요청 부담을 크게 줄인다.
@@ -172,7 +227,21 @@ function doGet(e) {
       return ContentService.createTextOutput(scenarioPayload).setMimeType(ContentService.MimeType.JSON);
     }
     if (action === "getUnreturnedItems") {
-      return responseJSON({ success: true, items: getUnreturnedItems(e.parameter.forceRefresh === "1") });
+      // 미반납이 많아지면 응답 JSON이 커져서 구글이 본문 대신 검사 페이지(HTML)를
+      // 돌려보내는 일이 있다(특히 모바일). offset/limit으로 나눠 받을 수 있게 했고,
+      // 파라미터가 없으면 예전처럼 전체를 한 번에 돌려준다.
+      // 위 getScenarioObjectsForAdmin과 같은 이유로 잘라 보낼 수 있게 한다.
+      var unAll = getUnreturnedItems(e.parameter.forceRefresh === "1");
+      var unLimit = parseInt(e.parameter.limit, 10);
+      if (unLimit > 0) {
+        var unOffset = parseInt(e.parameter.offset, 10) || 0;
+        var unPage = unAll.slice(unOffset, unOffset + unLimit);
+        return responseJSON({
+          success: true, items: unPage, total: unAll.length,
+          hasMore: unOffset + unPage.length < unAll.length
+        });
+      }
+      return responseJSON({ success: true, items: unAll, total: unAll.length, hasMore: false });
     }
     if (action === "getLeastBorrowedItems") {
       return responseJSON({ success: true, items: getLeastBorrowedItems_(ss, Number(e.parameter.limit) || 20) });
@@ -770,12 +839,19 @@ function getInventoryData(sheet) {
   return inventory;
 }
 
+// getRentLogs와 같은 이유로 최근 기록만 실어 보낸다 (사진 주소까지 들어 있어 더 무겁다).
+var GET_ALL_DEFECT_LOG_LIMIT_ = 300;
+
 function getDefectLogs(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  
+
   const lastCol = Math.min(Math.max(sheet.getLastColumn(), 7), 8);
-  const range = sheet.getRange(2, 1, lastRow - 1, lastCol);
+  // 시트 아래쪽이 최신이므로 마지막 N행만 읽는다.
+  const totalRows = lastRow - 1;
+  const takeRows = Math.min(totalRows, GET_ALL_DEFECT_LOG_LIMIT_);
+  const startRow = lastRow - takeRows + 1;
+  const range = sheet.getRange(startRow, 1, takeRows, lastCol);
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
   const logs = [];
@@ -785,7 +861,7 @@ function getDefectLogs(sheet) {
     const photoUrl = lastCol >= 7 ? String(row[6] || "").trim() : "";
     
     logs.push({
-      rowIndex: i + 2,
+      rowIndex: startRow + i, // 앞부분을 건너뛰고 읽으므로 실제 시트 행 번호로 맞춘다
       timestamp: rawTs.replace(/^'/, ""),
       location: "",
       name: String(row[0] || "").trim(),
@@ -1053,18 +1129,30 @@ function getRobotObjects(ss) {
   return objects;
 }
 
+// getAll에 실려 나가는 대여로그. 거래가 쌓일수록 무한히 커지는데, 전부 보내면 응답이
+// 너무 커져서 구글이 본문 대신 임시 주소로 리다이렉트하고 그 주소가 404가 나는 일이 있다
+// (브라우저 콘솔의 googleusercontent.com/macros/echo 404). 화면에서는 최근 기록만 보므로
+// 뒤쪽(=최신) 일부만 읽어 보낸다. 전체 이력은 "대여 & 반납 로그" 화면에서 따로 조회한다.
+var GET_ALL_RENT_LOG_LIMIT_ = 500;
+
 function getRentLogs(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  
-  const range = sheet.getRange(2, 1, lastRow - 1, 7);
+
+  // 시트 아래쪽이 최신이므로, 마지막 N행만 읽는다.
+  const totalRows = lastRow - 1;
+  const takeRows = Math.min(totalRows, GET_ALL_RENT_LOG_LIMIT_);
+  const startRow = lastRow - takeRows + 1;
+  const range = sheet.getRange(startRow, 1, takeRows, 7);
   const values = range.getValues();
   const displayValues = range.getDisplayValues();
   const logs = [];
   for (let i = 0; i < values.length; i++) {
     const row = values[i];
     logs.push({
-      rowIndex: i + 2,
+      // 앞부분을 건너뛰고 읽으므로, 시트의 실제 행 번호로 맞춰야 한다.
+      // (i + 2로 두면 수정·삭제가 엉뚱한 행에 적용된다)
+      rowIndex: startRow + i,
       timestamp: displayValues[i][0] || "",
       type: String(row[1] || "대여").trim(),
       location: String(row[2] || "").trim(),
@@ -1463,7 +1551,7 @@ function invalidateLogCaches_() {
   // 한 번에 조회하고, 지울 키를 전부 모아 removeAll을 딱 한 번만 부르도록 묶는다.
   try {
     var cache = CacheService.getScriptCache();
-    var baseKeys = ["unreturnedItems_v2", "objectItems_v1", "seatLocMap_v1", "rentedCounts_v1"];
+    var baseKeys = ["unreturnedItems_v2", "objectItems_v1", "seatLocMap_v1", "rentedCounts_v1", "scenarioObjectsForAdmin_v1"];
     var scopes = ["all", "unreturned", "returned"];
     var days = ["0", "4", "7", "14"];
     for (var d = 0; d < days.length; d++) {
@@ -2090,23 +2178,22 @@ function getObjectItems() {
     var personalOwner = colsToRead > 15 ? (String(row[15] || "").trim() || undefined) : undefined;
     var archived = colsToRead > 16 ? String(row[16] || "").trim().toUpperCase() === "Y" : false;
 
-    result.push({
-      id: id,
-      name: name,
-      sector: sector,
-      rootSlot: rootSlot,
-      category: category,
-      subcategory: subcategory,
-      image: image,
-      stock: stock,
-      rented: rented,
-      excludeFromRanking: excludeFromRanking,
-      fragile: fragile,
-      fireRisk: fireRisk,
-      requestFor: requestFor,
-      personalOwner: personalOwner,
-      archived: archived
-    });
+    // 값이 비었거나 false인 필드는 담지 않는다 — 물품이 300개가 넘으면 JSON이 커져서
+    // 구글이 본문 대신 검사 페이지(HTML)를 돌려보내 "올바르지 않은 응답" 오류가 났다.
+    // 빠진 필드는 프론트에서 undefined로 읽히고, 기존 코드가 모두 `|| ""` / `!!` 형태로
+    // 처리하고 있어 동작은 그대로다.
+    var oi = { id: id, name: name, rootSlot: rootSlot, stock: stock, rented: rented };
+    if (sector) oi.sector = sector;
+    if (category) oi.category = category;
+    if (subcategory) oi.subcategory = subcategory;
+    if (image) oi.image = image;
+    if (excludeFromRanking) oi.excludeFromRanking = true;
+    if (fragile) oi.fragile = true;
+    if (fireRisk) oi.fireRisk = true;
+    if (requestFor) oi.requestFor = requestFor;
+    if (personalOwner) oi.personalOwner = personalOwner;
+    if (archived) oi.archived = true;
+    result.push(oi);
   }
   // 시트에 수동으로 유지되는 '대여' 카운터 대신, 실제 미반납 로그에서 방금 집계한
   // 값으로 rented를 덮어쓴다 — 어긋날 일이 구조적으로 없어진다.
@@ -2133,36 +2220,60 @@ function getScenarioImageFolderId_() {
   return getFolderIdSetting_("SCENARIO_IMAGE_FOLDER_ID", "1QfkmNvsj0zooH5duof1QeqkK2dTjS9Zx");
 }
 
+// 시나리오 물품을 offset/limit으로 나눠 받을 때, 매 페이지마다 이 함수를 다시 부르는데
+// 캐시가 없으면 페이지 수만큼 시트 전체를 매번 다시 읽게 된다(320개 4페이지면 4번 반복).
+// getUnreturnedItems 등 다른 조회들처럼 짧은 캐시를 둬서, 같은 조회 안의 나머지 페이지는
+// 캐시로 즉시 응답한다. forceRefresh(수동 새로고침)일 때만 캐시를 건너뛴다.
 function getScenarioObjectsForAdmin_(forceRefresh) {
+  if (!forceRefresh) {
+    var cached = cacheGetLarge_("scenarioObjectsForAdmin_v1");
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) { /* 파싱 실패 시 아래에서 다시 계산 */ }
+    }
+  }
+  var result = getScenarioObjectsForAdmin_impl_(forceRefresh);
+  cachePutLarge_("scenarioObjectsForAdmin_v1", JSON.stringify(result), 30);
+  return result;
+}
+
+function getScenarioObjectsForAdmin_impl_(forceRefresh) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(OBJECT_SHEET_NAME);
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
-  var lastCol = Math.max(sheet.getLastColumn(), 17);
+  // Q열(17번째)까지 읽고 싶지만, 시트에 실제로 있는 열 수를 넘으면 getRange가 예외를 던진다.
+  // 조회는 매우 자주 불리므로 여기서 시트 구조를 바꾸면(열 추가) 동시 접속 시 서로 충돌한다.
+  // 그래서 열을 만들지 않고, 실제 존재하는 열까지만 읽는다. 없는 열은 아래에서 빈 값으로 처리된다.
+  var lastCol = Math.min(Math.max(sheet.getLastColumn(), 17), sheet.getMaxColumns());
   var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var result = [];
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
     if (!row[0] && !row[1]) continue;
-    result.push({
+    // 응답 크기를 줄이기 위해, 값이 비었거나 false인 필드는 아예 안 담는다.
+    // (물품이 300개가 넘어 JSON이 커지면 구글이 응답을 검사 페이지(HTML)로 바꿔버려
+    //  "올바르지 않은 응답" 오류가 났다. JSON에서 빠진 필드는 프론트에서 undefined로
+    //  읽히고, 기존 코드가 모두 `|| ""` / `!!` 형태로 처리하고 있어 동작은 그대로다.)
+    var o = {
       rowIndex: i + 2,
       id: padSlot_(String(row[0]).trim()),
       name: String(row[1]).trim(),
-      sector: String(row[2] || "").trim(),
       rootSlot: padSlot_(String(row[3]).trim()),
-      category: String(row[4] || "").trim(),
-      subcategory: String(row[5] || "").trim(),
-      image: String(row[6] || "").trim(),
       stock: (row[7] !== "" && row[7] !== undefined) ? Number(row[7]) : 0,
-      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0,
-      excludeFromRanking: String(row[9] || "").trim().toUpperCase() === "Y",
-      fragile: String(row[12] || "").trim().toUpperCase() === "Y",
-      fireRisk: String(row[13] || "").trim().toUpperCase() === "Y",
-      requestFor: String(row[14] || "").trim() || undefined,
-      personalOwner: String(row[15] || "").trim() || undefined,
-      archived: String(row[16] || "").trim().toUpperCase() === "Y"
-    });
+      rented: (row[8] !== "" && row[8] !== undefined) ? Number(row[8]) : 0
+    };
+    var sectorV = String(row[2] || "").trim(); if (sectorV) o.sector = sectorV;
+    var catV = String(row[4] || "").trim(); if (catV) o.category = catV;
+    var subV = String(row[5] || "").trim(); if (subV) o.subcategory = subV;
+    var imgV = String(row[6] || "").trim(); if (imgV) o.image = imgV;
+    if (String(row[9] || "").trim().toUpperCase() === "Y") o.excludeFromRanking = true;
+    if (String(row[12] || "").trim().toUpperCase() === "Y") o.fragile = true;
+    if (String(row[13] || "").trim().toUpperCase() === "Y") o.fireRisk = true;
+    var reqV = String(row[14] || "").trim(); if (reqV) o.requestFor = reqV;
+    var ownV = String(row[15] || "").trim(); if (ownV) o.personalOwner = ownV;
+    if (String(row[16] || "").trim().toUpperCase() === "Y") o.archived = true;
+    result.push(o);
   }
   // 시트의 수동 '대여' 카운터 대신 실제 미반납 로그에서 집계한 값으로 덮어쓴다.
   var rentedCounts_ = computeRentedCounts_(forceRefresh);
@@ -2185,6 +2296,9 @@ function updateScenarioObject_(item) {
   if (!sheet) throw new Error("'" + OBJECT_SHEET_NAME + "' 시트를 찾을 수 없습니다.");
   var rowIndex = Number(item.rowIndex);
   if (!rowIndex || rowIndex < 2) throw new Error("올바르지 않은 행 인덱스: " + rowIndex);
+  // Q열까지 써야 하므로 열이 부족하면 여기서 만든다.
+  // (저장은 가끔만 일어나므로 시트 구조를 바꿔도 조회처럼 충돌할 위험이 없다)
+  if (sheet.getMaxColumns() < 17) sheet.insertColumnsAfter(sheet.getMaxColumns(), 17 - sheet.getMaxColumns());
   var lastCol = Math.max(sheet.getLastColumn(), 17);
   var range = sheet.getRange(rowIndex, 1, 1, lastCol);
   var cur = range.getValues()[0];
@@ -3793,7 +3907,20 @@ function getUnreturnedItems(forceRefresh) {
       // SID대여는 D열(row[3], 대여일)에 시간까지 들어 있는 게 정상이지만,
       // 비어 있을 때는 신청시각인 K열(row[10])로 대체한다.
       var scRaw = row[3] || row[10];
-      result.push({ sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], scenarioId: row[1], itemLabel: label, itemId: itemId, itemKind: row[11] || "추가 대여물품", location: itemId ? (locations[itemId] || "") : "", quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowDateTime: (formatDateTimeFull_(row[3]) || formatDateTimeFull_(row[10])), shift: computeShiftFromRaw_(scRaw), borrowPurpose: row[4], email: String(row[7] || "").trim(), batchId: batchId, floor: seatLoc.floor || "", unit: seatLoc.unit || "", image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0, pickedUp: String(row[12] || "").trim() || undefined });
+      // 빈 값 필드는 담지 않는다 — 미반납이 많아지면 JSON이 커져서 구글이 본문 대신
+      // 검사 페이지(HTML)를 돌려보내 "올바르지 않은 응답" 오류가 났다(특히 모바일).
+      var scRow = { sheetType: "scenario", rowIndex: i + 2, borrowerName: row[0], itemLabel: label, itemId: itemId, quantity: parsedQty, borrowDate: formatDateValue_(row[3]), borrowDateTime: (formatDateTimeFull_(row[3]) || formatDateTimeFull_(row[10])), shift: computeShiftFromRaw_(scRaw), stock: obj.stock || 0, rented: obj.rented || 0 };
+      if (row[1]) scRow.scenarioId = row[1];
+      if (row[11]) scRow.itemKind = row[11]; else scRow.itemKind = "추가 대여물품";
+      var scLoc = itemId ? (locations[itemId] || "") : ""; if (scLoc) scRow.location = scLoc;
+      if (row[4]) scRow.borrowPurpose = row[4];
+      var scEmail = String(row[7] || "").trim(); if (scEmail) scRow.email = scEmail;
+      if (batchId) scRow.batchId = batchId;
+      if (seatLoc.floor) scRow.floor = seatLoc.floor;
+      if (seatLoc.unit) scRow.unit = seatLoc.unit;
+      if (obj.image) scRow.image = obj.image;
+      var scPicked = String(row[12] || "").trim(); if (scPicked) scRow.pickedUp = scPicked;
+      result.push(scRow);
     });
   }
   var generalSheet = ss.getSheetByName(GENERAL_SHEET_NAME);
@@ -3812,14 +3939,27 @@ function getUnreturnedItems(forceRefresh) {
       // 일반대여는 E열(row[4], 대여일)에 시간까지 들어 있는 게 정상이지만,
       // 비어 있을 때는 신청시각인 L열(row[11])로 대체한다.
       var gnRaw = row[4] || row[11];
-      result.push({ sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemId: pid, itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), location: locations[pid] || "", quantity: qty, borrowDate: formatDateValue_(row[4]), borrowDateTime: (formatDateTimeFull_(row[4]) || formatDateTimeFull_(row[11])), shift: computeShiftFromRaw_(gnRaw), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, borrowPurpose: row[5], email: String(row[8] || "").trim(), batchId: batchId, floor: seatLoc.floor || "", unit: seatLoc.unit || "", generalOption: String(row[12] || ""), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0, pickedUp: String(row[13] || "").trim() || undefined });
+      var gnRow = { sheetType: "general", rowIndex: i + 2, borrowerName: row[0], itemId: pid, itemLabel: (id ? "[" + pid + "] " : "") + row[2] + (qty > 1 ? " x " + qty : ""), quantity: qty, borrowDate: formatDateValue_(row[4]), borrowDateTime: (formatDateTimeFull_(row[4]) || formatDateTimeFull_(row[11])), shift: computeShiftFromRaw_(gnRaw), submitGroupKey: groupInfo.key, submitDisplay: groupInfo.display, stock: obj.stock || 0, rented: obj.rented || 0 };
+      var gnLoc = locations[pid] || ""; if (gnLoc) gnRow.location = gnLoc;
+      if (row[5]) gnRow.borrowPurpose = row[5];
+      var gnEmail = String(row[8] || "").trim(); if (gnEmail) gnRow.email = gnEmail;
+      if (batchId) gnRow.batchId = batchId;
+      if (seatLoc.floor) gnRow.floor = seatLoc.floor;
+      if (seatLoc.unit) gnRow.unit = seatLoc.unit;
+      var gnOpt = String(row[12] || ""); if (gnOpt) gnRow.generalOption = gnOpt;
+      if (obj.image) gnRow.image = obj.image;
+      var gnPicked = String(row[13] || "").trim(); if (gnPicked) gnRow.pickedUp = gnPicked;
+      result.push(gnRow);
     });
   }
 
   // 계산하는 동안 다른 요청이 대여/반납을 기록해 버전이 바뀌었다면, 이 결과는 이미
   // 낡은 스냅샷일 수 있으니 캐시에 쓰지 않는다 (다음 조회가 새로 계산하게 둔다).
   if (getDataVersion_() === versionAtStart_) {
-    cachePutLarge_("unreturnedItems_v2", JSON.stringify(result), 60);
+    // 여러 명이 동시에 켜두면 같은 조회가 겹쳐 들어온다. 캐시를 넉넉히 잡아두면
+    // 그 중 한 번만 실제로 시트를 읽고 나머지는 캐시로 응답해 부담이 크게 준다.
+    // 대여/반납 처리 시에는 invalidateLogCaches_()가 이 캐시를 비우므로 최신성은 유지된다.
+    cachePutLarge_("unreturnedItems_v2", JSON.stringify(result), 180);
   }
   return result;
 }
@@ -5483,115 +5623,11 @@ function saveNotice_(ss, payload) {
   if (title || text) items.push({ title: title, text: text, author: author });
   return saveNotices_(ss, { items: items.concat(rest), author: author });
 }
+/* 대여 잠금 / 공지 관련 함수들이 이 아래에 한 번 더 복사돼 있었다.
+   자바스크립트는 같은 이름의 함수가 여러 번 정의되면 "마지막 정의"가 앞의 것을 덮어쓴다.
+   그래서 공지 기능이 최대 3개를 지원하는 새 버전(getNotices_ 기반)으로 고쳐졌는데도,
+   실제로는 아래에 남아 있던 옛 단일 공지 버전이 동작하고 있었다. 중복 블록을 제거한다. */
 
-/* ══════════ 대여 잠금 ══════════
- * 관리자가 대여를 일시 중단할 수 있다. (반납은 계속 가능하다)
- * 스크립트 속성에 보관하므로 시트를 건드리지 않는다.
- */
-var PROP_BORROW_LOCK_ = "BORROW_LOCKED";
-var PROP_BORROW_LOCK_REASON_ = "BORROW_LOCK_REASON";
-var PROP_BORROW_LOCK_AT_ = "BORROW_LOCK_AT";
-var PROP_BORROW_LOCK_UNITS_ = "BORROW_LOCK_UNITS"; // ["B2|Unit 4", ...]
-
-// 층/유닛 키를 표기 차이에 흔들리지 않게 정규화한다.
-function unitLockKey_(floor, unit) {
-  var norm = function (v) { return String(v == null ? "" : v).toUpperCase().replace(/[\s()\[\]{}_\-.,\/]/g, ""); };
-  return norm(floor) + "|" + norm(unit);
-}
-
-function getBorrowLock_() {
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var rawUnits = String(props.getProperty(PROP_BORROW_LOCK_UNITS_) || "[]");
-    var units = [];
-    try { units = JSON.parse(rawUnits) || []; } catch (e2) { units = []; }
-    return {
-      locked: String(props.getProperty(PROP_BORROW_LOCK_) || "") === "1",
-      reason: String(props.getProperty(PROP_BORROW_LOCK_REASON_) || ""),
-      at: String(props.getProperty(PROP_BORROW_LOCK_AT_) || ""),
-      units: units // 유닛 단위 잠금: [{ floor, unit, reason }]
-    };
-  } catch (e) {
-    return { locked: false, reason: "", at: "", units: [] };
-  }
-}
-
-function setBorrowLock_(payload) {
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var locked = !!(payload && payload.locked);
-    props.setProperty(PROP_BORROW_LOCK_, locked ? "1" : "0");
-    props.setProperty(PROP_BORROW_LOCK_REASON_, String((payload && payload.reason) || ""));
-    props.setProperty(PROP_BORROW_LOCK_AT_, locked ? formatDate(new Date()) : "");
-    if (payload && payload.units !== undefined) {
-      var list = [];
-      (payload.units || []).forEach(function (u) {
-        var floor = String((u && u.floor) || "").trim();
-        var unit = String((u && u.unit) || "").trim();
-        if (!floor || !unit) return;
-        list.push({ floor: floor, unit: unit, reason: String((u && u.reason) || "").trim() });
-      });
-      props.setProperty(PROP_BORROW_LOCK_UNITS_, JSON.stringify(list));
-    }
-    return { success: true, lock: getBorrowLock_() };
-  } catch (e) {
-    return { success: false, message: "대여 잠금 설정 실패: " + e.message };
-  }
-}
-
-// 잠금 상태면 거절 메시지를, 아니면 null을 돌려준다.
-// floor/unit을 넘기면 해당 유닛만 잠긴 경우도 함께 판정한다.
-function borrowLockMessage_(floor, unit) {
-  var lock = getBorrowLock_();
-  if (lock.locked) {
-    return "현재 관리자가 대여를 일시 중단했습니다."
-      + (lock.reason ? "\n\n사유: " + lock.reason : "")
-      + "\n\n반납은 정상적으로 가능합니다. 문의는 관리자에게 해주세요.";
-  }
-  if (floor && unit && lock.units && lock.units.length) {
-    var key = unitLockKey_(floor, unit);
-    for (var i = 0; i < lock.units.length; i++) {
-      var u = lock.units[i];
-      if (unitLockKey_(u.floor, u.unit) !== key) continue;
-      return "'" + u.floor + " · " + u.unit + "' 유닛은 현재 대여가 중단되었습니다."
-        + (u.reason ? "\n\n사유: " + u.reason : "")
-        + "\n\n다른 유닛을 선택하거나 관리자에게 문의해주세요. (반납은 가능합니다)";
-    }
-  }
-  return null;
-}
-
-/* ══════════ 랜딩 공지 ══════════
- * "공지" 시트 2행에 현재 공지를 보관한다. (작성시각 | 작성자 | 내용)
- * 관리자 화면에서 작성하면 랜딩 페이지 하단에 표시된다.
- */
-var NOTICE_SHEET_NAME = "공지";
-
-function getNotice_(ss) {
-  try {
-    var sheet = ss.getSheetByName(NOTICE_SHEET_NAME);
-    if (!sheet || sheet.getLastRow() < 2) return { text: "", updatedAt: "", author: "" };
-    var row = sheet.getRange(2, 1, 1, 3).getValues()[0];
-    var at = row[0] instanceof Date ? formatDate(row[0]) : String(row[0] || "").trim();
-    return { updatedAt: at, author: String(row[1] || "").trim(), text: String(row[2] || "").trim() };
-  } catch (e) {
-    return { text: "", updatedAt: "", author: "" };
-  }
-}
-
-function saveNotice_(ss, payload) {
-  try {
-    var sheet = getOrCreateSheet_(ss, NOTICE_SHEET_NAME, ["작성시각", "작성자", "내용"]);
-    var text = String((payload && payload.text) || "").trim();
-    var author = String((payload && payload.author) || "").trim();
-    var at = formatDate(new Date());
-    if (sheet.getLastRow() < 2) sheet.appendRow([at, author, text]);
-    else sheet.getRange(2, 1, 1, 3).setValues([[at, author, text]]);
-    return { success: true, notice: { text: text, author: author, updatedAt: at } };
-  } catch (e) {
-    return { success: false, message: "공지 저장 실패: " + e.message };
-  }
-}
 
 // 현재 적용 중인 페널티 목록 (만료된 항목은 제외)
 function getActivePenalties_(ss) {
@@ -5740,7 +5776,7 @@ function getStockFormulaStatus_(ss, itemId) {
 //  - 락을 잡아 대여/반납 처리와 동시에 실행되지 않게 한다.
 // ══════════════════════════════════════════════════════════════════
 
-var ARCHIVE_AFTER_DAYS_ = 7;          // 반납 완료 후 이 일수가 지나면 보관 대상
+var ARCHIVE_AFTER_DAYS_ = 180;          // 반납 완료 후 이 일수가 지나면 보관 대상
 var ARCHIVE_MAX_ROWS_PER_RUN_ = 2000;   // 한 번 실행에서 옮길 최대 행 수 (실행시간 초과 방지)
 
 // 로그 시트별 설정: 반납여부/반납일이 몇 번째 열인지 (1부터 셈)
