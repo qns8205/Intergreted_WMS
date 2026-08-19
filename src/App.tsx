@@ -887,7 +887,10 @@ export default function App() {
     }
   }
 
-  // 10초 주기로 스프레드시트 최신 데이터 실시간 자동 동기화 (기기 간 실시간 싱크 완성)
+  // 60초 주기로 스프레드시트 최신 데이터 자동 동기화.
+  // (원래 10초였는데, 반납 화면의 자체 폴링까지 겹치면 무거운 조회가 너무 잦게 나가
+  //  구글이 응답 대신 오류 페이지를 돌려보내는 일이 있었다. 실제 변경이 생기는 대여/반납
+  //  처리 직후에는 코드에서 즉시 갱신을 따로 호출하므로, 주기를 늘려도 체감 차이는 작다)
   useEffect(() => {
     if (!connected || !scriptUrl) return;
 
@@ -896,7 +899,7 @@ export default function App() {
 
     const interval = setInterval(() => {
       silentRefresh();
-    }, 10000); // 10초 간격 폴링
+    }, 60000); // 60초 간격 폴링
 
     return () => clearInterval(interval);
   }, [connected, scriptUrl, currentView]); // eslint-disable-line
@@ -2839,7 +2842,7 @@ export default function App() {
             <>
               <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981" }} />
               <span>
-                <strong>[실시간 동기화 상태]</strong> 현재 내 구글 스프레드시트({scriptUrl.substring(0, 45)}...)와 연동되어 있습니다. <strong>10초 간격으로 실시간 자동 동기화(자동 새로고침) 중</strong>이며, 다른 사용자 PC에서도 동일하게 내용이 실시간 반영됩니다.
+                <strong>[실시간 동기화 상태]</strong> 현재 내 구글 스프레드시트({scriptUrl.substring(0, 45)}...)와 연동되어 있습니다. <strong>1분 간격으로 자동 동기화(자동 새로고침) 중</strong>이며, 다른 사용자 PC에서도 동일하게 내용이 실시간 반영됩니다.
               </span>
             </>
           ) : (
