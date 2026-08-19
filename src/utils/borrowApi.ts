@@ -154,8 +154,17 @@ function normalizeScriptUrl(raw: string): string {
 
 function buildUrl(scriptUrl: string, qs: string): string {
   const base = normalizeScriptUrl(scriptUrl);
-  if (!qs) return base;
-  return base + (base.indexOf("?") !== -1 ? "&" : "?") + qs;
+  // 매 요청마다 값이 달라지는 파라미터를 붙여 브라우저가 예전 응답을 재사용하지 못하게 한다.
+  //
+  // Apps Script는 응답이 크면 본문을 바로 주지 않고 googleusercontent.com의 임시 주소로
+  // 리다이렉트하는데, 그 주소에 붙는 토큰은 한 번 쓰면 끝인 일회용이다. 요청 URL이 매번
+  // 똑같으면 브라우저가 캐시에 남은 예전 리다이렉트를 그대로 재사용하고, 이미 소모된
+  // 토큰이라 구글이 404(Page Not Found) HTML을 돌려준다. 이것이 "서버가 올바르지 않은
+  // 응답(HTML)을 반환했습니다" 오류의 정체다.
+  // 응답이 작아 리다이렉트가 없는 조회(창고 물품 등)는 이 문제를 겪지 않아 멀쩡했다.
+  const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const merged = qs ? `${qs}&${bust}` : bust;
+  return base + (base.indexOf("?") !== -1 ? "&" : "?") + merged;
 }
 
 // GET 요청은 전부 읽기 전용이므로 타임아웃 시 자동 재시도가 안전하다.
@@ -178,7 +187,9 @@ async function apiGet(scriptUrl: string, action: string, params: Record<string, 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs); // 무한로딩 방지
     try {
-      res = await fetch(url, { signal: controller.signal });
+      // cache: "no-store" — 위 캐시 방지 파라미터와 함께, 브라우저가 예전 리다이렉트를
+      // 재사용해 만료된 일회용 토큰으로 404를 받는 일을 막는다.
+      res = await fetch(url, { signal: controller.signal, cache: "no-store" });
       break; // 성공 시 루프 종료
     } catch (e: any) {
       if (e?.name === "AbortError") {
