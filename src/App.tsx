@@ -819,13 +819,30 @@ export default function App() {
   async function fetchAll(forceRefresh?: boolean) {
     if (!scriptUrl) throw new Error("연동 URL이 비어 있습니다.");
     
+    // 한 번에 다 받으면 응답이 커져서, Apps Script가 본문 대신
+    // script.googleusercontent.com의 임시 주소로 리다이렉트하는데 그 주소가 404가 나는 일이 잦다
+    // (브라우저 콘솔의 macros/echo 404). 응답이 작으면 리다이렉트 자체가 생기지 않으므로
+    // 부분별로 나눠 받아 합친다. 화면에서 보기엔 예전과 똑같은 형태의 데이터가 만들어진다.
+    const PARTS = ["inventory", "sectors", "users", "rentLogs", "defectLogs", "robotObjects"] as const;
+    try {
+      const merged: any = { success: true };
+      for (const part of PARTS) {
+        const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const url = `${scriptUrl}?action=getAll&part=${part}${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`;
+        const r = await fetch(url, { cache: "no-store" });
+        const t = await r.text();
+        const d = JSON.parse(t); // 조각 하나라도 JSON이 아니면 아래 catch로 넘어간다
+        if (d && d.success) Object.assign(merged, d);
+      }
+      // 최소한 재고가 들어왔으면 정상 응답으로 본다
+      if (merged.inventory) return merged;
+    } catch (partErr) {
+      // 조각 방식이 실패하면(구버전 서버 등) 아래의 기존 통짜 조회로 넘어간다
+      console.warn("부분 조회 실패, 전체 조회로 대체합니다:", partErr);
+    }
+
     let res;
     try {
-      // 매 요청마다 값이 달라지는 파라미터를 붙이고 캐시를 쓰지 않는다.
-      // Apps Script는 응답이 크면 본문 대신 googleusercontent.com의 임시 주소로 리다이렉트하는데,
-      // 요청 URL이 매번 같으면 브라우저가 캐시에 남은 예전 리다이렉트를 재사용하고
-      // 그 주소는 이미 만료돼 404(Page Not Found) HTML이 돌아온다.
-      // (borrowApi의 apiGet에는 이미 같은 처리를 해뒀는데, 이 호출만 그걸 거치지 않아 빠져 있었다)
       const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       res = await fetch(
         `${scriptUrl}?action=getAll${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`,
