@@ -7,7 +7,7 @@ import StockAdjustModal from "./StockAdjustModal";
 import ScrollToTopButton from "./ScrollToTopButton";
 import {
   ScenarioObjectAdmin, padSlot,
-  fetchScenarioObjectsPage, updateScenarioObject, addScenarioObject, deleteScenarioObject,
+  fetchScenarioObjectsForAdmin, updateScenarioObject, addScenarioObject, deleteScenarioObject,
   fetchUnreturnedItems, UnreturnedItem,
   fetchStockAuditHistory, recordStockAudit, StockAuditRecord,
   fetchStockFormulaStatus, StockFormulaStatus,
@@ -48,10 +48,6 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
   const [items, setItems] = useState<ScenarioObjectAdmin[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  // 30개씩 끊어 받기 위한 상태 (서버가 전체 개수와 남은 여부를 함께 알려준다)
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState("");
   // 기본은 활성(=보관 안 된) 물품만 보여준다. "보관함" 모드에서는 반대로 보관 처리된 것만 보여준다.
@@ -291,26 +287,13 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     }
   }, [detailTab, borrowersItem, historyLoadedForId, historyLoading, loadHistory]);
 
-  // 물품 전체를 한 번에 받으면 응답이 너무 커져서 구글이 본문 대신 검사 페이지(HTML)를
-  // 돌려보내는 일이 있었다(특히 모바일에서 무한 로딩). 그래서 30개씩 끊어 받고,
-  // 아래 "더 보기" 버튼으로 이어받는다.
-  const PAGE_SIZE = 30;
-
   const load = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     try {
-      if (connected && scriptUrl) {
-        const page = await fetchScenarioObjectsPage(scriptUrl, { limit: PAGE_SIZE, forceRefresh });
-        setItems(page.items);
-        setTotalCount(page.total);
-        setHasMore(page.hasMore);
-      } else {
-        setItems([
-          { rowIndex: 2, id: "000008", name: "fruit", sector: "Seoul-Root", rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", image: "", stock: 15, rented: 8 },
-        ]);
-        setTotalCount(1);
-        setHasMore(false);
-      }
+      if (connected && scriptUrl) setItems(await fetchScenarioObjectsForAdmin(scriptUrl, forceRefresh));
+      else setItems([
+        { rowIndex: 2, id: "000008", name: "fruit", sector: "Seoul-Root", rootSlot: "000060", category: "식음료", subcategory: "간식 및 식사류", image: "", stock: 15, rented: 8 },
+      ]);
       setLoaded(true);
     } catch (e: any) {
       showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
@@ -319,24 +302,6 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
     }
     finally { setLoading(false); }
   }, [connected, scriptUrl, showToast]);
-
-  // 다음 30개를 이어서 받아온다 (이미 받은 목록 뒤에 붙인다)
-  const loadMore = useCallback(async () => {
-    if (!connected || !scriptUrl || loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    try {
-      const page = await fetchScenarioObjectsPage(scriptUrl, { offset: items.length, limit: PAGE_SIZE });
-      setItems((prev) => {
-        // 그 사이 목록이 바뀌었을 수 있으니 같은 행이 중복으로 들어가지 않게 막는다
-        const seen = new Set(prev.map((x) => x.rowIndex));
-        return prev.concat(page.items.filter((x) => !seen.has(x.rowIndex)));
-      });
-      setTotalCount(page.total);
-      setHasMore(page.hasMore);
-    } catch (e: any) {
-      showToast(`더 불러오지 못했습니다: ${e.message}`, "warn");
-    } finally { setLoadingMore(false); }
-  }, [connected, scriptUrl, loadingMore, hasMore, items.length, showToast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -567,7 +532,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
         {loaded ? (showArchived
           ? `보관함 · ${filtered.length}개 물품 (파손 등으로 목록·대여 카탈로그에서 제외됨)`
-          : `${filtered.length} / ${items.length - archivedCount}개 시나리오 물품${totalCount > items.length ? ` (전체 ${totalCount}개 중 ${items.length}개 불러옴)` : ""}`) : ""}
+          : `${filtered.length} / ${items.length - archivedCount}개 시나리오 물품`) : ""}
       </div>
 
       {loading && !loaded ? (
@@ -620,27 +585,6 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
         </div>
       )}
 
-      {/* 30개씩 끊어 받는다 — 남은 물품이 있으면 여기서 이어받는다.
-          (검색·필터는 이미 받은 목록 안에서만 걸리므로, 못 찾으면 더 불러와야 한다) */}
-      {loaded && hasMore && !showArchived ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", padding: "18px 0 4px" }}>
-          <button
-            onClick={loadMore}
-            disabled={loadingMore}
-            style={{
-              padding: "12px 24px", borderRadius: "12px", border: `1px solid ${C.border}`,
-              background: C.card, color: C.accentText, cursor: loadingMore ? "wait" : "pointer",
-              fontSize: "13px", fontWeight: 700, opacity: loadingMore ? 0.7 : 1,
-              display: "flex", alignItems: "center", gap: "8px",
-            }}
-          >
-            {loadingMore ? <><Spinner size={14} /> 불러오는 중...</> : `더 보기 (다음 30개)`}
-          </button>
-          <span style={{ fontSize: "11.5px", color: C.label }}>
-            전체 {totalCount}개 중 {items.length}개를 불러왔습니다
-          </span>
-        </div>
-      ) : null}
 
       {/* 편집 모달 (뷰포트 중앙 고정 — 사이드바 영향 없이 화면 정중앙) */}
       {editing ? createPortal(
