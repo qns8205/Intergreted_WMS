@@ -276,6 +276,29 @@ export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boo
   return (data.items || []) as UnreturnedItem[];
 }
 
+export interface UnreturnedPage {
+  items: UnreturnedItem[];
+  total: number;
+  hasMore: boolean;
+}
+
+// 미반납 목록을 나눠서 받아온다. 한 번에 다 받으면 응답이 너무 커져서 구글이 본문 대신
+// 검사 페이지(HTML)를 돌려보내는 일이 있어(특히 모바일), 필요한 만큼만 끊어 받는다.
+export async function fetchUnreturnedItemsPage(
+  scriptUrl: string,
+  opts: { offset?: number; limit?: number; forceRefresh?: boolean } = {}
+): Promise<UnreturnedPage> {
+  const params: Record<string, string> = { limit: String(opts.limit ?? 30) };
+  if (opts.offset) params.offset = String(opts.offset);
+  if (opts.forceRefresh) params.forceRefresh = "1";
+  const data = await apiGet(scriptUrl, "getUnreturnedItems", params, { timeoutMs: 60000, retries: 1 });
+  return {
+    items: (data.items || []) as UnreturnedItem[],
+    total: Number(data.total || 0),
+    hasMore: !!data.hasMore,
+  };
+}
+
 export async function fetchMyBorrowedItems(scriptUrl: string, name: string, employeeId: string): Promise<UnreturnedItem[]> {
   const data = await apiGet(scriptUrl, "getMyBorrowedItems", { name, employeeId });
   return (data.items || []) as UnreturnedItem[];
