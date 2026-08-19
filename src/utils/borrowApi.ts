@@ -282,9 +282,19 @@ export async function fetchScenarioDefinition(scriptUrl: string, sid: string): P
   return (data.scenario || { sid, found: false, syncNeeded: true, blocked: false, blockReason: "", highLevelEn: "", highLevelKo: "", items: [] }) as ScenarioDefinition;
 }
 
+// 위와 같은 이유로 나눠 받되, 끝까지 이어 붙여 전체 목록을 돌려준다.
 export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boolean): Promise<UnreturnedItem[]> {
-  const data = await apiGet(scriptUrl, "getUnreturnedItems", forceRefresh ? { forceRefresh: "1" } : {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as UnreturnedItem[];
+  const all: UnreturnedItem[] = [];
+  for (let offset = 0; ; offset += PAGE_CHUNK) {
+    const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+    if (forceRefresh && offset === 0) params.forceRefresh = "1";
+    const data = await apiGet(scriptUrl, "getUnreturnedItems", params, { timeoutMs: 60000, retries: 1 });
+    const items = (data.items || []) as UnreturnedItem[];
+    all.push(...items);
+    if (!data.hasMore || items.length === 0) break;
+    if (offset > 20000) break;
+  }
+  return all;
 }
 
 
@@ -468,9 +478,24 @@ export interface ScenarioObjectAdmin {
   archived?: boolean; // 보관 처리 — 파손/오브젝트로 사용 불가 등으로 목록·대여 카탈로그에서 치워둠 (Q열)
 }
 
+// 한 번에 다 받으면 응답이 커져서, 구글이 본문 대신 임시 주소(googleusercontent.com/macros/echo)로
+// 리다이렉트하는데 그 주소가 404가 나는 일이 있다. 응답이 작으면 리다이렉트 자체가 생기지 않으므로,
+// 100개씩 나눠 받되 끝까지 이어 붙여 결국 "전체 목록"을 돌려준다.
+// 호출하는 쪽에서 보면 예전과 똑같이 전체 배열이 오므로, 검색·필터도 그대로 동작한다.
+const PAGE_CHUNK = 100;
+
 export async function fetchScenarioObjectsForAdmin(scriptUrl: string, forceRefresh?: boolean): Promise<ScenarioObjectAdmin[]> {
-  const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", forceRefresh ? { forceRefresh: "1" } : {}, { timeoutMs: 60000, retries: 1 });
-  return (data.items || []) as ScenarioObjectAdmin[];
+  const all: ScenarioObjectAdmin[] = [];
+  for (let offset = 0; ; offset += PAGE_CHUNK) {
+    const params: Record<string, string> = { limit: String(PAGE_CHUNK), offset: String(offset) };
+    if (forceRefresh && offset === 0) params.forceRefresh = "1"; // 캐시 무시는 첫 조각에서만
+    const data = await apiGet(scriptUrl, "getScenarioObjectsForAdmin", params, { timeoutMs: 60000, retries: 1 });
+    const items = (data.items || []) as ScenarioObjectAdmin[];
+    all.push(...items);
+    if (!data.hasMore || items.length === 0) break;
+    if (offset > 20000) break; // 혹시 모를 무한 루프 방지
+  }
+  return all;
 }
 
 
