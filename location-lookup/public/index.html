@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow,noarchive" />
+  <title>대여 물품 위치 확인</title>
+  <style>
+    :root{font-family:Pretendard,"Noto Sans KR",system-ui,sans-serif;color:#111827;background:#f7f8fa}*{box-sizing:border-box}body{margin:0;min-height:100vh}.top{height:60px;background:#fff;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;padding:0 18px;font-size:18px;font-weight:850;position:sticky;top:0;z-index:2}.wrap{width:min(720px,calc(100% - 28px));margin:auto;padding:34px 0 64px}.intro{text-align:center;margin-bottom:22px}.icon{width:54px;height:54px;border-radius:17px;background:#eff6ff;color:#2563eb;display:grid;place-items:center;margin:0 auto 14px;font-size:27px}.intro h1{margin:0;font-size:clamp(22px,6vw,28px);letter-spacing:-.04em}.intro p{margin:9px auto 0;max-width:520px;color:#64748b;font-size:13.5px;line-height:1.65}.state{background:#fff;border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 5px 20px rgba(15,23,42,.05);padding:32px;text-align:center;color:#64748b}.grid{display:grid;gap:12px}.card{display:flex;overflow:hidden;border-radius:15px;background:#fff;border:1px solid #e2e8f0;padding:15px 16px;gap:14px;align-items:center}.card.hidden{border-color:#f1d0a8;background:#fffaf2}.name{font-size:15px;font-weight:850;line-height:1.4}.sub{margin-top:5px;font-size:12px;color:#64748b;font-weight:700}.variant{display:inline-block;margin-top:6px;padding:3px 8px;border-radius:999px;color:#1d4ed8;background:#eff6ff;font-size:11px;font-weight:800}.location{margin-top:9px;font-size:15px;font-weight:850;color:#111827}.location:before{content:"⌖";color:#2563eb;margin-right:6px}.hiddenMsg{margin-top:9px;font-size:13px;font-weight:800;color:#b45309}.qty{flex:none;font-size:13px;font-weight:850;color:#2563eb;background:#eff6ff;border-radius:999px;padding:4px 10px}.foot{margin-top:18px;text-align:center;font-size:11.5px;color:#94a3b8}</style>
+</head>
+<body>
+  <div class="top">대여 물품 위치 확인</div>
+  <main class="wrap">
+    <section class="intro"><div class="icon">▦</div><h1 id="title">보관 위치를 불러오는 중...</h1><p>이 QR은 본인이 신청한 물품에만 유효하며, 대여 진행 상태에 따라 볼 수 있는 시간이 정해져 있습니다.</p></section>
+    <div id="content"></div>
+    <div class="foot" id="updated"></div>
+  </main>
+  <script>
+    const token = location.pathname.split("/").filter(Boolean).pop();
+    const title = document.getElementById("title"), content = document.getElementById("content"), updated = document.getElementById("updated");
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    function renderError(message) {
+      title.textContent = "위치를 확인할 수 없습니다";
+      content.innerHTML = `<div class="state">${esc(message)}</div>`;
+      updated.textContent = "";
+    }
+    function renderItems(data) {
+      const items = data.items || [];
+      title.textContent = data.borrowerName ? `${data.borrowerName}님의 대여 물품` : "대여 물품 위치";
+      if (!items.length) { content.innerHTML = `<div class="state">표시할 물품이 없습니다.</div>`; return; }
+      content.innerHTML = `<div class="grid">${items.map((item) => `
+        <article class="card ${item.visible ? "" : "hidden"}">
+          <div style="flex:1;min-width:0">
+            <div class="name">${esc(item.name)}</div>
+            <div class="sub">${item.scenarioId ? `SID ${esc(item.scenarioId)}` : "일반 대여"}</div>
+            ${item.variantName ? `<div class="variant">종류 · ${esc(item.variantName)}</div>` : ""}
+            ${item.visible ? `<div class="location">${esc(item.location || "위치 미등록")}</div>` : `<div class="hiddenMsg">🔒 ${esc(item.message || "지금은 위치를 확인할 수 없습니다.")}</div>`}
+          </div>
+          <div class="qty">× ${Number(item.quantity) || 1}</div>
+        </article>`).join("")}</div>`;
+      const now = new Date();
+      updated.textContent = `${now.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} 기준 · 상태는 자동으로 갱신됩니다`;
+    }
+    async function load() {
+      if (!token) { renderError("잘못된 접근입니다."); return; }
+      try {
+        const response = await fetch(`/loc/${encodeURIComponent(token)}/api`, { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.success) { renderError(data.error || "유효하지 않거나 만료된 QR입니다."); return; }
+        renderItems(data);
+      } catch (e) { renderError("조회 중 오류가 발생했습니다."); }
+    }
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>
