@@ -1,8 +1,9 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { InventoryItem, DefectLog } from "../types";
 import { AlertTriangle, Calendar, User, MapPin, Clipboard, Plus, Search, ArrowLeft, FileText, Check, Camera, Upload, X, ImageIcon } from "lucide-react";
 
 import { isFuzzyMatch, resizeAndCompressImage } from "../utils/drive";
+import CameraCaptureModal from "./CameraCaptureModal";
 import { smartMatch } from "../utils/search";
 import { parseDateString } from "../utils/date";
 import ScrollToTopButton from "./ScrollToTopButton";
@@ -10,10 +11,11 @@ import ScrollToTopButton from "./ScrollToTopButton";
 interface DefectLogsPageProps {
   defectLogs: DefectLog[];
   inventory: InventoryItem[];
-  robotObjects?: any[];
   onAddDefectLog: (log: Omit<DefectLog, "rowIndex">) => Promise<void>;
   onClose: () => void;
   isLightMode: boolean;
+  scriptUrl: string;
+  connected: boolean;
 }
 
 const PANEL_BORDER = "var(--panel-border, #334155)";
@@ -98,25 +100,23 @@ function formatTimestampToMinutes(tsStr: string): string {
 export default function DefectLogsPage({
   defectLogs,
   inventory,
-  robotObjects = [],
   onAddDefectLog,
   onClose,
   isLightMode,
+  scriptUrl,
+  connected,
 }: DefectLogsPageProps) {
   // Form states
   const [locationInput, setLocationInput] = useState("");
   const [nameInput, setNameInput] = useState("");
-  // 로봇 오브젝트를 선택했을 때만 채워진다 — 재고를 정확히 어느 물품에서 차감할지 특정하는 데 쓴다.
-  // (이름만으로는 동명이인처럼 겹치는 물품이 있을 수 있어 id로 특정해야 안전하다)
-  const [itemIdInput, setItemIdInput] = useState("");
   const [qtyInput, setQtyInput] = useState<number>(1);
   const [defectType, setDefectType] = useState("파손");
   const [noteInput, setNoteInput] = useState("");
   const [actionTakenInput, setActionTakenInput] = useState("");
   const [photoInput, setPhotoInput] = useState<string>("");
-  
-  // Tab-selector for items category: 랙 공구 및 부품류 vs 로봇 오브젝트
-  const [itemCategory, setItemCategory] = useState<"rack" | "robot">("rack");
+  // 서버 PC 웹캠으로 바로 찍기 (파일 업로드 대신 쓸 수 있는 선택지)
+  const [cameraOpen, setCameraOpen] = useState(false);
+
   
   // Custom manual input mode toggles
   const [manualItemName, setManualItemName] = useState(false);
@@ -142,7 +142,7 @@ export default function DefectLogsPage({
       
       // Automatically resize to max 1200px width/height and compress to 0.75 JPEG quality
       // This prevents payload limit or timeout errors during sync
-      const compressedBase64 = await resizeAndCompressImage(file, 1200, 1200, 0.75);
+      const compressedBase64 = await resizeAndCompressImage(file);
       
       setPhotoInput(compressedBase64);
     } catch (err: any) {
@@ -202,50 +202,19 @@ export default function DefectLogsPage({
     );
   }, [uniqueItems, itemSearchQuery]);
 
-  // Extract unique robot objects for selection
-  const uniqueRobotObjects = useMemo(() => {
-    const seen = new Set<string>();
-    const items: { name: string; location: string; spec?: string }[] = [];
-    for (const item of robotObjects) {
-      if (item.name && !seen.has(item.name)) {
-        seen.add(item.name);
-        items.push({
-          name: item.name,
-          location: item.location || "",
-          spec: item.spec || "",
-        });
-      }
-    }
-    return items.sort((a, b) => a.name.localeCompare(b.name));
-  }, [robotObjects]);
-
-  const filteredRobotObjects = useMemo(() => {
-    if (!itemSearchQuery.trim()) return uniqueRobotObjects;
-    return uniqueRobotObjects.filter((item) =>
-      isFuzzyMatch(item.name || "", itemSearchQuery) ||
-      isFuzzyMatch(item.location || "", itemSearchQuery) ||
-      isFuzzyMatch(item.spec || "", itemSearchQuery)
-    );
-  }, [uniqueRobotObjects, itemSearchQuery]);
-
   // 검색 결과 목록 열림 여부
   const [itemListOpen, setItemListOpen] = useState(false);
 
-  // 분류에 따라 후보를 같은 모양으로 정규화한다 (name / sub / right).
-  const itemOptions = useMemo(() => {
-    if (itemCategory === "rack") {
-      return filteredUniqueItems.map((item: any) => ({
+  // 후보를 목록 모양으로 정규화한다 (name / sub / right).
+  const itemOptions = useMemo(
+    () =>
+      filteredUniqueItems.map((item: any) => ({
         name: item.name,
         sub: item.location ? `(${item.location})` : "",
         right: item.stock != null ? `재고 ${item.stock}개` : "",
-      }));
-    }
-    return filteredRobotObjects.map((item: any) => ({
-      name: item.name,
-      sub: item.spec ? `[${item.spec}]` : "",
-      right: item.location || "",
-    }));
-  }, [itemCategory, filteredUniqueItems, filteredRobotObjects]);
+      })),
+    [filteredUniqueItems]
+  );
 
   const itemOptionCount = itemOptions.length;
   // 목록이 길면 렌더링 비용이 커지므로 상위 50개만 그린다 (더 좁히려면 검색어를 추가 입력)
@@ -253,27 +222,10 @@ export default function DefectLogsPage({
 
   const handleItemSelectChange = (name: string) => {
     setNameInput(name);
-    if (itemCategory === "rack") {
-      setItemIdInput(""); // 공구 및 부품류는 재고 차감 대상이 아니므로 id를 아예 안 보낸다
-      const found = inventory.find((item) => item.name === name);
-      if (found) {
-        setLocationInput(found.location || "-");
-      } else {
-        setLocationInput("-");
-      }
-    } else {
-      const found = robotObjects.find((item) => item.name === name);
-      setItemIdInput(found ? String(found.id || "") : "");
-      if (found) {
-        setLocationInput(found.location || "로봇 구역");
-      } else {
-        setLocationInput("로봇 구역");
-      }
-    }
+    const found = inventory.find((item) => item.name === name);
+    setLocationInput(found ? found.location || "-" : "-");
   };
 
-  // 파손자 (로봇/시나리오 오브젝트에만 기록한다)
-  const [culpritInput, setCulpritInput] = useState("");
   const [analysisOpen, setAnalysisOpen] = useState(false);
 
   const handleAddLogSubmit = async (e: React.FormEvent) => {
@@ -315,18 +267,15 @@ export default function DefectLogsPage({
         note: noteInput.trim(),
         actionTaken: actionTakenInput.trim(),
         photo: photoInput || undefined,
-        itemCategory: itemCategory, // Pass category to Google Apps Script
-        itemId: itemCategory === "robot" ? itemIdInput.trim() : "", // rack(공구)은 절대 재고 차감 대상이 아니므로 항상 빈 값
-        culprit: itemCategory === "robot" ? culpritInput.trim() : "",
+        itemCategory: "rack", // 이 폼은 COS 물품 전용 — 재고 차감 대상이 아니다
       });
 
       // Reset form fields
       setNoteInput("");
       setActionTakenInput("");
-      setCulpritInput("");
       setQtyInput(1);
       setPhotoInput("");
-      setItemIdInput("");
+
       setFormError(null);
     } catch (err: any) {
       setFormError(err.message || "불량 로그 등록에 실패했습니다.");
@@ -386,13 +335,36 @@ export default function DefectLogsPage({
         overflowY: "auto",
       }}
     >
+      {/* 예전엔 데스크톱에서 1.15배 확대(zoom)했는데, 왼쪽 등록 폼이 그만큼 더 길어지면서
+          저장 버튼("불량로그 등록하기")이 화면 아래로 밀려 안 보이는 문제가 있었다 — 확대 없이
+          실제 크기 그대로 페이지 안에 맞춘다. */}
       <style>{`
-        @media (min-width: 900px) {
-          .dlp-root { zoom: 1.15; }
+        @media (max-width: 760px) {
+          .dlp-root { padding: 14px !important; height: auto !important; min-height: 0; }
+          /* 앱 서랍 메뉴로 오가므로 "돌아가기" 버튼과 구분선은 모바일에서 뺀다. */
+          .dlp-back, .dlp-sep { display: none !important; }
+          .dlp-head { margin-bottom: 12px !important; padding-bottom: 12px !important; }
+          .dlp-head h1 { font-size: 17px !important; }
+          .dlp-head p { font-size: 11.5px !important; }
+          .dlp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; margin-bottom: 14px !important; }
+          .dlp-stats > div { padding: 10px 12px !important; }
+          .dlp-main { grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; }
+          /* 필터 줄: 유형 선택과 검색창이 한 줄을 나눠 쓰고, 검색창이 남는 폭을 채운다. */
+          .dlp-list-toolbar, .dlp-list-filters { width: 100%; }
+          .dlp-list-filters > div { flex: 1 1 0; width: auto !important; min-width: 0; }
+          .dlp-list-filters input { width: 100% !important; min-width: 0; }
+          /* 기록 표: 한 줄이 한 장의 카드가 되도록 세로로 푼다. 각 칸 이름은 data-label로 붙인다. */
+          .dlp-table { min-width: 0 !important; }
+          .dlp-table thead { display: none; }
+          .dlp-table, .dlp-table tbody, .dlp-table tr, .dlp-table td { display: block; width: 100% !important; box-sizing: border-box; }
+          .dlp-table tr { padding: 6px 0; margin: 0 0 8px; border: 1px solid var(--panel-border, #334155) !important; border-radius: 10px; }
+          .dlp-table td { display: flex !important; align-items: center; gap: 10px; border: none !important; padding: 5px 12px !important; text-align: left !important; justify-content: flex-start !important; }
+          .dlp-table td::before { content: attr(data-label); flex: 0 0 64px; font-size: 11px; font-weight: 700; color: var(--text-dim, #94a3b8); }
         }
       `}</style>
       {/* 1. Header Area */}
       <div
+        className="dlp-head"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -402,8 +374,9 @@ export default function DefectLogsPage({
           paddingBottom: "16px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", width: "100%" }}>
           <button
+            className="dlp-back"
             onClick={onClose}
             style={{
               background: "var(--input-bg, #0f172a)",
@@ -418,13 +391,13 @@ export default function DefectLogsPage({
           >
             <ArrowLeft size={16} /> WMS 모니터링으로 돌아가기
           </button>
-          <div style={{ height: 24, width: 1, background: PANEL_BORDER }} />
+          <div className="dlp-sep" style={{ height: 24, width: 1, background: PANEL_BORDER }} />
           <div>
             <h1 style={{ fontSize: "20px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
               ⚠️ 실시간 불량로그 관리
             </h1>
             <p style={{ fontSize: "12px", color: TEXT_DIM, margin: "4px 0 0 0" }}>
-              입고 혹은 재고 이동 시 발생한 불량 현황을 실시간으로 등록하고 구글 시트에 즉시 동기화합니다.
+              입고 혹은 재고 이동 시 발생한 불량 현황을 실시간으로 등록하고 서버에 즉시 동기화합니다.
             </p>
           </div>
           <button
@@ -521,6 +494,7 @@ export default function DefectLogsPage({
 
       {/* 2. Stat Widgets */}
       <div
+        className="dlp-stats"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -582,6 +556,7 @@ export default function DefectLogsPage({
           gap: "24px",
           alignItems: "flex-start",
         }}
+        className="dlp-main"
       >
         {/* LEFT COLUMN: Input Form */}
         <div
@@ -607,8 +582,7 @@ export default function DefectLogsPage({
                   onClick={() => {
                     setManualItemName(!manualItemName);
                     setNameInput("");
-                    setItemIdInput("");
-                    setLocationInput("");
+                                setLocationInput("");
                     setItemSearchQuery("");
                     setItemListOpen(false);
                   }}
@@ -646,58 +620,12 @@ export default function DefectLogsPage({
                 />
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {/* 분류 선택 (랙 공구 및 부품류 vs 로봇 오브젝트) */}
-                  <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItemCategory("rack");
-                        setNameInput("");
-                        setItemIdInput("");
-                        setLocationInput("");
-                        setItemSearchQuery("");
-                        setItemListOpen(true);
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        border: `1px solid ${itemCategory === "rack" ? ACCENT : PANEL_BORDER}`,
-                        background: itemCategory === "rack" ? `${ACCENT}15` : "transparent",
-                        color: itemCategory === "rack" ? "#a5b4fc" : TEXT_DIM,
-                        cursor: "pointer",
-                        transition: "all 0.2s"
-                      }}
-                    >
-                      🗄️ 랙 선반 공구 및 부품류
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItemCategory("robot");
-                        setNameInput("");
-                        setItemIdInput("");
-                        setLocationInput("");
-                        setItemSearchQuery("");
-                        setItemListOpen(true);
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        border: `1px solid ${itemCategory === "robot" ? ACCENT : PANEL_BORDER}`,
-                        background: itemCategory === "robot" ? `${ACCENT}15` : "transparent",
-                        color: itemCategory === "robot" ? "#a5b4fc" : TEXT_DIM,
-                        cursor: "pointer",
-                        transition: "all 0.2s"
-                      }}
-                    >
-                      🤖 로봇 오브젝트
-                    </button>
+                  {/* 시나리오 오브젝트는 여기서 등록하지 않는다 — 종류를 고를 수단이 없어
+                      미확인 재고에서만 깎이고 실제로는 차감이 안 된다.
+                      파손은 반납 화면의 "파손 처리"로 등록해야 종류별 재고가 정확히 반영된다. */}
+                  <div style={{ fontSize: "11px", color: TEXT_DIM, lineHeight: 1.45, marginBottom: "4px" }}>
+                    🗄️ 랙 선반 <b>COS 물품</b> 전용입니다. 시나리오 물품 파손은{" "}
+                    <b>반납 화면의 파손 처리</b>로 등록해주세요 — 종류별 재고가 정확히 반영됩니다.
                   </div>
 
                   {/* 검색어를 치면 아래에 실시간으로 후보가 뜨고, 없으면 그 자리에서 직접 입력으로 넘어간다 */}
@@ -705,13 +633,13 @@ export default function DefectLogsPage({
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={itemCategory === "rack" ? "랙 공구 및 부품류 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
+                      placeholder="랙 COS 물품 검색..."
                       value={itemSearchQuery}
                       onChange={(e) => {
                         setItemSearchQuery(e.target.value);
                         setItemListOpen(true);
                         // 검색어를 바꾸면 기존 선택은 해제한다 (선택했다고 착각하는 것을 방지)
-                        if (nameInput) { setNameInput(""); setItemIdInput(""); setLocationInput(""); }
+                        if (nameInput) { setNameInput(""); setLocationInput(""); }
                       }}
                       onFocus={() => setItemListOpen(true)}
                       style={{
@@ -736,7 +664,7 @@ export default function DefectLogsPage({
                       {locationInput ? <span style={{ fontSize: "11px", color: TEXT_DIM, flexShrink: 0 }}>{locationInput}</span> : null}
                       <button
                         type="button"
-                        onClick={() => { setNameInput(""); setItemIdInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
+                        onClick={() => { setNameInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
                         style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "11.5px", fontWeight: 700, flexShrink: 0 }}
                       >
                         변경
@@ -861,27 +789,6 @@ export default function DefectLogsPage({
             </div>
 
 
-            {/* 파손자 — 로봇/시나리오 오브젝트일 때만 */}
-            {itemCategory === "robot" ? (
-              <div>
-                <label style={{ fontSize: "12.5px", display: "block", marginBottom: 6, fontWeight: 600 }}>🙋 파손자</label>
-                <input
-                  type="text"
-                  value={culpritInput}
-                  onChange={(e) => setCulpritInput(e.target.value)}
-                  placeholder="파손시킨 사람의 이름 (모르면 비워두세요)"
-                  style={{
-                    width: "100%", boxSizing: "border-box",
-                    background: "var(--input-bg, #0f172a)", border: `1px solid ${PANEL_BORDER}`,
-                    color: TEXT_MAIN, padding: "10px 12px", borderRadius: "6px", fontSize: "13px", outline: "none",
-                  }}
-                />
-                <div style={{ fontSize: "11px", color: TEXT_DIM, marginTop: "5px", lineHeight: 1.5 }}>
-                  누적 기록은 상단 <b>분석</b> 버튼에서 확인할 수 있습니다.
-                </div>
-              </div>
-            ) : null}
-
             {/* 세부 사항 */}
             <div>
               <label style={{ fontSize: "12.5px", display: "block", marginBottom: 6, fontWeight: 600 }}>📝 세부 사항</label>
@@ -969,6 +876,28 @@ export default function DefectLogsPage({
                   </button>
                 )}
               </div>
+
+              {/* 서버 PC에 연결된 카메라로 바로 촬영 — 파일을 따로 옮길 필요가 없다 */}
+              {!photoInput && (
+                <button
+                  type="button"
+                  onClick={() => setCameraOpen(true)}
+                  style={{
+                    width: "100%",
+                    marginBottom: "8px",
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: `1px solid ${PANEL_BORDER}`,
+                    background: "var(--input-bg, #0f172a)",
+                    color: ACCENT,
+                    fontSize: "12.5px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  📷 카메라로 촬영 (서버 PC 웹캠)
+                </button>
+              )}
 
               {/* 드래그 앤 드롭 및 클릭 파일 업로드 영역 */}
               {!photoInput && (
@@ -1111,7 +1040,7 @@ export default function DefectLogsPage({
                 gap: 8,
               }}
             >
-              {submitting ? "구글 시트 연동 기록 중..." : "불량로그 등록하기"}
+              {submitting ? "서버 연동 기록 중..." : "불량로그 등록하기"}
             </button>
           </form>
         </div>
@@ -1133,10 +1062,12 @@ export default function DefectLogsPage({
         >
           {/* List Toolbar */}
           <div
+            className="dlp-list-toolbar"
             style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
+              flexWrap: "wrap",
               gap: 12,
               borderBottom: `1px solid ${PANEL_BORDER}`,
               paddingBottom: "14px",
@@ -1147,7 +1078,7 @@ export default function DefectLogsPage({
             </h2>
 
             {/* Search/Filter Controls */}
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="dlp-list-filters" style={{ display: "flex", gap: 10, alignItems: "center" }}>
               {/* Type selector */}
               <select
                 value={filterType}
@@ -1178,6 +1109,7 @@ export default function DefectLogsPage({
                   borderRadius: "6px",
                   padding: "0 10px",
                   width: 220,
+                  minWidth: 0,
                 }}
               >
                 <Search size={14} style={{ color: TEXT_DIM, marginRight: 6 }} />
@@ -1212,7 +1144,7 @@ export default function DefectLogsPage({
             }}
           >
             {filteredLogs.length > 0 ? (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", minWidth: "900px" }}>
+              <table className="dlp-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", minWidth: "900px" }}>
                 <thead>
                   <tr style={{ background: isLightMode ? "#f8fafc" : "#1e293b", borderBottom: `2px solid ${PANEL_BORDER}`, position: "sticky", top: 0, zIndex: 10 }}>
                     <th style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, textAlign: "left", width: "18%" }}>제품명</th>
@@ -1235,12 +1167,12 @@ export default function DefectLogsPage({
                         }}
                       >
                         {/* 제품명 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, fontWeight: 700 }}>
+                        <td data-label="제품명" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, fontWeight: 700 }}>
                           {log.name}
                         </td>
 
                         {/* 사진 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
+                        <td data-label="사진" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
                           {log.photo ? (
                             <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
                               <img
@@ -1267,17 +1199,17 @@ export default function DefectLogsPage({
                         </td>
                         
                         {/* 개수 */}
-                        <td className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: DANGER, fontWeight: 800, textAlign: "center" }}>
+                        <td data-label="개수" className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: DANGER, fontWeight: 800, textAlign: "center" }}>
                           {log.qty}개
                         </td>
                         
                         {/* 기록 시간 */}
-                        <td className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN }}>
+                        <td data-label="기록 시간" className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN }}>
                           {formatTimestampToMinutes(log.timestamp || "")}
                         </td>
 
                         {/* 불량 유형 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
+                        <td data-label="불량 유형" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
                           {(() => {
                             let bg = "rgba(148, 163, 184, 0.15)";
                             let color = "var(--text-dim, #94a3b8)";
@@ -1320,12 +1252,12 @@ export default function DefectLogsPage({
                         </td>
                         
                         {/* 세부 사항 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, lineHeight: 1.4 }}>
+                        <td data-label="세부 사항" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, lineHeight: 1.4 }}>
                           {log.note || <span style={{ color: TEXT_DIM, fontStyle: "italic" }}>기재안됨</span>}
                         </td>
                         
                         {/* 대처 방안 */}
-                        <td style={{ padding: "10px 14px", color: TEXT_MAIN, lineHeight: 1.4 }}>
+                        <td data-label="대처 방안" style={{ padding: "10px 14px", color: TEXT_MAIN, lineHeight: 1.4 }}>
                           {log.actionTaken ? (
                             <span style={{ display: "flex", alignItems: "center", gap: "4px", color: isLightMode ? "#047857" : OK, fontWeight: 600 }}>
                               <Check size={12} /> {log.actionTaken}
@@ -1418,6 +1350,14 @@ export default function DefectLogsPage({
         </div>
       )}
       <ScrollToTopButton />
+
+      <CameraCaptureModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(dataUrl) => setPhotoInput(dataUrl)}
+        title="불량 사진 촬영"
+        isLightMode={isLightMode}
+      />
     </div>
   );
 }

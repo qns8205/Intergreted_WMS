@@ -35,9 +35,32 @@ function writeBuildVersionPlugin() {
   };
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  // 실제 서버 데이터를 로컬 UI에서 읽어볼 때 쓰는 모드다. API의 쓰기 요청은
+  // 프론트엔드와 Vite 미들웨어 양쪽에서 차단한다. `npm run dev:remote-readonly`로만 켠다.
+  const remoteReadonly = mode === 'remote-readonly';
+  const apiTarget = remoteReadonly ? 'http://192.168.100.152:3000' : 'http://localhost:3001';
   return {
-    plugins: [react(), tailwindcss(), writeBuildVersionPlugin()],
+    plugins: [
+      react(),
+      tailwindcss(),
+      writeBuildVersionPlugin(),
+      {
+        name: 'remote-readonly-api-guard',
+        configureServer(server) {
+          if (!remoteReadonly) return;
+          server.middlewares.use((req, res, next) => {
+            if (req.url?.startsWith('/api') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method || 'GET')) {
+              res.statusCode = 403;
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.end(JSON.stringify({ success: false, error: '원격 읽기 전용 테스트 모드에서는 변경 요청을 보낼 수 없습니다.' }));
+              return;
+            }
+            next();
+          });
+        },
+      },
+    ],
     define: {
       'import.meta.env.VITE_BUILD_ID': JSON.stringify(BUILD_ID),
     },
@@ -52,6 +75,10 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      proxy: {
+        '/api': apiTarget,
+        '/uploads': apiTarget,
+      },
     },
   };
 });

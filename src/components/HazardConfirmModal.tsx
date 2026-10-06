@@ -1,10 +1,11 @@
 import React from "react";
 import { AlertCircle } from "lucide-react";
+import { useNoticeCountdown } from "../utils/useNoticeCountdown";
 
 /**
  * 깨질 위험(fragile) / 화재 위험(fireRisk) / 특정 업체 request용(requestFor) /
  * 개인 물품(personalOwner) 물품을 대여 마지막 단계 직전(또는 제출 직전)에 한 번 더
- * 확인시키는 공용 모달. 여러 대여 진입점(BorrowSystemPage, MobileViewPage, RentalPage,
+ * 확인시키는 공용 모달. 여러 대여 진입점(BorrowSystemPage, RentalPage,
  * SidePanel, App.tsx)에서 공유한다.
  */
 
@@ -41,7 +42,7 @@ export function collectHazardItems(
   picked.forEach((it) => {
     if (!it.id || seen.has(it.id)) return;
     const obj = catalog.find((o) => o.id === it.id);
-    if (obj && (obj.fragile || obj.fireRisk || obj.requestFor || obj.personalOwner)) {
+    if (obj && (obj.fragile || obj.fireRisk || obj.requestFor !== undefined || obj.personalOwner)) {
       seen.add(it.id);
       result.push({ id: it.id, name: it.name, fragile: obj.fragile, fireRisk: obj.fireRisk, requestFor: obj.requestFor, personalOwner: obj.personalOwner });
     }
@@ -60,6 +61,8 @@ export default function HazardConfirmModal({
   onConfirm: () => void;
   zIndex?: number;
 }) {
+  const requestIds = items.filter((item) => item.requestFor !== undefined).map((item) => item.id);
+  const remaining = useNoticeCountdown(requestIds.length ? JSON.stringify(requestIds) : null);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
       <div style={{ width: "min(420px, 100%)", maxHeight: "80vh", overflowY: "auto", background: C.card, borderRadius: "18px", border: `1px solid ${C.border}`, padding: "28px 24px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", textAlign: "center" }}>
@@ -82,8 +85,8 @@ export default function HazardConfirmModal({
                 {it.fireRisk ? (
                   <span style={{ fontSize: "11px", fontWeight: 800, color: C.error, background: C.errorSoft, borderRadius: "999px", padding: "2px 8px" }}>🔥 화재 위험</span>
                 ) : null}
-                {it.requestFor ? (
-                  <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>📌 {it.requestFor} request용</span>
+                {it.requestFor !== undefined ? (
+                  <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>📌 {it.requestFor ? `${it.requestFor} request용` : "Request 물품"}</span>
                 ) : null}
                 {it.personalOwner ? (
                   <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "999px", padding: "2px 8px" }}>👤 {it.personalOwner}님 개인 물품</span>
@@ -93,10 +96,12 @@ export default function HazardConfirmModal({
           ))}
         </div>
         <button
-          onClick={onConfirm}
-          style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: "pointer" }}
+          type="button"
+          disabled={remaining > 0}
+          onClick={() => { if (remaining === 0) onConfirm(); }}
+          style={{ width: "100%", padding: "13px", borderRadius: "12px", border: "none", background: C.accent, color: "#fff", fontSize: "14px", fontWeight: 700, cursor: remaining > 0 ? "default" : "pointer", opacity: remaining > 0 ? 0.55 : 1 }}
         >
-          확인했습니다, 계속 진행
+          {remaining > 0 ? `주의 내용을 확인해주세요 (${remaining}초)` : "확인했습니다, 계속 진행"}
         </button>
       </div>
     </div>

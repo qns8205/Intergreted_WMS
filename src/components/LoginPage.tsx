@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { WmsUser } from "../types";
 import { Lock, User, RefreshCw, KeyRound, Eye, ShieldAlert } from "lucide-react";
+import { setAdminToken } from "../utils/adminAuth";
 
 interface LoginPageProps {
   users: WmsUser[];
@@ -30,7 +31,40 @@ export default function LoginPage({
   const [passwordInput, setPasswordInput] = useState("");
   const [localError, setLocalError] = useState("");
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const [loggingIn, setLoggingIn] = useState(false);
+
+  // 관리자 가입 신청: Scenario Manager 계정의 아이디·비밀번호로 신청하고, 기존 관리자가 승인한다.
+  const [signupView, setSignupView] = useState<"off" | "form" | "done">("off");
+  const [signupName, setSignupName] = useState("");
+  const [signupSending, setSignupSending] = useState(false);
+
+  const handleSignupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLocalError("");
+    const name = signupName.trim().replace(/\s+/g, " ");
+    if (!idInput.trim() || !passwordInput) { setLocalError("Scenario Manager 아이디와 비밀번호를 입력해 주세요."); return; }
+    if (name.length < 2 || name.length > 20) { setLocalError("이름을 2~20자로 입력해 주세요."); return; }
+    setSignupSending(true);
+    try {
+      const res = await fetch("/api/admin-signup-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: idInput.trim(), password: passwordInput, name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) { setLocalError(data.error || `신청 실패 (HTTP ${res.status})`); return; }
+      setPasswordInput("");
+      setSignupView("done");
+    } catch (err: any) {
+      setLocalError("가입 신청에 실패했습니다: " + err.message);
+    } finally {
+      setSignupSending(false);
+    }
+  };
+
+  const leaveSignup = () => { setSignupView("off"); setPasswordInput(""); setSignupName(""); setLocalError(""); };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError("");
 
@@ -39,16 +73,24 @@ export default function LoginPage({
       return;
     }
 
-    const matchedUser = users.find(
-      (u) =>
-        u.id.toLowerCase() === idInput.trim().toLowerCase() &&
-        String(u.password) === passwordInput.trim()
-    );
-
-    if (matchedUser) {
-      onLoginSuccess(matchedUser);
-    } else {
-      setLocalError("일치하는 계정 정보가 없습니다. 다시 입력해 주세요.");
+    setLoggingIn(true);
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loginId: idInput.trim(), password: passwordInput.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setLocalError(data.error || "일치하는 계정 정보가 없습니다. 다시 입력해 주세요.");
+        return;
+      }
+      setAdminToken(data.token);
+      onLoginSuccess({ id: data.user.loginId, name: data.user.name });
+    } catch (err: any) {
+      setLocalError("로그인 요청에 실패했습니다: " + err.message);
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -79,11 +121,11 @@ export default function LoginPage({
       <div
         style={{
           width: "100%",
-          maxWidth: "540px",
+          maxWidth: "760px",
           background: PANEL_BG,
           border: `1px solid ${BORDER_COLOR}`,
           borderRadius: "24px",
-          padding: "40px 32px",
+          padding: "40px 48px",
           boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 10px 10px -5px rgba(0, 0, 0, 0.1)",
         }}
       >
@@ -288,13 +330,30 @@ export default function LoginPage({
               lineHeight: 1.5,
             }}
           >
-            🔒 <b>관리 모드</b>는 Admin 시트에 등록된 ID와 비밀번호로 로그인해야 이용할 수 있습니다.
+            🔒 <b>관리 모드</b>는 Admin 계정에 등록된 ID와 비밀번호로 로그인해야 이용할 수 있습니다.
           </div>
         )}
 
         {/* Dynamic Panel based on selection */}
-        {selectedMode === "admin" && (
-          <form onSubmit={handleLoginSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        {selectedMode === "admin" && signupView === "done" && (
+          <div style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div style={{ fontSize: "16px", fontWeight: 800 }}>관리자 가입 신청이 접수되었습니다</div>
+            <div style={{ fontSize: "12.5px", color: TEXT_DIM, lineHeight: 1.7 }}>
+              기존 관리자가 승인하면 <b style={{ color: TEXT_MAIN }}>{idInput.trim()}</b> 계정으로 로그인할 수 있습니다.
+            </div>
+            <button type="button" onClick={leaveSignup} style={{ background: ACCENT, color: "#fff", border: "none", borderRadius: "10px", padding: "12px", fontSize: "13.5px", fontWeight: 700, cursor: "pointer" }}>
+              로그인 화면으로
+            </button>
+          </div>
+        )}
+
+        {selectedMode === "admin" && signupView !== "done" && (
+          <form onSubmit={signupView === "form" ? handleSignupSubmit : handleLoginSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {signupView === "form" && (
+              <div style={{ fontSize: "12px", color: ACCENT, background: "rgba(37, 99, 235, 0.08)", border: "1px solid rgba(37, 99, 235, 0.2)", borderRadius: "12px", padding: "12px 14px", lineHeight: 1.6 }}>
+                <b>Scenario Manager와 같은 아이디·비밀번호</b>로 신청해 주세요. Scenario Manager에서 로그인되는 계정만 신청할 수 있고, 기존 관리자가 승인하면 같은 아이디·비밀번호로 로그인됩니다.
+              </div>
+            )}
             {/* ID Input */}
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <label style={{ fontSize: "11px", fontWeight: 700, color: TEXT_DIM }}>
@@ -377,6 +436,20 @@ export default function LoginPage({
               </div>
             </div>
 
+            {signupView === "form" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "11px", fontWeight: 700, color: TEXT_DIM }}>이름</label>
+                <input
+                  type="text"
+                  placeholder="실명"
+                  maxLength={20}
+                  value={signupName}
+                  onChange={(e) => setSignupName(e.target.value)}
+                  style={{ width: "100%", background: INPUT_BG, border: `1px solid ${BORDER_COLOR}`, borderRadius: "10px", padding: "10px 12px", color: TEXT_MAIN, fontSize: "13px", outline: "none" }}
+                />
+              </div>
+            )}
+
             <div style={{ fontSize: "11px", color: TEXT_DIM, display: "flex", justifyContent: "space-between" }}>
               <span>현재 동기화된 관리자 계정 수: <b style={{ color: ACCENT }}>{users.length}개</b></span>
             </div>
@@ -399,8 +472,10 @@ export default function LoginPage({
 
             <button
               type="submit"
+              disabled={loggingIn || signupSending}
               style={{
                 width: "100%",
+                opacity: loggingIn || signupSending ? 0.6 : 1,
                 background: ACCENT,
                 color: "#ffffff",
                 border: "none",
@@ -416,7 +491,17 @@ export default function LoginPage({
               onMouseEnter={(e) => (e.currentTarget.style.background = "#334155")}
               onMouseLeave={(e) => (e.currentTarget.style.background = ACCENT)}
             >
-              🔐 관리자 로그인 및 모니터링 진입
+              {signupView === "form"
+                ? (signupSending ? "계정 확인 중..." : "가입 신청")
+                : (loggingIn ? "로그인 확인 중..." : "🔐 관리자 로그인 및 모니터링 진입")}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setLocalError(""); setSignupView(signupView === "form" ? "off" : "form"); }}
+              style={{ background: "transparent", border: "none", color: ACCENT, fontSize: "12px", fontWeight: 700, cursor: "pointer", padding: "2px", textDecoration: "underline" }}
+            >
+              {signupView === "form" ? "← 로그인으로 돌아가기" : "관리자 계정이 없나요? 가입 신청"}
             </button>
           </form>
         )}
@@ -448,7 +533,7 @@ export default function LoginPage({
             }}
           >
             <RefreshCw size={12} className={syncing ? "animate-spin" : ""} style={{ animation: syncing ? "spin 1s linear infinite" : "none" }} />
-            {syncing ? "스프레드시트에서 동기화 중..." : "관리자 계정 실시간 수동 동기화"}
+            {syncing ? "DB에서 동기화 중..." : "관리자 계정 실시간 수동 동기화"}
           </button>
         </div>
 

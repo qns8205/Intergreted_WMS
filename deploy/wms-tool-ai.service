@@ -1,0 +1,25 @@
+[Unit]
+Description=WMS local tool search embeddings (EmbeddingGemma)
+After=network.target
+
+[Service]
+Type=simple
+User=configds
+WorkingDirectory=/home/configds/wms/ai/runtime/llama-b11333
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+ExecStart=/home/configds/wms/ai/runtime/llama-b11333/llama-server -m /home/configds/wms/ai/embeddinggemma.gguf --host 127.0.0.1 --port 18087 --embedding --threads 1 --threads-batch 1 --parallel 1 --ctx-size 2048 --batch-size 2048 --ubatch-size 2048 --n-gpu-layers 0 --no-webui
+CPUQuota=100%
+MemoryMax=2G
+MemorySwapMax=0
+Nice=10
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

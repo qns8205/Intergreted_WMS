@@ -3,6 +3,22 @@ import { createPortal } from "react-dom";
 import { InventoryItem, Rack } from "../types";
 import { parseLocation, resizeAndCompressImage, getGoogleDriveImageUrl } from "../utils/drive";
 import { Upload, X, Camera, ImageIcon, Save } from "lucide-react";
+import ItemPhotoGallery, { StagedPhoto } from "./ItemPhotoGallery";
+import { postAddItemPhoto, fetchWarehouseRackSections, postSetWarehouseRackSections, fetchWarehouseRackLevels } from "../utils/borrowApi";
+import { parseToolLocation } from "../utils/toolLocation";
+import ToolLocationPicker from "./ToolLocationPicker";
+
+// 컴포넌트 함수 내부에 정의하면 렌더링(=키 입력)마다 새 함수 정체성이 생겨 React가
+// 매번 다른 컴포넌트로 취급해 <input>까지 통째로 리마운트시킨다 (입력할 때마다 포커스가
+// 풀리는 버그의 원인이었다) — 그래서 모듈 스코프로 뺐다.
+function Field({ label, labelStyle, children, style }: { label: string; labelStyle: React.CSSProperties; children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={style}>
+      <label style={labelStyle}>{label}</label>
+      {children}
+    </div>
+  );
+}
 
 interface ItemFormModalProps {
   item: InventoryItem | null;
@@ -11,10 +27,16 @@ interface ItemFormModalProps {
   defaultSpec?: string | null;
   racks: Rack[];
   onSave: (item: any) => void;
+  // 신규 등록 중에 "추가 사진"을 함께 골라둔 경우에만 쓴다 — 실제 서버 저장을 기다렸다가
+  // 발급된 rowIndex를 돌려준다(실패하면 null). 없으면 추가 사진 없이 등록할 때처럼
+  // 기존 onSave(낙관적 즉시 닫기)를 그대로 쓴다.
+  onSaveNewItem?: (item: any) => Promise<number | null>;
   onClose: () => void;
   defaultManager?: string;
   inventory: InventoryItem[];
   isLightMode?: boolean;
+  scriptUrl?: string;
+  showToast?: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
 }
 
 export default function ItemFormModal({
@@ -24,10 +46,13 @@ export default function ItemFormModal({
   defaultSpec,
   racks,
   onSave,
+  onSaveNewItem,
   onClose,
   defaultManager,
   inventory,
   isLightMode = false,
+  scriptUrl = "",
+  showToast,
 }: ItemFormModalProps) {
   // 시나리오 물품 편집 모달(ScenarioAdminPage)과 완전히 같은 색 팔레트를 쓴다.
   const C = {
@@ -48,26 +73,6 @@ export default function ItemFormModal({
   };
   const lblStyle: React.CSSProperties = { display: "block", fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "5px" };
 
-  function Field({ label, children, style }: { label: string; children: React.ReactNode; style?: React.CSSProperties }) {
-    return (
-      <div style={style}>
-        <label style={lblStyle}>{label}</label>
-        {children}
-      </div>
-    );
-  }
-
-  const parsedLoc = defaultLocation ? parseLocation(defaultLocation) : null;
-  const initialRack = item 
-    ? parseLocation(item.location).rack 
-    : (parsedLoc ? parsedLoc.rack : defaultRackId || (racks[0] && racks[0].id) || "");
-  const initialShelfPick = item
-    ? item.location
-    : (defaultLocation || "");
-  const initialNewShelfNum = item 
-    ? parseLocation(item.location).shelf 
-    : (parsedLoc ? parsedLoc.shelf : "");
-
   const [form, setForm] = useState<Omit<InventoryItem, "rowIndex"> & { rowIndex?: number }>(
     item
       ? { ...item, manager: item.manager || defaultManager || "관리자" }
@@ -86,10 +91,55 @@ export default function ItemFormModal({
         }
   );
 
-  const [rackId, setRackId] = useState(initialRack);
-  const [shelfMode, setShelfMode] = useState<"existing" | "new">("existing");
-  const [shelfPick, setShelfPick] = useState(initialShelfPick);
-  const [newShelfNum, setNewShelfNum] = useState(initialNewShelfNum);
+  // 위치는 랙-구역 코드 하나로 다룬다 (utils/toolLocation.ts). 편집·신규 모두 같은 그림 선택을 쓴다.
+  const [loc, setLoc] = useState<string>(item ? item.location : (defaultLocation || ""));
+  // 랙별 구역 수. 이 창에서 바꾼 값(sectionEdits)은 저장할 때 서버에 함께 반영한다.
+  const [rackSections, setRackSections] = useState<Record<string, number>>({});
+  const [sectionEdits, setSectionEdits] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!scriptUrl) return;
+    fetchWarehouseRackSections(scriptUrl).then(setRackSections).catch(() => { /* 없으면 모든 랙을 3구역으로 본다 */ });
+    fetchWarehouseRackLevels(scriptUrl).then(setRackLevels).catch(() => { /* 없으면 물품이 있는 층만 고를 수 있다 */ });
+  }, [scriptUrl]);
+  const [rackLevels, setRackLevels] = useState<Record<string, number>>({});
+  /** 고른 랙의 구역 수를 바꿨으면 저장한다. 실패해도 물품 저장은 막지 않는다. */
+  async function saveSectionEdit() {
+    const rack = parseToolLocation(location).rack;
+    const n = rack ? sectionEdits[rack] : undefined;
+    if (!scriptUrl || !rack || !n || rackSections[rack] === n) return;
+    try {
+      const res = await postSetWarehouseRackSections(scriptUrl, rack, n);
+      if (!res?.success) throw new Error(res?.message || "");
+    } catch (e: any) {
+      showToast?.(`랙 구역 수를 저장하지 못했습니다: ${e?.message || e}`, "warn");
+    }
+  }
+
+  // 신규 등록 중 골라둔 "추가 사진" — 아직 rowIndex가 없어 서버에 못 올리니, 저장 완료 후에
+  // 한꺼번에 업로드한다.
+  const [stagedPhotos, setStagedPhotos] = useState<StagedPhoto[]>([]);
+  const [savingNew, setSavingNew] = useState(false);
+
+  async function handleSaveClick() {
+    const payload = { ...form, location };
+    await saveSectionEdit();
+    if (!item && stagedPhotos.length > 0 && onSaveNewItem) {
+      setSavingNew(true);
+      try {
+        const rowIndex = await onSaveNewItem(payload);
+        if (rowIndex == null) return; // 실패 — 토스트는 onSaveNewItem 쪽에서 이미 띄운다
+        for (const sp of stagedPhotos) {
+          const res = await postAddItemPhoto(scriptUrl, "warehouse", String(rowIndex), sp.dataUrl);
+          if (!res.success) showToast?.(res.error || "추가 사진 일부를 올리지 못했습니다.", "warn");
+        }
+        onClose();
+      } finally {
+        setSavingNew(false);
+      }
+      return;
+    }
+    onSave(payload);
+  }
 
   // Image Uploading States & Utilities
   const [isDragging, setIsDragging] = useState(false);
@@ -100,7 +150,7 @@ export default function ItemFormModal({
       setIsUploadingImage(true);
       // Automatically resize to max 1200px width/height and compress to 0.75 JPEG quality
       // This prevents payload limit or timeout errors during sync
-      const compressedBase64 = await resizeAndCompressImage(file, 1200, 1200, 0.75);
+      const compressedBase64 = await resizeAndCompressImage(file);
       update("photo", compressedBase64);
     } catch (err: any) {
       console.error("Image processing error:", err);
@@ -116,33 +166,11 @@ export default function ItemFormModal({
     await processAndUploadFile(file);
   };
 
-  const currentRack = racks.find((r) => r.id === rackId);
-  const existingShelves = currentRack && currentRack.shelves ? currentRack.shelves : [];
-
-  useEffect(() => {
-    if (existingShelves.length === 0) {
-      setShelfMode("new");
-    } else if (!item) {
-      setShelfMode("existing");
-    }
-  }, [rackId]); // eslint-disable-line
-
   function update(field: string, value: any) {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  function composedLocation() {
-    if (shelfMode === "existing" && shelfPick) {
-      // Picked shelves already have format like "A-01"
-      return shelfPick;
-    }
-    if (shelfMode === "new" && newShelfNum.trim()) {
-      return `${rackId}-${newShelfNum.trim()}`;
-    }
-    return "";
-  }
-
-  const location = item ? form.location : composedLocation();
+  const location = loc.trim().toUpperCase();
   const canSave = location.trim() !== "" && form.name.trim() !== "";
 
   const existingSubcategories = React.useMemo(() => {
@@ -285,103 +313,25 @@ export default function ItemFormModal({
               </div>
             </div>
           </div>
-          {item ? (
-            <Field label="위치 (코드)">
-              <input
-                className="mono"
-                value={form.location}
-                onChange={(e) => update("location", e.target.value)}
-                style={{ width: "100%" }}
-              />
-            </Field>
-          ) : (
-            <>
-              <Field label="랙 구역 선택">
-                <select
-                  value={rackId}
-                  onChange={(e) => {
-                    setRackId(e.target.value);
-                    setShelfPick("");
-                  }}
-                  style={inputStyle}
-                >
-                  {racks.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.id} 랙 ({r.name})
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="선반(Shelf) 위치">
-                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => setShelfMode("existing")}
-                    style={{
-                      flex: 1,
-                      background: shelfMode === "existing" ? "rgba(168,166,160,0.12)" : "transparent",
-                      border: `1px solid ${shelfMode === "existing" ? C.accentSoft : C.border}`,
-                      color: shelfMode === "existing" ? C.text : C.label,
-                      borderRadius: 6,
-                      padding: "6px 8px",
-                      fontSize: 11.5,
-                      cursor: "pointer",
-                    }}
-                  >
-                    기존 선반 위치에 추가
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShelfMode("new")}
-                    style={{
-                      flex: 1,
-                      background: shelfMode === "new" ? "rgba(168,166,160,0.12)" : "transparent",
-                      border: `1px solid ${shelfMode === "new" ? C.accentSoft : C.border}`,
-                      color: shelfMode === "new" ? C.text : C.label,
-                      borderRadius: 6,
-                      padding: "6px 8px",
-                      fontSize: 11.5,
-                      cursor: "pointer",
-                    }}
-                  >
-                    새 선반 위치 만들기
-                  </button>
-                </div>
-                {shelfMode === "existing" ? (
-                  existingShelves.length > 0 ? (
-                    <select
-                      value={shelfPick}
-                      onChange={(e) => setShelfPick(e.target.value)}
-                      style={inputStyle}
-                    >
-                      <option value="">선반을 선택하세요</option>
-                      {existingShelves.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div style={{ fontSize: 12, color: C.label }}>
-                      이 랙에는 아직 활성 선반 위치가 없습니다. "새 선반 위치 만들기"를 진행해주세요.
-                    </div>
-                  )
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span className="mono" style={{ fontSize: 13, color: C.label }}>
-                      {rackId}-
-                    </span>
-                    <input
-                      value={newShelfNum}
-                      onChange={(e) => setNewShelfNum(e.target.value)}
-                      placeholder="예: 05"
-                      style={{ flex: 1 }}
-                    />
-                  </div>
-                )}
-              </Field>
-            </>
-          )}
+          <div>
+            <label style={lblStyle}>추가 사진 (여러 장)</label>
+            <ItemPhotoGallery
+              scriptUrl={scriptUrl}
+              category="warehouse"
+              itemId={item ? String(item.rowIndex) : null}
+              isLightMode={isLightMode}
+              showToast={showToast || (() => {})}
+              stagedPhotos={item ? undefined : stagedPhotos}
+              onStagedPhotosChange={item ? undefined : setStagedPhotos}
+            />
+          </div>
+          <Field label="보관 위치 (랙 구역)" labelStyle={lblStyle}>
+            <ToolLocationPicker value={loc} onChange={setLoc} inventory={inventory || []}
+              sections={{ ...rackSections, ...sectionEdits }}
+              onSectionsChange={(rack, n) => setSectionEdits((cur) => ({ ...cur, [rack]: n }))}
+              rackLevels={rackLevels}
+              isLightMode={isLightMode} />
+          </Field>
 
           <div>
             <label style={lblStyle}>품목명 <span style={{ color: C.error }}>*</span></label>
@@ -431,7 +381,7 @@ export default function ItemFormModal({
             )}
           </div>
 
-          <Field label="특이사항">
+          <Field label="특이사항" labelStyle={lblStyle}>
             <input
               value={form.note}
               onChange={(e) => update("note", e.target.value)}
@@ -440,7 +390,7 @@ export default function ItemFormModal({
             />
           </Field>
 
-          <Field label="🔎 한글 검색어 (선택)">
+          <Field label="🔎 한글 검색어 (선택)" labelStyle={lblStyle}>
             <input
               value={form.keywords || ""}
               onChange={(e) => update("keywords", e.target.value)}
@@ -453,11 +403,12 @@ export default function ItemFormModal({
           </Field>
 
           <div style={{ display: "flex", gap: 10 }}>
-            <Field label="재고 수량" style={{ flex: 1 }}>
+            <Field label="재고 수량" labelStyle={lblStyle} style={{ flex: 1 }}>
               <div style={{ display: "flex", gap: 6 }}>
                 <input
                   type="text"
                   value={form.stock === null ? "" : String(form.stock)}
+                  disabled={!!item}
                   onChange={(e) => {
                     const val = e.target.value.trim();
                     if (val.toUpperCase() === "N/A") {
@@ -470,11 +421,13 @@ export default function ItemFormModal({
                     }
                   }}
                   placeholder="숫자 또는 N/A"
-                  style={{ width: "100%", flex: 1 }}
+                  title={item ? "등록된 물품의 수량은 '재고 변경'에서만 바꿀 수 있습니다." : undefined}
+                  style={{ width: "100%", flex: 1, opacity: item ? 0.6 : 1, cursor: item ? "not-allowed" : undefined }}
                 />
                 <button
                   type="button"
                   onClick={() => update("stock", "N/A")}
+                  disabled={!!item}
                   style={{
                     background: form.stock === "N/A" ? C.accent : C.accentSoft,
                     border: `1px solid ${form.stock === "N/A" ? C.accent : C.border}`,
@@ -483,7 +436,8 @@ export default function ItemFormModal({
                     fontSize: "12px",
                     fontWeight: 700,
                     color: form.stock === "N/A" ? "#ffffff" : C.label,
-                    cursor: "pointer",
+                    cursor: item ? "not-allowed" : "pointer",
+                    opacity: item ? 0.55 : 1,
                     whiteSpace: "nowrap",
                     flexShrink: 0,
                   }}
@@ -491,18 +445,11 @@ export default function ItemFormModal({
                   N/A 지정
                 </button>
               </div>
-            </Field>
-            <Field label="담당자" style={{ flex: 1 }}>
-              <input
-                value={form.manager}
-                onChange={(e) => update("manager", e.target.value)}
-                placeholder="담당자명"
-                style={{ width: "100%" }}
-              />
+              {item ? <div style={{ fontSize: 11, color: C.label, marginTop: 5 }}>등록 후 수량 변경은 물품 카드의 ‘재고 변경’을 이용해주세요.</div> : null}
             </Field>
           </div>
 
-          <Field label="구매링크">
+          <Field label="구매링크" labelStyle={lblStyle}>
             <input
               value={form.link}
               onChange={(e) => update("link", e.target.value)}
@@ -538,8 +485,8 @@ export default function ItemFormModal({
             취소
           </button>
           <button
-            onClick={() => onSave({ ...form, location })}
-            disabled={!canSave}
+            onClick={handleSaveClick}
+            disabled={!canSave || savingNew}
             style={{
               flex: 2,
               padding: "13px",
@@ -547,17 +494,17 @@ export default function ItemFormModal({
               border: "none",
               background: C.accent,
               color: "#fff",
-              cursor: canSave ? "pointer" : "not-allowed",
+              cursor: canSave && !savingNew ? "pointer" : "not-allowed",
               fontSize: "14px",
               fontWeight: 700,
-              opacity: !canSave ? 0.5 : 1,
+              opacity: !canSave || savingNew ? 0.5 : 1,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: "6px",
             }}
           >
-            <Save size={15} /> {item ? "저장하기" : "추가하기"}
+            <Save size={15} /> {savingNew ? "저장 중..." : item ? "저장하기" : "추가하기"}
           </button>
         </div>
       </div>

@@ -44,6 +44,22 @@ export function getGoogleDriveImageUrl(url: string | undefined | null): string {
 }
 
 /**
+ * Small-list/grid thumbnails don't need the full 1600px original — locally-hosted uploads
+ * (`/uploads/{scope}/{id}/original-*.webp`) always have a matching `thumb-*.webp` (300px) saved
+ * alongside them, so swap to that for anywhere images render small. Falls back to the regular
+ * (already-small) Drive thumbnail URL for anything not locally hosted.
+ */
+export function getThumbImageUrl(url: string | undefined | null): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("/uploads/") && trimmed.includes("/original-")) {
+    return trimmed.replace("/original-", "/thumb-");
+  }
+  return getGoogleDriveImageUrl(trimmed);
+}
+
+/**
  * Parses location code (e.g. "A-01" -> { rack: "A", shelf: "01" })
  */
 export function parseLocation(loc: string | undefined | null) {
@@ -396,53 +412,73 @@ export function isFuzzyMatch(text: string, query: string): boolean {
   return false;
 }
 
-/**
- * Resizes and compresses an image file to a max width/height and custom JPEG quality.
- * This prevents massive smartphone photos (5MB+) from triggering gateway timeouts or payload limit errors
- * on the Google Apps Script endpoint.
- */
-export function resizeAndCompressImage(file: File, maxWidth = 1200, maxHeight = 1200, quality = 0.75): Promise<string> {
+/** 원본 파일을 디코딩한다. createImageBitmap은 파일을 base64 문자열로 통째로 읽지 않고
+ *  (예전 방식은 4MB 사진이 5.4MB짜리 문자열이 됐다) 메인 스레드 밖에서 디코딩해서 훨씬 가볍다.
+ *  imageOrientation을 지정해야 세로로 찍은 사진이 눕지 않는다(캔버스는 EXIF를 지워버리므로,
+ *  이 단계에서 회전이 반영되지 않으면 서버도 되돌릴 방법이 없다). */
+async function decodeImageFile(file: File): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(file, { imageOrientation: "from-image" });
+    } catch (e) { /* 구형 브라우저 — 아래 <img> 방식으로 폴백 */ }
+  }
+  return await new Promise<HTMLImageElement>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = (err) => { URL.revokeObjectURL(url); reject(err); };
+    img.src = url; // objectURL이라 base64 변환 비용이 없다
+  });
+}
+
+/** toDataURL은 동기라 큰 사진에서 화면이 수백 ms씩 멈춘다. toBlob은 비동기라 그 멈춤이 없다.
+ *  요청한 포맷을 브라우저가 지원하지 않으면 다른 타입으로 돌려주므로, 타입을 확인해 걸러낸다. */
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob | null> {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob && blob.type === type ? blob : null), type, quality);
+  });
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        // Calculate new dimensions while maintaining aspect ratio
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxWidth || height > maxHeight) {
-          if (width > height) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          } else {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
-          }
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Canvas context is not available"));
-          return;
-        }
-
-        // Draw image onto canvas
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Export as JPEG with custom quality
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
-        resolve(dataUrl);
-      };
-      img.onerror = (err) => reject(err);
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = (err) => reject(err);
-    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
+}
+
+/**
+ * 업로드용으로 사진을 줄이고 압축한다. 스마트폰 원본(5MB+)을 그대로 올리면 느리고 서버 부담도 크다.
+ *
+ * 세 가지로 용량과 지연을 줄인다:
+ *  1) WebP 우선 인코딩 — 같은 화질에서 JPEG보다 30% 가량 작다 (미지원 브라우저는 JPEG로 자동 폴백)
+ *  2) 긴 변 1280px — 원본은 확대 보기에서만 쓰이므로 이 이상은 낭비다
+ *  3) createImageBitmap + toBlob — 예전의 FileReader(base64) + toDataURL(동기) 조합이
+ *     업로드할 때 화면이 멈추던 원인이었다
+ */
+export async function resizeAndCompressImage(file: File, maxWidth = 1280, maxHeight = 1280, quality = 0.82): Promise<string> {
+  const source = await decodeImageFile(file);
+
+  let width = source.width;
+  let height = source.height;
+  if (width > maxWidth || height > maxHeight) {
+    const ratio = Math.min(maxWidth / width, maxHeight / height);
+    width = Math.max(1, Math.round(width * ratio));
+    height = Math.max(1, Math.round(height * ratio));
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas context is not available");
+  ctx.drawImage(source as CanvasImageSource, 0, 0, width, height);
+  if (typeof ImageBitmap !== "undefined" && source instanceof ImageBitmap) source.close(); // 메모리 즉시 반환
+
+  const blob = (await canvasToBlob(canvas, "image/webp", quality))
+    || (await canvasToBlob(canvas, "image/jpeg", quality));
+  if (!blob) throw new Error("이미지 압축에 실패했습니다.");
+  return await blobToDataUrl(blob);
 }
 

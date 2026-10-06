@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { InventoryItem, RentLog } from "../types";
 import { ArrowLeft, Search, Check, ChevronDown, Package, User, Calendar, FileText, Image as ImageIcon } from "lucide-react";
-import { formatTimestampLocal, getGoogleDriveImageUrl, isFuzzyMatch } from "../utils/drive";
+import { formatTimestampLocal, getGoogleDriveImageUrl, getThumbImageUrl, isFuzzyMatch } from "../utils/drive";
 
 interface RentalPageProps {
   inventory: InventoryItem[];
@@ -118,7 +118,7 @@ export default function RentalPage({
       setCart((prev) => [...prev, newCartItem]);
       showToast(`${customItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
 
-      // 공구 및 부품류 입력 영역 리셋
+      // COS 물품 입력 영역 리셋
       setCustomName("");
       setCustomLocation("기타");
       setRentQty(1);
@@ -185,7 +185,7 @@ export default function RentalPage({
     setCart((prev) => [...prev, newCartItem]);
     showToast(`${activeItem.name} ${rentQty}개가 신청 목록에 임시 추가되었습니다.`, "info");
 
-    // 공구 및 부품류 입력 영역만 리셋 (담당자는 유지)
+    // COS 물품 입력 영역만 리셋 (담당자는 유지)
     setSelectedItem(null);
     setRentQty(1);
     setNoteInput("");
@@ -219,7 +219,7 @@ export default function RentalPage({
       for (let i = 0; i < cart.length; i++) {
         const cartItem = cart[i];
         
-        // 시간 중복으로 인한 스프레드시트 덮어쓰기 등을 막기 위해 미세 조정한 로컬 타임스탬프 구성
+        // 시간 중복으로 인한 DB 덮어쓰기 등을 막기 위해 미세 조정한 로컬 타임스탬프 구성
         const baseTime = new Date(now.getTime() + i * 1000);
         const pad = (n: number) => String(n).padStart(2, "0");
         const customTsStr = `${baseTime.getFullYear()}-${pad(baseTime.getMonth() + 1)}-${pad(baseTime.getDate())} ${pad(baseTime.getHours())}:${pad(baseTime.getMinutes())}:${pad(baseTime.getSeconds())}`;
@@ -321,12 +321,12 @@ export default function RentalPage({
           />
           <div style={{ fontSize: "13px" }}>
             <span style={{ fontWeight: 700, color: connected ? (isLightMode ? "#047857" : "#34d399") : (isLightMode ? "#b45309" : "#fbbf24"), marginRight: "8px" }}>
-              {connected ? "구글 시트 실시간 연동 활성화" : "데모 가상 모드 작동 중"}
+              {connected ? "서버 실시간 연동 활성화" : "데모 가상 모드 작동 중"}
             </span>
             <span style={{ color: isLightMode ? "#2563eb" : "#94a3b8", fontSize: "12px" }}>
               {connected 
                 ? `(10초 주기 실시간 자동 동기화 중 | 최근 동기화: ${lastSync ? lastSync.toLocaleTimeString() : "진행 중..."})`
-                : "(스프레드시트 미연동 상태로, 기록이 파일에 보존되지 않습니다)"}
+                : "(DB 미연동 상태로, 기록이 파일에 보존되지 않습니다)"}
             </span>
           </div>
         </div>
@@ -346,7 +346,7 @@ export default function RentalPage({
           onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-1px)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; }}
         >
-          {connected ? "연동 설정 확인" : "구글 시트 연동 설정하기"}
+          {connected ? "연동 설정 확인" : "서버 연동 설정하기"}
         </button>
       </div>
 
@@ -373,7 +373,7 @@ export default function RentalPage({
             📋 대여 및 반납 신청서
           </h2>
           <p style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "24px" }}>
-            필요한 공구 및 부품류의 대여 또는 반납을 신청하면 실시간으로 재고가 정산됩니다.
+            필요한 COS 물품의 대여 또는 반납을 신청하면 실시간으로 재고가 정산됩니다.
           </p>
 
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
@@ -399,7 +399,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  📥 공구 및 부품류 대여
+                  📥 COS 물품 대여
                 </button>
                 <button
                   type="button"
@@ -416,7 +416,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  🔄 공구 및 부품류 반납
+                  🔄 COS 물품 반납
                 </button>
                 <button
                   type="button"
@@ -433,7 +433,7 @@ export default function RentalPage({
                     transition: "all 0.2s",
                   }}
                 >
-                  🔥 공구 및 부품류 소모
+                  🔥 COS 물품 소모
                 </button>
               </div>
             </div>
@@ -532,7 +532,7 @@ export default function RentalPage({
                     />
                   </div>
                   <p style={{ fontSize: "10.5px", color: isLightMode ? "#64748b" : "#94a3b8", lineHeight: "1.4", margin: 0 }}>
-                    ⚠️ 입력하신 물품명과 위치는 <strong>일회성 로그</strong>에만 기록되며, 메인 창고 공구 및 부품류 마스터 목록에는 저장되지 않습니다.
+                    ⚠️ 입력하신 물품명과 위치는 <strong>일회성 로그</strong>에만 기록되며, 메인 창고 COS 물품 마스터 목록에는 저장되지 않습니다.
                   </p>
                 </div>
               ) : (
@@ -585,7 +585,7 @@ export default function RentalPage({
                     <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                       {selectedItem.photo ? (
                         <img
-                          src={getGoogleDriveImageUrl(selectedItem.photo)}
+                          src={getThumbImageUrl(selectedItem.photo)}
                           alt={selectedItem.name}
                           referrerPolicy="no-referrer"
                           style={{
@@ -700,7 +700,7 @@ export default function RentalPage({
                     {filteredItems.length === 0 ? (
                       searchQuery.trim() === "" ? (
                         <div style={{ padding: "16px", textAlign: "center", fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-                          일치하는 공구 및 부품류 품목이 없습니다.
+                          일치하는 COS 물품 품목이 없습니다.
                         </div>
                       ) : null
                     ) : (
@@ -732,7 +732,7 @@ export default function RentalPage({
                             <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                               {item.photo ? (
                                 <img
-                                  src={getGoogleDriveImageUrl(item.photo)}
+                                  src={getThumbImageUrl(item.photo)}
                                   alt={item.name}
                                   referrerPolicy="no-referrer"
                                   style={{
@@ -1022,7 +1022,7 @@ export default function RentalPage({
                 gap: "8px"
               }}
             >
-              {submitting ? "구글 시트 전송 중..." : `대여/반납 신청서 일괄 제출하기 (총 ${cart.length}건)`}
+              {submitting ? "전송 중..." : `대여/반납 신청서 일괄 제출하기 (총 ${cart.length}건)`}
             </button>
           </form>
 
@@ -1070,7 +1070,7 @@ export default function RentalPage({
                 </div>
               )}
               <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 공구 및 부품류 사양</div>
+                <div style={{ fontSize: "11px", color: "#5b6472", fontWeight: 700 }}>🔍 선택된 COS 물품 사양</div>
                 <div style={{ fontSize: "13px", fontWeight: 800 }}>{selectedItem.name}</div>
                 <div style={{ fontSize: "11px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
                   위치: {selectedItem.location} | 현재고: {selectedItem.stock ?? 0}개
@@ -1079,7 +1079,7 @@ export default function RentalPage({
             </div>
           ) : (
             <div style={{ fontSize: "11px", color: isLightMode ? "#94a3b8" : "#2563eb", textAlign: "center" }}>
-              품목을 선택하면 해당 공구 및 부품류 정보의 요약이 여기에 표출됩니다.
+              품목을 선택하면 해당 COS 물품 정보의 요약이 여기에 표출됩니다.
             </div>
           )}
         </div>

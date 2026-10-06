@@ -443,7 +443,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
                 <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "12px" }}>불러오는 중...</div>
               ) : occEntries.filter((e) => (occTab === "return" ? e.allReturned : !e.allReturned)).length === 0 ? (
                 <div style={{ textAlign: "center", padding: "24px 0", color: C.label, fontSize: "13px" }}>
-                  최근 24시간 동안 이 시프트·유닛의 {occTab === "return" ? "반납" : "미반납"} 기록이 없습니다.
+                  {occTab === "return" ? "최근 반납 기록이 없습니다." : "이 유닛의 미반납 기록이 없습니다."}
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -515,7 +515,7 @@ export default function SeatMapAdminPage({ scriptUrl, connected, isLightMode, sh
             </div>
             <div style={{ padding: "20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px" }}>
               <div style={{ fontSize: "12px", color: C.label, lineHeight: "1.5" }}>
-                좌석배치도 JSON 데이터입니다. 저장된 JSON을 직접 확인하거나, 새로 편집/붙여넣기한 뒤 <b>적용 및 저장</b> 버튼을 누르면 구글 시트와 앱 전체에 반영됩니다.
+                좌석배치도 JSON 데이터입니다. 저장된 JSON을 직접 확인하거나, 새로 편집/붙여넣기한 뒤 <b>적용 및 저장</b> 버튼을 누르면 서버와 앱 전체에 반영됩니다.
               </div>
               <textarea
                 value={jsonText}

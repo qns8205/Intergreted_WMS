@@ -4,20 +4,31 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev:remote-readonly": "vite --mode remote-readonly --port=3000 --host=127.0.0.1",
+    "server": "node --env-file-if-exists=.env server/index.js",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "import-xlsx": "node server/scripts/import-xlsx.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.8.1",
+    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
+    "multer": "^2.0.1",
+    "qrcode": "^1.5.4",
     "react": "^19.0.1",
-    "react-dom": "^19.0.1"
+    "react-dom": "^19.0.1",
+    "sharp": "^0.35.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/qrcode": "^1.5.6",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",

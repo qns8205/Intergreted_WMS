@@ -4,7 +4,7 @@
  * 이 파일만 수정하면 배치도 모양/범위/색상을 바꿀 수 있습니다.
  *
  * - kind: "numeric"  → 시나리오 오브젝트(root_slot 6자리 숫자) 위치. 000000~000251, 100000~100026 범위.
- *         "letter"   → 공구 및 부품류(공구 및 부품류) 위치. InventoryItem.location 문자열의 접두어로 매칭.
+ *         "letter"   → COS 물품(COS 물품) 위치. InventoryItem.location 문자열의 접두어로 매칭.
  *         "info"     → 클릭 불가한 안내 라벨 (물품 관리자 위치, 사물함, 진열대 등)
  *         "label"    → 랙 이름만 표시하는 하단 라벨 (클릭 불가)
  *
@@ -56,7 +56,7 @@ export const RACK_ZONES: RackZone[] = [
   { id: "G-a", label: "000120~000185", kind: "numeric", gridColumn: "6 / 7", gridRow: "2 / 6", color: "#eef2ff", start: 120, end: 185, rowSizes: [6] },
   { id: "G-b", label: "000186~000251", kind: "numeric", gridColumn: "7 / 8", gridRow: "2 / 6", color: "#eef2ff", start: 186, end: 251, rowSizes: [6] },
 
-  // 사물함 A~E랙 (창고 공구 및 부품류, 위치 문자열 접두어 매칭)
+  // 사물함 A~E랙 (창고 COS 물품, 위치 문자열 접두어 매칭)
   { id: "A", label: "A 랙", kind: "letter", gridColumn: "8 / 9", gridRow: "2 / 3", color: "#fef3e2", matchPrefix: "A" },
   { id: "B", label: "B 랙", kind: "letter", gridColumn: "8 / 9", gridRow: "3 / 4", color: "#fef3e2", matchPrefix: "B" },
   { id: "C", label: "C 랙", kind: "letter", gridColumn: "8 / 9", gridRow: "4 / 5", color: "#fef3e2", matchPrefix: "C" },

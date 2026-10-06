@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { ClipboardList, HandHelping, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
-import { fetchNotices, NoticeData, BorrowLock } from "../utils/borrowApi";
+import { ClipboardList, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
+import { fetchNotices, fetchPenalties, fetchActiveItemTypeCount, NoticeData, PenaltyEntry, BorrowLock, ActiveItemTypeInfo } from "../utils/borrowApi";
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
 const PENALTY_RULES: { label: string; limit: string }[] = [
-  { label: "오브젝트를 보관함에 넣지 않고 방치", limit: "10종류로 제한 (1일)" },
-  { label: "오브젝트를 분실", limit: "10종류로 제한 (7일)" },
-  { label: "1주 이상 연체", limit: "5종류로 제한 (7일)" },
+  { label: "모든 사유에 대하여", limit: "5종류로 제한 (7일)" },
 ];
 
 // 관리자 공지: 지난번에 받은 값을 먼저 그려 즉시 보이게 하고, 응답이 오면 교체한다.
@@ -52,8 +50,24 @@ function useNotices(scriptUrl: string, connected: boolean) {
   return items;
 }
 
+// 현재 페널티가 적용 중인 사람 목록. 서버가 이미 만료된 건 걸러서 주므로 받은 대로 그린다.
+function usePenalties(scriptUrl: string, connected: boolean) {
+  const [items, setItems] = useState<PenaltyEntry[]>([]);
+
+  useEffect(() => {
+    if (!connected || !scriptUrl) { setItems([]); return; }
+    let cancelled = false;
+    fetchPenalties(scriptUrl)
+      .then((list) => { if (!cancelled) setItems(Array.isArray(list) ? list : []); })
+      .catch(() => { /* 랜딩의 부가 정보이므로 실패는 조용히 숨긴다 */ });
+    return () => { cancelled = true; };
+  }, [scriptUrl, connected]);
+
+  return items;
+}
+
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "browse" | "mylookup" | "sid" | "login") => void;
+  onNavigate: (view: "borrow" | "browse" | "mylookup" | "sid" | "login" | "admin") => void;
   isLightMode: boolean;
   isMobile?: boolean;
   scriptUrl: string;
@@ -67,9 +81,24 @@ interface LandingPageProps {
   /** App.tsx가 최초 마운트 시 이미 조회해둔 값을 그대로 받는다 — 이 화면에서 따로
    *  getBorrowLock을 또 부르면 같은 데이터를 위해 GAS 요청이 두 번 나가게 된다. */
   borrowLock: BorrowLock;
+  /** 관리자로 로그인한 상태인지. 관리 모드 카드를 보일지와, 그 카드가 무엇을 하는지가 갈린다. */
+  isAdmin?: boolean;
+  /** 관리자 이름(표시용). */
+  adminName?: string;
+  onAdminLogout?: () => void;
+  /** 로그인한 대여자. 관리자로 들어온 경우에는 없다. */
+  borrower?: { name: string; employeeId: string; affiliation?: string; floor: string; unit: string } | null;
+  onChangeSeat?: () => void;
+  onLogout?: () => void;
 }
 
 export default function LandingPage({
+  isAdmin = false,
+  adminName = "",
+  onAdminLogout,
+  borrower = null,
+  onChangeSeat,
+  onLogout,
   onNavigate,
   isLightMode,
   isMobile = false,
@@ -85,7 +114,37 @@ export default function LandingPage({
 }: LandingPageProps) {
   const [showGuide, setShowGuide] = useState(false);
   const notices = useNotices(scriptUrl, connected);
+  const penalties = usePenalties(scriptUrl, connected);
+  const [itemTypeInfo, setItemTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
   const [openNotice, setOpenNotice] = useState<NoticeData | null>(null);
+
+  // 로그인한 사람에게는 현재 빌린 종류를 뺀 실제 추가 대여 가능 수를 보여준다.
+  // 로그인 전/관리자 랜딩에서는 빈 이름으로 조회해 현재 설정된 기본 상한만 표시한다.
+  useEffect(() => {
+    if (!connected || !scriptUrl) { setItemTypeInfo(null); return; }
+    let cancelled = false;
+    fetchActiveItemTypeCount(
+      scriptUrl,
+      borrower?.name || "",
+      borrower ? { floor: borrower.floor, unit: borrower.unit } : undefined,
+      borrower ? { employeeId: borrower.employeeId, affiliation: borrower.affiliation } : undefined,
+    )
+      .then((info) => { if (!cancelled) setItemTypeInfo(info); })
+      .catch(() => { if (!cancelled) setItemTypeInfo(null); });
+    return () => { cancelled = true; };
+  }, [scriptUrl, connected, borrower?.name, borrower?.employeeId, borrower?.affiliation, borrower?.floor, borrower?.unit]);
+
+  // 대여 잠금/공지 배너는 연결 상태가 확정돼야 뜨는데, 그게 이 화면이 이미 보인 뒤에 뒤늦게
+  // 도착하면 배너가 갑자기 나타나면서 바로 아래 메인 카드들이 밀려 내려가 실수로 다른 카드를
+  // 누르게 되는 문제가 있었다. 연결 상태가 확정되기 전까지는 카드 영역을 잠깐 로딩 표시로
+  // 대신하고, 확정된 뒤(배너가 있든 없든 이미 자리를 잡은 뒤) 카드를 그 자리에 한 번에 그린다.
+  // 연결이 계속 안 되는 경우까지 무한정 기다리진 않도록 짧은 최대 대기 시간을 둔다.
+  const [cardsReady, setCardsReady] = useState(connected);
+  useEffect(() => {
+    if (connected) { setCardsReady(true); return; }
+    const t = setTimeout(() => setCardsReady(true), 900);
+    return () => clearTimeout(t);
+  }, [connected]);
 
 
   return (
@@ -113,7 +172,10 @@ export default function LandingPage({
           maxWidth: "720px",
           width: "100%",
           textAlign: "center",
-          marginBottom: "32px",
+          // 이 묶음의 마지막 줄(대여자 정보·관리 모드)도 자기 아래 여백을 갖고 있었다.
+          // 둘이 더해져 지나치게 벌어졌으므로 그쪽 여백은 없애고 여기서만 준다.
+          // 넓은 화면에서는 이 화면 전체가 1.15배로 확대되니 실제 간격은 조금 더 넓다.
+          marginBottom: "14px",
         }}
       >
         <div
@@ -152,7 +214,7 @@ export default function LandingPage({
               borderRadius: "14px",
               border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
               background: isLightMode ? "#fef2f2" : "#1f1113",
-              maxWidth: "480px",
+              maxWidth: "680px",
               width: "100%",
               marginLeft: "auto",
               marginRight: "auto",
@@ -179,7 +241,7 @@ export default function LandingPage({
               borderRadius: "14px",
               border: `1px solid ${isLightMode ? "#fca5a5" : "#991b1b"}`,
               background: isLightMode ? "#fef2f2" : "#1f1113",
-              maxWidth: "480px",
+              maxWidth: "680px",
               width: "100%",
               marginLeft: "auto",
               marginRight: "auto",
@@ -216,7 +278,7 @@ export default function LandingPage({
             border: `1px solid ${isLightMode ? "#fed7aa" : "#7c2d12"}`,
             background: isLightMode ? "#fffbf5" : "#1a1410",
             boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-            maxWidth: "480px",
+            maxWidth: "680px",
             width: "100%",
             marginLeft: "auto",
             marginRight: "auto",
@@ -238,6 +300,32 @@ export default function LandingPage({
               </div>
             ))}
           </div>
+
+          {penalties.length > 0 ? (
+            <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: `1px solid ${isLightMode ? "#fed7aa" : "#7c2d12"}` }}>
+              <div style={{ fontSize: "12px", fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5", marginBottom: "8px" }}>
+                현재 페널티 적용 중
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {penalties.map((p, i) => (
+                  <h3
+                    key={`${p.name}-${i}`}
+                    style={{
+                      margin: 0,
+                      fontSize: isMobile ? "12.5px" : "13.5px",
+                      fontWeight: 600,
+                      lineHeight: 1.5,
+                      wordBreak: "keep-all",
+                      color: isLightMode ? "#6b7280" : "#94a3b8",
+                    }}
+                  >
+                    <span style={{ fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5" }}>{p.name}</span>
+                    {" - "}{p.max}종류{" - "}{p.reason || "사유 없음"}{" - "}{p.until ? p.until.slice(0, 10) : "해제 시까지"}
+                  </h3>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* 하단: 관리자가 작성한 공지 (최대 3개, 제목만 표시 → 클릭하면 전체 내용) */}
@@ -250,7 +338,7 @@ export default function LandingPage({
               border: `1px solid ${isLightMode ? "#bfdbfe" : "#1e3a8a"}`,
               background: isLightMode ? "#f5f9ff" : "#0f1729",
               boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
-              maxWidth: "480px",
+              maxWidth: "680px",
               width: "100%",
               marginLeft: "auto",
               marginRight: "auto",
@@ -289,167 +377,126 @@ export default function LandingPage({
           </div>
         ) : null}
 
-        {/* 공지 전체 내용 모달 */}
-        {openNotice ? (
+        {/* 현재 이용 상태는 사용자 정보·로그아웃 카드와 한 묶음으로 읽히도록 바로 위에 둔다. */}
+        {itemTypeInfo ? (
           <div
-            onClick={() => setOpenNotice(null)}
-            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap",
+              margin: "10px auto 0", padding: "11px 16px", borderRadius: "14px",
+              maxWidth: "680px", width: "100%", textAlign: "left",
+              background: isLightMode ? "#eff6ff" : "rgba(37,99,235,0.12)",
+              border: `1px solid ${isLightMode ? "#bfdbfe" : "rgba(147,197,253,0.28)"}`,
+              boxShadow: "0 2px 12px rgba(0,0,0,0.04)",
+            }}
           >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                width: "min(520px, 100%)", maxHeight: "80vh", overflowY: "auto",
-                background: isLightMode ? "#ffffff" : "#151d30",
-                border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
-                borderRadius: "16px", padding: "22px", textAlign: "left",
-                color: isLightMode ? "#111827" : "#f1f5f9",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "6px" }}>
-                <ClipboardList size={17} style={{ color: isLightMode ? "#1d4ed8" : "#93c5fd", flexShrink: 0, marginTop: "2px" }} />
-                <span style={{ flex: 1, fontSize: "16px", fontWeight: 800, lineHeight: 1.4 }}>{openNotice.title || "공지사항"}</span>
-                <button onClick={() => setOpenNotice(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: isLightMode ? "#94a3b8" : "#64748b", padding: 0 }}>✕</button>
-              </div>
-              {openNotice.updatedAt ? (
-                <div style={{ fontSize: "11.5px", color: isLightMode ? "#94a3b8" : "#64748b", marginBottom: "14px" }}>
-                  {openNotice.updatedAt}{openNotice.author ? ` · ${openNotice.author}` : ""}
-                </div>
-              ) : null}
-              <div style={{ fontSize: "13.5px", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
-                {openNotice.text}
-              </div>
-            </div>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "7px", fontSize: "13.5px", fontWeight: 900, color: isLightMode ? "#1d4ed8" : "#bfdbfe" }}>
+              <PackageCheck size={16} />
+              현재 대여 가능 종류 {itemTypeInfo.exempt || itemTypeInfo.max >= 9999 ? "제한 없음" : `${Math.max(0, itemTypeInfo.max - itemTypeInfo.count)}종류`}
+            </span>
+            {borrower ? (
+              <span style={{ fontSize: "11.5px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+                대여 중 {itemTypeInfo.count}종류 · 최대 {itemTypeInfo.exempt || itemTypeInfo.max >= 9999 ? "제한 없음" : `${itemTypeInfo.max}종류`}
+              </span>
+            ) : (
+              <span style={{ fontSize: "11.5px", fontWeight: 700, color: isLightMode ? "#475569" : "#94a3b8" }}>
+                현재 기본 제한
+              </span>
+            )}
           </div>
         ) : null}
-      </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-          gap: "16px",
-          maxWidth: "620px",
-          width: "100%",
-        }}
-      >
-        {[
-          {
-            key: "borrow" as const,
-            icon: <HandHelping size={24} />,
-            title: "대여",
-            desc: "SID 기반 대여와 일반 대여를 신청합니다. 신청 내역은 Slack에 자동 공유됩니다.",
-          },
-          {
-            key: "browse" as const,
-            icon: <ClipboardList size={24} />,
-            title: "물품 열람",
-            desc: "시나리오 물품 / 공구 및 부품류를 열람합니다. 장바구니에 담아 바로 대여할 수 있습니다.",
-          },
-          {
-            key: "sid" as const,
-            icon: <Fingerprint size={24} />,
-            title: "SID 열람",
-            desc: "시나리오 ID로 필요한 물품과 보관 위치를 확인합니다.",
-          },
-          {
-            key: "mylookup" as const,
-            icon: <PackageOpen size={24} />,
-            title: "내 대여 조회",
-            desc: "내가 대여 중인 시나리오 물품·공구 및 부품류와 보관 위치를 확인합니다.",
-          },
-        ].map((c) => (
+        {/* 로그인한 사람과, 자리를 옮겼거나 다른 사람에게 넘길 때 쓰는 단추.
+            공지 바로 아래에 둔다 — 메뉴 카드보다 위면 시선을 뺏고, 맨 아래면 못 찾는다. */}
+        {borrower ? (
           <div
-            key={c.key}
-            onClick={() => onNavigate(c.key)}
             style={{
+              display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap",
+              // 바로 위 공지사항과 같은 폭으로 맞춘다 — 읽는 영역과 좌우가 어긋나면 따로 논다.
+              width: "100%", maxWidth: "680px", margin: "8px auto 0",
+              padding: "12px 16px", borderRadius: "14px",
               background: isLightMode ? "#ffffff" : "#1e293b",
               border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-              borderRadius: "16px",
-              padding: "20px 20px",
-              cursor: "pointer",
-              transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
-              boxShadow: "var(--shadow-sm)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-start",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-2px)";
-              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
-              e.currentTarget.style.borderColor = "#2563eb";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
-              e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
             }}
           >
-            <div
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "11px",
-                background: "rgba(37, 99, 235, 0.12)",
-                color: "#2563eb",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginBottom: "14px",
-              }}
-            >
-              {c.icon}
+            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <div style={{ fontSize: "13.5px", fontWeight: 800, color: isLightMode ? "#111827" : "#f1f5f9" }}>
+                {borrower.name}{borrower.employeeId ? ` · ${borrower.employeeId}` : ""}
+              </div>
+              <div style={{ fontSize: "11.5px", color: isLightMode ? "#64748b" : "#94a3b8", marginTop: "2px" }}>
+                {borrower.floor || borrower.unit ? `📍 ${borrower.floor}${borrower.unit ? ` ${borrower.unit}` : ""}` : "좌석 미지정"}
+              </div>
             </div>
-            <h2
+            <button
+              onClick={onChangeSeat}
               style={{
-                fontSize: "19px",
-                fontWeight: 700,
-                marginBottom: "8px",
-                color: isLightMode ? "#111827" : "#f1f5f9",
+                padding: "8px 14px", borderRadius: "9px", fontSize: "12.5px", fontWeight: 800, cursor: "pointer",
+                border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+                background: "transparent", color: isLightMode ? "#2563eb" : "#93c5fd",
               }}
             >
-              {c.title}
-            </h2>
-            <p
+              좌석 변경
+            </button>
+            <button
+              onClick={onLogout}
               style={{
-                fontSize: "13px",
-                lineHeight: 1.6,
-                color: isLightMode ? "#5b6472" : "#c2c7d0",
-                marginBottom: "20px",
+                padding: "8px 14px", borderRadius: "9px", fontSize: "12.5px", fontWeight: 800, cursor: "pointer",
+                border: "none", background: isLightMode ? "#fee2e2" : "rgba(239,68,68,0.16)", color: "#ef4444",
               }}
             >
-              {c.desc}
-            </p>
-            <div
-              style={{
-                marginTop: "auto",
-                padding: "9px 16px",
-                background: "#2563eb",
-                color: "#ffffff",
-                borderRadius: "12px",
-                fontSize: "13px",
-                fontWeight: 700,
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              {c.title} 하기 →
-            </div>
+              로그아웃
+            </button>
           </div>
-        ))}
-      </div>
+        ) : null}
 
-      {/* 관리 모드 (Admin 시트 로그인 필요) */}
+        {/* 관리자로 들어왔음을 알리고, 여기서 바로 나갈 수 있게 한다.
+            대여자 줄과 같은 자리·같은 모양이라 누가 로그인해 있든 찾는 곳이 같다. */}
+        {isAdmin ? (
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap",
+              width: "100%", maxWidth: "680px", margin: "8px auto 8px",
+              padding: "12px 16px", borderRadius: "14px",
+              background: isLightMode ? "#ffffff" : "#1e293b",
+              border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+              <div style={{ fontSize: "13.5px", fontWeight: 800, color: isLightMode ? "#111827" : "#f1f5f9" }}>
+                🛠️ 관리자 모드{adminName ? ` · ${adminName}` : ""}
+              </div>
+              <div style={{ fontSize: "11.5px", color: isLightMode ? "#64748b" : "#94a3b8", marginTop: "2px" }}>
+                재고·로그·설정을 다룰 수 있습니다.
+              </div>
+            </div>
+            <button
+              onClick={onAdminLogout}
+              style={{
+                padding: "8px 14px", borderRadius: "9px", fontSize: "12.5px", fontWeight: 800, cursor: "pointer",
+                border: "none", background: isLightMode ? "#fee2e2" : "rgba(239,68,68,0.16)", color: "#ef4444",
+              }}
+            >
+              로그아웃
+            </button>
+          </div>
+        ) : null}
+
+        {/* 관리 모드.
+            - 관리자로 로그인했으면 바로 관리 화면으로 들어간다(다시 로그인시키지 않는다).
+            - 대여자로 로그인했으면 아예 보이지 않는다. 쓸 수 없는 문을 보여줄 이유가 없다.
+            공지 위에 둔다 — 관리자는 이걸 가장 먼저 누른다. */}
+        {isAdmin ? (
       <div
-        onClick={() => onNavigate("login")}
+        onClick={() => onNavigate("admin")}
         style={{
-          maxWidth: "620px",
+          // 위의 관리자 모드 줄과 같은 폭·같은 가운데 정렬이어야 좌우가 맞는다.
+          // auto 여백이 없어서 카드만 왼쪽으로 밀려 있었다.
+          maxWidth: "680px",
           width: "100%",
-          marginTop: "16px",
+          margin: "0 auto 2px",
           background: isLightMode ? "#ffffff" : "#1e293b",
           border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
-          borderRadius: "20px",
-          padding: "20px 24px",
+          borderRadius: "14px",
+          padding: "16px 18px",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
@@ -493,7 +540,7 @@ export default function LandingPage({
             🛠️ 관리 모드
           </div>
           <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8" }}>
-            창고 구역 배치·재고 수정·로그 관리. Admin 시트의 ID와 비밀번호로 로그인해야 합니다.
+            창고 구역 배치·재고 수정·로그 관리.
           </div>
         </div>
         <div
@@ -507,9 +554,201 @@ export default function LandingPage({
             whiteSpace: "nowrap",
           }}
         >
-          로그인 →
+          들어가기 →
         </div>
       </div>
+        ) : null}
+
+        {/* 공지 전체 내용 모달 */}
+        {openNotice ? (
+          <div
+            onClick={() => setOpenNotice(null)}
+            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(520px, 100%)", maxHeight: "80vh", overflowY: "auto",
+                background: isLightMode ? "#ffffff" : "#151d30",
+                border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
+                borderRadius: "16px", padding: "22px", textAlign: "left",
+                color: isLightMode ? "#111827" : "#f1f5f9",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "6px" }}>
+                <ClipboardList size={17} style={{ color: isLightMode ? "#1d4ed8" : "#93c5fd", flexShrink: 0, marginTop: "2px" }} />
+                <span style={{ flex: 1, fontSize: "16px", fontWeight: 800, lineHeight: 1.4 }}>{openNotice.title || "공지사항"}</span>
+                <button onClick={() => setOpenNotice(null)} style={{ background: "transparent", border: "none", cursor: "pointer", color: isLightMode ? "#94a3b8" : "#64748b", padding: 0 }}>✕</button>
+              </div>
+              {openNotice.updatedAt ? (
+                <div style={{ fontSize: "11.5px", color: isLightMode ? "#94a3b8" : "#64748b", marginBottom: "14px" }}>
+                  {openNotice.updatedAt}{openNotice.author ? ` · ${openNotice.author}` : ""}
+                </div>
+              ) : null}
+              <div style={{ fontSize: "13.5px", lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
+                {openNotice.text}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {!isAdmin && cardsReady ? (
+      <>
+      <div
+        style={{
+          // 세로로 쌓는다. 가로로 세 칸을 벌리면 카드 하나가 900픽셀의 3분의 1을 차지해
+          // 설명이 두세 줄로 접히고, 화면 폭에 따라 2열로 갈라지기도 했다.
+          // 위의 공지·정보 줄과 폭을 맞추면 화면 전체가 한 기둥으로 읽힌다.
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+          maxWidth: "680px",
+          width: "100%",
+        }}
+      >
+        {[
+          // "대여" 카드는 없앴다. 대여는 이제 대여 화면에서 물품을 담아 시작한다 —
+          // 들어가는 길이 둘이면 어느 쪽으로 들어왔는지에 따라 묻는 것이 달라져 헷갈린다.
+          {
+            key: "browse" as const,
+            icon: <ClipboardList size={24} />,
+            title: "대여",
+            // 제목 뒤에 "하기"를 붙이면 "대여 하기"처럼 띄어쓰기가 어색해진다. 카드마다 따로 적는다.
+            cta: "대여하기",
+            desc: "시나리오 물품과 테이블보를 보고 장바구니에 담아 대여합니다.",
+          },
+          {
+            key: "mylookup" as const,
+            icon: <PackageOpen size={24} />,
+            title: "내 대여 조회",
+            cta: "조회하기",
+            desc: "내가 대여 중인 시나리오 물품·COS 물품과 보관 위치를 확인합니다.",
+          },
+          {
+            key: "sid" as const,
+            icon: <Fingerprint size={24} />,
+            title: "SID 열람",
+            cta: "열람하기",
+            desc: "시나리오 ID로 필요한 물품과 보관 위치를 확인합니다.",
+          },
+        ].map((c) => (
+          <div
+            key={c.key}
+            onClick={() => onNavigate(c.key)}
+            style={{
+              background: isLightMode ? "#ffffff" : "#1e293b",
+              border: `1px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+              borderRadius: "14px",
+              padding: "24px 20px",
+              cursor: "pointer",
+              transition: "transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease",
+              boxShadow: "var(--shadow-sm)",
+              // 세로로 쌓이는 카드라 안쪽은 가로로 둔다 — 아이콘·글·버튼을 한 줄에 놓으면
+              // 카드 높이가 낮아져 셋이 한 화면에 들어온다.
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: "14px",
+              textAlign: "left",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow = "0 8px 20px -6px rgba(37, 99, 235, 0.28)";
+              e.currentTarget.style.borderColor = "#2563eb";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = "var(--shadow-sm)";
+              e.currentTarget.style.borderColor = isLightMode ? "#e2e8f0" : "#334155";
+            }}
+          >
+            <div
+              style={{
+                flex: "0 0 50px",
+                width: "50px",
+                height: "50px",
+                borderRadius: "13px",
+                background: "rgba(37, 99, 235, 0.12)",
+                color: "#2563eb",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {c.icon}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h2
+                style={{
+                  fontSize: "17px",
+                  fontWeight: 800,
+                  margin: "0 0 5px",
+                  color: isLightMode ? "#111827" : "#f1f5f9",
+                }}
+              >
+                {c.title}
+              </h2>
+              <p
+                style={{
+                  fontSize: "12.5px",
+                  lineHeight: 1.55,
+                  margin: 0,
+                  color: isLightMode ? "#5b6472" : "#c2c7d0",
+                }}
+              >
+                {c.desc}
+              </p>
+            </div>
+            <div
+              style={{
+                flexShrink: 0,
+                padding: "11px 18px",
+                background: "#2563eb",
+                color: "#ffffff",
+                borderRadius: "12px",
+                fontSize: "12.5px",
+                fontWeight: 700,
+                whiteSpace: "nowrap",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              {c.cta} →
+            </div>
+          </div>
+        ))}
+      </div>
+
+
+      </>
+      ) : !isAdmin ? (
+        <div
+          style={{
+            maxWidth: "620px",
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px",
+            padding: "48px 0",
+            color: isLightMode ? "#94a3b8" : "#64748b",
+          }}
+        >
+          <style>{`@keyframes lp-spin { to { transform: rotate(360deg); } }`}</style>
+          <div
+            style={{
+              width: "22px", height: "22px", borderRadius: "50%",
+              border: `2.5px solid ${isLightMode ? "#e2e8f0" : "#334155"}`,
+              borderTopColor: "#2563eb",
+              animation: "lp-spin 0.7s linear infinite",
+            }}
+          />
+          <span style={{ fontSize: "12.5px", fontWeight: 600 }}>불러오는 중...</span>
+        </div>
+      ) : null}
 
       <div
         style={{
@@ -522,7 +761,7 @@ export default function LandingPage({
         }}
       >
         <ShieldAlert size={12} />
-        <span>권한 있는 계정 및 패스워드는 스프레드시트의 <strong>Admin</strong> 탭에서 실시간 업데이트 가능합니다.</span>
+        <span>권한 있는 계정 및 패스워드는 설정의 <strong>Admin 계정</strong> 탭에서 실시간 관리 가능합니다.</span>
       </div>
     </div>
   );
