@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { MonitorCheck, Power } from "lucide-react";
+import { adminHeaders as tokenHeaders } from "../utils/adminAuth";
 
 const TOKEN_KEY = "wms_unattended_device";
 function adminHeaders() {
-  return { "Content-Type": "application/json", "x-admin-id": localStorage.getItem("wms_admin_id") || "" };
+  return tokenHeaders({ "Content-Type": "application/json" });
 }
 
 export default function UnattendedModeSettings({ onOpen, showToast, onModeChanged }: { onOpen: () => void; showToast: (m: string, t?: "info" | "ok" | "warn" | "error") => void; onModeChanged?: () => void }) {
@@ -23,10 +24,14 @@ export default function UnattendedModeSettings({ onOpen, showToast, onModeChange
     try {
       const r = await fetch("/api/unattended/mode", { method: "PUT", headers: adminHeaders(), body: JSON.stringify({ enabled: !enabled }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.error); setEnabled(!!d.enabled);
-      showToast(d.enabled ? "무인 모드를 켰습니다." : "무인 모드를 껐습니다.", "ok");
       // 이 토글은 이 패널만의 상태다 — 앱 전체(열람 화면 위치 숨김 등)가 쓰는 상태는
       // 따로 있으므로, 바뀐 걸 알려줘야 새로고침 없이도 즉시 반영된다.
       onModeChanged?.();
+      if (!d.enabled) { showToast("무인 모드를 껐습니다.", "ok"); return; }
+      // 켜는 PC가 등록된 무인 PC면 바로 무인 화면으로 넘어간다. 등록 안 된 PC에서는
+      // 무인 API가 거부되므로 화면을 열지 않는다(자동 등록은 기존 무인 PC 등록을 끊으므로 하지 않는다).
+      if (registered) { showToast("무인 모드를 켰습니다. 무인 화면으로 전환합니다.", "ok"); onOpen(); }
+      else showToast("무인 모드를 켰습니다. 이 PC는 무인 PC로 등록되지 않아 무인 화면을 열 수 없습니다.", "warn");
     } catch (e: any) { showToast(e.message || "설정에 실패했습니다.", "error"); } finally { setBusy(false); }
   };
   const register = async () => {
@@ -39,7 +44,7 @@ export default function UnattendedModeSettings({ onOpen, showToast, onModeChange
   };
   const resolveDamage = async (id:number, action:"confirm"|"reject") => {
     setBusy(true);
-    try { const r=await fetch(`/api/unattended/damage-pending/${id}/resolve`,{method:"POST",headers:adminHeaders(),body:JSON.stringify({action})}); const d=await r.json(); if(!r.ok)throw new Error(d.error); await refreshPending(); showToast(action==="confirm"?"파손을 확인하고 불량 로그에 기록했습니다.":"파손 판정을 취소하고 대여 상태로 복구했습니다.","ok"); }
+    try { const r=await fetch(`/api/unattended/damage-pending/${id}/resolve`,{method:"POST",headers:adminHeaders(),body:JSON.stringify({action})}); const d=await r.json(); if(!r.ok)throw new Error(d.error); await refreshPending(); if(action==="confirm")window.dispatchEvent(new Event("wms-notifications-changed")); showToast(action==="confirm"?"파손을 확인하고 불량 로그에 기록했습니다.":"파손 판정을 취소하고 대여 상태로 복구했습니다.","ok"); }
     catch(e:any){showToast(e.message||"처리에 실패했습니다.","error");} finally{setBusy(false);}
   };
   return <div style={{ background: "var(--panel-bg,#151d30)", border: "1px solid var(--panel-border,#26324a)", borderRadius: 14, padding: 20 }}>

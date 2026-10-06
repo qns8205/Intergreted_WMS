@@ -2,6 +2,10 @@
 // 통합 GAS(AppsScript_Unified.gs)의 대여 액션들을 호출합니다.
 
 import { hasVersionWorkInProgress } from "./versionWorkGuard";
+import { compareToolLocation } from "./toolLocation";
+import { adminHeaders } from "./adminAuth";
+import { buildReborrowEntries } from "./reborrowPlan";
+import { createRequestCache } from "./requestCache";
 
 // 물품 하나 안에서 구분되는 "종류"(예: 같은 의자의 색상/모델 차이).
 // 목록이 비어 있으면 종류 구분을 쓰지 않는 물품 — 지금까지와 동일하게 총재고만으로 동작한다.
@@ -111,6 +115,23 @@ export interface UnreturnedItem {
   variantName?: string;      // 확정된 종류 이름 (표시용)
   variantPending?: boolean;  // "종류 상관없음"으로 신청되어 아직 안 정해진 줄 — 재고가 아직 안 빠졌다
   variantUnassigned?: boolean; // 종류가 생기기 전에 나간 대여 건 — 반납할 때 어느 종류가 돌아오는지 골라야 한다
+  /** 대여/반납 처리 화면에서 건별로 지정 — 켜져 있으면 이 대여 줄은 종류 수 한도 계산에서 빠진다. */
+  typeLimitExempt?: boolean;
+  /** 한도 제외를 지정한 이유. 제외 항목과 함께 관리자 화면에 표시한다. */
+  typeLimitExemptReason?: string;
+  /** 내 대여 조회에서만 제공되는 읽기 전용 카탈로그 정보. 보관 위치·구매 정보는 포함하지 않는다. */
+  details?: {
+    size: string;
+    property: string;
+    category: string;
+    subcategory: string;
+    widthMm?: number | null;
+    depthMm?: number | null;
+    heightMm?: number | null;
+    shape?: "box" | "cylinder" | "pyramid";
+    stock: number;
+    variantName?: string;
+  } | null;
 }
 
 export interface BorrowEntry {
@@ -132,9 +153,6 @@ export interface BorrowEntry {
   // 관리자가 반납 처리 화면에서 "추가 대여"로 직접 처리하는 경우: 실물을 관리자가 바로
   // 건네주므로 별도의 "대여 확인" 단계 없이 이 요청만으로 바로 확인 완료 처리한다.
   autoConfirmPickup?: boolean;
-  /** 무인 모드에서도 관리자가 직접 건네주는 대여는 request 물품 제한의 예외다. */
-  adminDirect?: boolean;
-  adminId?: string;
 }
 
 export interface ReturnRequest {
@@ -146,17 +164,21 @@ export interface ReturnRequest {
   variantId?: number;
   /** 파손 반납 줄. 선반으로 돌아가지 않으므로 종류를 묻지 않고 재고도 되돌리지 않는다. */
   damaged?: boolean;
+  /** 누가 어떤 성격으로 반납했는지. QR 위치 확인의 "미확인 반납"은 admin/self/unattended만 보여준다.
+   *  서버는 파손 줄과 대여 확인 전 줄은 이 값과 상관없이 damage/cancel로 기록한다. */
+  source?: "admin" | "self" | "transfer";
 }
 
 export interface BorrowResult {
   success: boolean;
   message: string;
+  /** 대여 신청이 실제로 저장된 뒤 위치 확인 QR에 사용할 서버 경로와 확인된 사번. */
+  lookupPath?: string;
+  employeeId?: string;
+  /** 미수령 자동 취소까지의 시간. 신청 완료 QR 안내에 사용한다. */
+  pickupTimeoutMinutes?: number;
   /** 재고가 없어 이번 대여에서 빠진 물품들. `skipOutOfStock`으로 신청했을 때만 온다. */
   skipped?: { id: string; name: string; requested: number; available: number }[];
-  /** 이번 신청에 붙는 사람이 읽기 쉬운 연속 번호. */
-  requestNo?: number;
-  /** 무인 모드 위치 QR용 토큰. `/loc/:token`으로 이 신청 물품의 위치만 확인할 수 있다. */
-  locationToken?: string;
 }
 
 /* ---------------- 위치 정렬 (창고를 실제로 걸어 도는 순서) ----------------
@@ -289,7 +311,7 @@ async function apiGetImpl_(scriptUrl: string, action: string, params: Record<str
     const timer = setTimeout(() => controller.abort(), timeoutMs); // 무한로딩 방지
     let res: Response | null = null;
     try {
-      res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+      res = await fetch(url, { signal: controller.signal, cache: "no-store", headers: adminHeaders() });
     } catch (e: any) {
       clearTimeout(timer);
       if (e?.name === "AbortError") {
@@ -344,7 +366,7 @@ async function apiPostImpl_(scriptUrl: string, action: string, payload: any, tim
     try {
       res = await fetch(cleanUrl, {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        headers: adminHeaders({ "Content-Type": "text/plain;charset=utf-8" }),
         body: JSON.stringify({ action, payload }),
         signal: controller.signal,
       });
@@ -379,12 +401,8 @@ function apiGet(scriptUrl: string, action: string, params: Record<string, string
   return withGasConcurrencyLimit(() => apiGetImpl_(scriptUrl, action, params, opts));
 }
 function apiPost(scriptUrl: string, action: string, payload: any, timeoutMs?: number): Promise<any> {
-  let actor = "";
-  try { actor = localStorage.getItem("wms_admin_id") || ""; } catch {}
-  const withActor = payload && typeof payload === "object" && !Array.isArray(payload)
-    ? { ...payload, ...(payload._actor ? {} : { _actor: actor }) }
-    : payload;
-  return withGasConcurrencyLimit(() => apiPostImpl_(scriptUrl, action, withActor, timeoutMs), true);
+  // 변경 이력의 "누가"는 서버가 로그인 세션에서 채운다.
+  return withGasConcurrencyLimit(() => apiPostImpl_(scriptUrl, action, payload, timeoutMs), true);
 }
 
 export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> {
@@ -443,6 +461,20 @@ export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boo
     return all;
   }
 }
+export interface CurrentItemBorrower {
+  borrowerName: string;
+  quantity: number;
+  pickedUp: boolean;
+  variantName: string;
+}
+
+export async function fetchItemBorrowers(scriptUrl: string, itemId: string, category: "scenario" | "tablecloth" = "scenario", variantId?: number): Promise<CurrentItemBorrower[]> {
+  const params: Record<string, string> = { itemId, category };
+  if (variantId !== undefined) params.variantId = String(variantId);
+  const data = await apiGet(scriptUrl, "getItemBorrowers", params, { timeoutMs: TIMEOUT_LIST_MS, retries: 1 });
+  return (data.borrowers || []) as CurrentItemBorrower[];
+}
+
 export async function fetchMyBorrowedItems(scriptUrl: string, name: string, employeeId: string, affiliation?: string): Promise<UnreturnedItem[]> {
   const params: Record<string, string> = { name, employeeId };
   if (affiliation) params.affiliation = affiliation;
@@ -583,7 +615,7 @@ export interface ItemPhotoEntry {
   thumb: string;
 }
 
-/** 물품(시나리오 오브젝트/공구 및 부품류) 하나에 대표 사진 외로 등록된 추가 사진 목록을 불러온다. */
+/** 물품(시나리오 오브젝트/COS 물품) 하나에 대표 사진 외로 등록된 추가 사진 목록을 불러온다. */
 export async function fetchItemPhotos(scriptUrl: string, category: "scenario" | "warehouse", itemId: string): Promise<ItemPhotoEntry[]> {
   if (!itemId) return [];
   const data = await apiGet(scriptUrl, "getItemPhotos", { category, itemId });
@@ -592,6 +624,58 @@ export async function fetchItemPhotos(scriptUrl: string, category: "scenario" | 
 
 /** 카테고리 하나에 등록된 모든 물품의 추가 사진(썸네일 경로)을 물품ID별로 한 번에 불러온다.
  *  목록/그리드 화면에서 물품마다 따로 조회하지 않아도 되게 하는 용도. */
+/** COS 물품 관리 화면 상단의 최근 변동(재고 조정·정보 변경·대여/반납/소모). 관리자 전용. */
+/** 공구 랙별 구역 수(1~9). { "F-02": 7 } — 없는 랙은 3구역. */
+export async function fetchWarehouseRackSections(scriptUrl: string): Promise<Record<string, number>> {
+  const data = await apiGet(scriptUrl, "getWarehouseRackSections");
+  return (data.sections || {}) as Record<string, number>;
+}
+export async function postSetWarehouseRackSections(scriptUrl: string, rack: string, sections: number): Promise<{ success: boolean; sections?: Record<string, number>; message?: string }> {
+  return apiPost(scriptUrl, "setWarehouseRackSections", { rack, sections });
+}
+
+/** 공구 랙별 층 수. { "F": 5 } → F-00 ~ F-04. 없는 랙은 물품이 있는 층만 보인다. */
+export async function fetchWarehouseRackLevels(scriptUrl: string): Promise<Record<string, number>> {
+  const data = await apiGet(scriptUrl, "getWarehouseRackLevels");
+  return (data.levels || {}) as Record<string, number>;
+}
+export async function postSetWarehouseRackLevels(scriptUrl: string, rack: string, levels: number): Promise<{ success: boolean; levels?: Record<string, number>; message?: string }> {
+  return apiPost(scriptUrl, "setWarehouseRackLevels", { rack, levels });
+}
+
+export interface WarehouseRackLevelPhoto {
+  photo: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+/** 랙의 각 층에 등록된 현재 적재 상태 사진. 키는 F-00 같은 층 코드다. */
+export async function fetchWarehouseRackLevelPhotos(scriptUrl: string): Promise<Record<string, WarehouseRackLevelPhoto>> {
+  const data = await apiGet(scriptUrl, "getWarehouseRackLevelPhotos");
+  return (data.photos || {}) as Record<string, WarehouseRackLevelPhoto>;
+}
+
+/** 해당 층의 현황 사진을 등록하거나 새 사진으로 교체한다. */
+export async function postSetWarehouseRackLevelPhoto(scriptUrl: string, level: string, photo: string): Promise<{ success: boolean; entry?: WarehouseRackLevelPhoto; photos?: Record<string, WarehouseRackLevelPhoto>; message?: string }> {
+  return apiPost(scriptUrl, "setWarehouseRackLevelPhoto", { level, photo });
+}
+
+export interface WarehouseRecentChange {
+  key: string;
+  at: string;
+  kind: "stock" | "created" | "updated" | "deleted" | "borrow" | "return" | "consume" | string;
+  itemId: string;
+  itemName: string;
+  location?: string;
+  summary: string;
+  diff: number;
+  manager: string;
+}
+export async function fetchWarehouseRecentChanges(scriptUrl: string, hours = 48, limit?: number): Promise<WarehouseRecentChange[]> {
+  const data = await apiGet(scriptUrl, "getWarehouseRecentChanges", { hours: String(hours), ...(limit ? { limit: String(limit) } : {}) });
+  return (data.items || []) as WarehouseRecentChange[];
+}
+
 export async function fetchItemPhotosBulk(scriptUrl: string, category: "scenario" | "warehouse"): Promise<Record<string, string[]>> {
   const data = await apiGet(scriptUrl, "getItemPhotosBulk", { category });
   return (data.items || {}) as Record<string, string[]>;
@@ -692,7 +776,7 @@ export function clearBrowseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
 }
 
-/* ══════════ 공구 및 부품류 타입 & 헬퍼 ══════════ */
+/* ══════════ COS 물품 타입 & 헬퍼 ══════════ */
 
 export interface WarehouseItem {
   rowIndex: number;
@@ -716,39 +800,9 @@ export function parseRackSlot(loc: string | null | undefined): { rack: string; s
   return { rack: parts[0], slot: parts.slice(1).join("-") };
 }
 
-export function warehouseStockNum(stock: number | string | null): number {
-  if (stock === "" || stock === null || stock === undefined) return NaN; // N/A 취급
-  const n = Number(stock);
-  return isNaN(n) ? NaN : n;
-}
-
-export interface WarehouseCartItem {
-  rowIndex: number;
-  location: string;
-  name: string;
-  quantity: number;
-}
-
+// 예전 사용자 공구 대여 장바구니의 저장 키. 대여 화면은 없앴지만, 브라우저에 남은 값을
+// 로그아웃 때 지우려고 접두어만 남긴다(clearIdentity).
 const WH_CART_PREFIX = "wms_wh_cart:";
-
-export function saveWarehouseCart(name: string, employeeId: string, items: WarehouseCartItem[]): void {
-  try {
-    const k = WH_CART_PREFIX + identityKey(name, employeeId);
-    if (items.length === 0) localStorage.removeItem(k);
-    else localStorage.setItem(k, JSON.stringify(items));
-  } catch {}
-}
-
-export function loadWarehouseCart(name: string, employeeId: string): WarehouseCartItem[] {
-  try {
-    const raw = localStorage.getItem(WH_CART_PREFIX + identityKey(name, employeeId));
-    return raw ? (JSON.parse(raw) as WarehouseCartItem[]) : [];
-  } catch { return []; }
-}
-
-export function clearWarehouseCart(name: string, employeeId: string): void {
-  try { localStorage.removeItem(WH_CART_PREFIX + identityKey(name, employeeId)); } catch {}
-}
 
 // 창고 재고 조회 (인벤토리만 읽는 경량 액션 — getAll 대비 훨씬 빠름)
 export async function fetchWarehouseInventory(scriptUrl: string): Promise<WarehouseItem[]> {
@@ -763,14 +817,6 @@ export async function fetchWarehouseInventory(scriptUrl: string): Promise<Wareho
     }
     throw err;
   }
-}
-
-// 공구 및 부품류 대여/반납 (WMS rentInventoryItem 재사용)
-export async function postWarehouseRent(
-  scriptUrl: string,
-  payload: { type: "대여" | "반납" | "소모"; location: string; name: string; qty: number; user: string; note: string }
-): Promise<any> {
-  return apiPost(scriptUrl, "rentInventoryItem", payload);
 }
 
 export async function fetchWarehouseBorrowedItems(scriptUrl: string, name: string): Promise<any[]> {
@@ -853,12 +899,23 @@ export async function fetchUnattendedReturnPhotos(scriptUrl: string, opts?: { li
   return { items: (data.items || []) as ReturnPhotoEntry[], hasMore: !!data.hasMore };
 }
 
-export async function fetchRegisteredUser(scriptUrl: string, employeeId: string): Promise<{ found: boolean; employeeId?: string; name?: string }> {
-  const data = await apiGet(scriptUrl, "getRegisteredUser", { employeeId });
-  return { found: !!data.found, employeeId: data.employeeId, name: data.name };
+export async function fetchRegisteredUser(scriptUrl: string, employeeId: string, opts?: { includeSeatRecommendations?: boolean }): Promise<{ found: boolean; employeeId?: string; name?: string; seatRecommendations?: BorrowerSeatRecommendation[] }> {
+  const data = await apiGet(scriptUrl, "getRegisteredUser", {
+    employeeId,
+    ...(opts?.includeSeatRecommendations ? { includeSeatRecommendations: "1" } : {}),
+  });
+  return { found: !!data.found, employeeId: data.employeeId, name: data.name, seatRecommendations: data.seatRecommendations };
 }
 
 export interface RegisteredUser { employeeId: string; name: string }
+
+export interface BorrowerSeatRecommendation { floor: string; unit: string; count: number; lastUsedAt: string }
+
+export async function fetchBorrowerSeatRecommendations(scriptUrl: string, employeeId: string): Promise<BorrowerSeatRecommendation[]> {
+  const data = await apiGet(scriptUrl, "getBorrowerSeatRecommendations", { employeeId });
+  if (data.success === false) throw new Error(data.error || "자주 사용한 유닛을 불러오지 못했습니다.");
+  return (data.items || []) as BorrowerSeatRecommendation[];
+}
 
 export async function searchRegisteredUsers(scriptUrl: string, query: string): Promise<RegisteredUser[]> {
   const data = await apiGet(scriptUrl, "searchRegisteredUsers", { query });
@@ -920,6 +977,7 @@ export interface SmSyncRunResult {
 export interface SmUploadJob {
   id: string;
   mode: "changes" | "all";
+  fields?: SmMetadataField[];
   status: "running" | "done" | "failed";
   phase: string;
   total: number;
@@ -927,12 +985,16 @@ export interface SmUploadJob {
   succeeded: number;
   failed: number;
   percent: number;
+  currentItemId?: string;
+  currentItemName?: string;
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
   result?: SmSyncRunResult | null;
   errors?: { id?: string; name?: string; reason?: string }[];
 }
+
+export type SmMetadataField = "name" | "sector" | "rootSlot" | "quantity" | "rentalStatus" | "productLink" | "smSize" | "smProperty" | "productMemo" | "image";
 
 export async function fetchSmSyncStatus(scriptUrl: string): Promise<{ enabled: boolean; lastRun?: SmSyncRunResult | null }> {
   return apiGet(scriptUrl, "getSmSyncStatus");
@@ -948,8 +1010,8 @@ export async function syncAllSmMetadataNow(scriptUrl: string): Promise<SmSyncRun
   return res as SmSyncRunResult;
 }
 
-export async function startSmMetadataUpload(scriptUrl: string, mode: "changes" | "all"): Promise<SmUploadJob> {
-  const res = await apiPost(scriptUrl, "startSmMetadataUpload", { mode }, 30000);
+export async function startSmMetadataUpload(scriptUrl: string, mode: "changes" | "all", fields?: SmMetadataField[]): Promise<SmUploadJob> {
+  const res = await apiPost(scriptUrl, "startSmMetadataUpload", { mode, ...(fields ? { fields } : {}) }, 30000);
   if (!res?.job) throw new Error(res?.reason || "SM 업로드를 시작하지 못했습니다.");
   return res.job as SmUploadJob;
 }
@@ -983,9 +1045,10 @@ export async function saveScenarioVariants(
     shape?: "box" | "cylinder" | "pyramid" | null;
   }[],
   unassignedStock: number,
-  manager?: string
+  manager?: string,
+  options?: { stockAdjustment?: boolean; reason?: string }
 ): Promise<any> {
-  return apiPost(scriptUrl, "saveScenarioVariants", { itemId, variants, unassignedStock, manager });
+  return apiPost(scriptUrl, "saveScenarioVariants", { itemId, variants, unassignedStock, manager, ...options });
 }
 
 // 한 번에 다 받으면 응답이 커져서, 구글이 본문 대신 임시 주소(googleusercontent.com/macros/echo)로
@@ -1030,14 +1093,14 @@ export async function fetchScenarioObjectsForAdmin(scriptUrl: string, forceRefre
 }
 
 
-export async function updateScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin> & { rowIndex: number }): Promise<any> {
+export async function updateScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin> & { rowIndex: number; manager?: string }): Promise<any> {
   return apiPost(scriptUrl, "updateScenarioObject", payload);
 }
 
 /** 등록은 Scenario Manager를 여러 번 오간다(등록 → 번호 확인 → 상세 확인 → 위치 → 수량).
  *  SM 목록 조회가 느린 날에는 기본 제한 시간(45초)을 넘겨, 양쪽 다 정상 등록됐는데도
  *  화면에는 실패로 보였다. 그래서 이 요청만 넉넉하게 잡는다. */
-const ADD_SCENARIO_OBJECT_TIMEOUT_MS = 180000;
+const ADD_SCENARIO_OBJECT_TIMEOUT_MS = 300000;   // 서버가 목록 조회를 다시 시도하는 시간까지 포함한 상한
 
 export async function addScenarioObject(scriptUrl: string, payload: Partial<ScenarioObjectAdmin>): Promise<any> {
   return apiPost(scriptUrl, "addScenarioObject", payload, ADD_SCENARIO_OBJECT_TIMEOUT_MS);
@@ -1307,7 +1370,7 @@ export async function fetchStockFormulaStatus(scriptUrl: string, itemId: string)
 
 export interface StockChangeRecord {
   changedAt: string;
-  category: string; // "공구 및 부품류" | "시나리오 물품"
+  category: string; // "COS 물품" | "시나리오 물품"
   id: string;
   itemName: string;
   oldStock: number;
@@ -1317,11 +1380,11 @@ export interface StockChangeRecord {
   manager: string;
 }
 
-// 공구 및 부품류(category: "inventory") 또는 시나리오 물품(category: "scenario")의
+// COS 물품(category: "inventory") 또는 시나리오 물품(category: "scenario")의
 // 현재 재고를 직접 변경. 사유(reason)는 필수이며, 변경 이력이 별도로 남는다.
 export async function adjustStock(
   scriptUrl: string,
-  payload: { category: "inventory" | "scenario"; rowIndex: number; newStock: number; newRented?: number; reason: string; manager?: string; id?: string }
+  payload: { category: "inventory" | "scenario" | "tablecloth"; rowIndex: number; newStock: number; newRented?: number; reason: string; manager?: string; id?: string }
 ): Promise<{ success: boolean; message?: string; warning?: string; oldStock?: number; newStock?: number; diff?: number; oldRented?: number; newRented?: number; rentedChanged?: boolean }> {
   return apiPost(scriptUrl, "adjustStock", payload);
 }
@@ -1329,7 +1392,7 @@ export async function adjustStock(
 // category/id를 생략하면 전체 변경 이력을 최신순으로 반환.
 export async function fetchStockChangeHistory(
   scriptUrl: string,
-  category?: "inventory" | "scenario",
+  category?: "inventory" | "scenario" | "tablecloth",
   id?: string,
   name?: string
 ): Promise<StockChangeRecord[]> {
@@ -1346,37 +1409,6 @@ export async function fetchStockChangeHistory(
     }
     throw err;
   }
-}
-
-/* ══════════ 물품 세트 (창고 물품 대여 시 여러 부품을 한 번에 담기) ══════════ */
-
-export interface ItemSet {
-  name: string;
-  items: { location: string; name: string; qty: number }[];
-}
-
-export async function fetchItemSets(scriptUrl: string): Promise<ItemSet[]> {
-  try {
-    const data = await apiGet(scriptUrl, "getItemSets", {});
-    return (data.sets || []) as ItemSet[];
-  } catch (err: any) {
-    if (err?.message && String(err.message).includes("알 수 없는")) {
-      return [];
-    }
-    throw err;
-  }
-}
-
-// originalName을 넘기면 그 이름의 기존 세트를 지우고 새 이름/구성으로 저장한다 (이름 변경 포함 수정).
-export async function saveItemSet(
-  scriptUrl: string,
-  set: { name: string; items: { location: string; name: string; qty: number }[]; originalName?: string }
-): Promise<{ success: boolean; message?: string }> {
-  return apiPost(scriptUrl, "saveItemSet", set);
-}
-
-export async function deleteItemSet(scriptUrl: string, name: string): Promise<{ success: boolean; message?: string }> {
-  return apiPost(scriptUrl, "deleteItemSet", { name });
 }
 
 /* ══════════ 좌석 배치도 (층별 유닛 맵 + Day/Night 조회) ══════════ */
@@ -1559,16 +1591,9 @@ export async function fetchActiveItemTypeCount(
 }
 
 // 창고 위치 "A-01" 랙(A~) → 슬롯 숫자 순 비교 (정렬용)
+/** 공구 위치 정렬: 랙 → 층 → 구역(왼쪽→오른쪽, 앞→뒤). 규칙은 utils/toolLocation.ts 한곳에 둔다. */
 export function compareRackSlot(la: string | null | undefined, lb: string | null | undefined): number {
-  const pa = String(la ?? "").toUpperCase().split("-");
-  const pb = String(lb ?? "").toUpperCase().split("-");
-  const ra = pa[0] || "", rb = pb[0] || "";
-  if (ra !== rb) return ra < rb ? -1 : 1;
-  let sa = parseInt(String(pa[1] ?? "").replace(/\D/g, ""), 10);
-  let sb = parseInt(String(pb[1] ?? "").replace(/\D/g, ""), 10);
-  if (isNaN(sa)) sa = 999999;
-  if (isNaN(sb)) sb = 999999;
-  return sa - sb;
+  return compareToolLocation(la, lb);
 }
 
 /* ══════════ 시나리오 대여 대장 (반납완료 포함 전체 조회 + 재대여) ══════════ */
@@ -1654,29 +1679,10 @@ export async function reBorrowScenarioLogs(
   scriptUrl: string,
   logs: ScenarioLogEntry[],
   clientVersion: string,
-  target?: { name: string; affiliation?: string; employeeId?: string }
+  target?: { name: string; affiliation?: string; employeeId?: string },
+  seat?: { floor: string; unit: string },
 ): Promise<BorrowResult> {
-  // 대여자/이메일 기준으로 일반대여 항목으로 재구성 (재대여는 일반대여로 처리)
-  // target을 지정하면 원래 반납자가 아닌 다른 사람 명의로 재대여할 수 있다.
-  const first = logs[0];
-  const borrowList: BorrowEntry[] = [{
-    itemType: "general",
-    borrowerName: target?.name?.trim() || first.borrowerName,
-    affiliation: target?.affiliation || "",
-    employeeId: target?.employeeId?.trim() || "",
-    // 명의를 유지하는 재대여는 원래 로그에 저장된 이메일을 그대로 넘겨 사용자 식별을 유지한다.
-    // 다른 사람 명의로 재대여하는 경우는 새로 지정된 사람 기준(affiliation/employeeId)으로 다시 계산해야 하므로 넘기지 않는다.
-    knownEmail: target ? undefined : (first.email || undefined),
-    borrowDate: nowString(),
-    borrowPurpose: first.borrowPurpose || "재대여",
-    generalOption: "재대여",
-    // 종류가 나뉜 물품은 종류를 지정하지 않으면 서버가 대여를 거절한다. 로그에 남아 있는
-    // 그때 그 종류를 그대로 실어 보내, 재대여해도 같은 종류가 나가도록 한다.
-    borrowedItems: logs.map((l) => ({
-      id: l.itemId, name: l.itemName, quantity: l.quantity,
-      ...(l.variantId ? { variantId: l.variantId } : {}),
-    })),
-  }];
+  const borrowList = buildReborrowEntries(logs, nowString(), target, seat);
   return postRecordBorrow(scriptUrl, borrowList, clientVersion);
 }
 
@@ -1736,6 +1742,17 @@ export async function postSwapBorrowItem(
   return (await apiPost(scriptUrl, "swapBorrowItem", { ...payload, clientVersion })) as BorrowResult;
 }
 
+/** 대여/반납 처리 화면에서 건별로 "종류 수 한도 제외"를 켜고 끈다. */
+export async function postSetTypeLimitExempt(
+  scriptUrl: string,
+  sheetType: "scenario" | "general",
+  rowIndex: number,
+  exempt: boolean,
+  reason = ""
+): Promise<{ success: boolean; exempt?: boolean; reason?: string; message?: string }> {
+  return apiPost(scriptUrl, "setTypeLimitExempt", { sheetType, rowIndex, exempt, reason });
+}
+
 /* ══════════ 앱 버전 발급 (관리자 전용) ══════════ */
 // 배포를 마친 뒤 이 함수를 호출하면 서버 APP_VERSION이 새 값으로 바뀌고,
 // 열려 있던 구버전 화면들에 새로고침 안내가 뜬다.
@@ -1749,6 +1766,8 @@ export async function publishAppVersion(scriptUrl: string): Promise<{ success: b
 //  잠금 충돌로 실패하거나 재고 갱신이 서로를 덮어쓴다)
 export interface WarehouseRentRow {
   type: "대여" | "반납" | "소모";
+  itemId?: number;
+  resolveLoan?: boolean;
   location: string;
   name: string;
   qty: number;
@@ -1812,6 +1831,44 @@ export async function fetchItemChangeHistory(
 ): Promise<ScenarioChangeEntry[]> {
   const data = await apiGet(scriptUrl, "getItemChangeHistory", { category, since });
   return (data.items || []) as ScenarioChangeEntry[];
+}
+
+/* ══════════ 반납 로그 분석 ══════════ */
+export interface InsightItem {
+  id: string; name: string; image: string; rootSlot: string;
+  owned: number; stock: number; rentals: number; borrowers: number;
+  turnsPerUnit: number | null; stockoutPct: number | null; avgHoldHours: number | null;
+  defects: number; defectRate: number | null; sidCount: number; lastRented: string;
+  sm: { score: number | null; usage: number; status: string; isNew: boolean } | null;
+  reason?: string; suggestAdd?: number;
+}
+/** 시간대 수요 격자의 한 칸(요일×시)에 대한 상세. 비어 있는 칸은 없다. */
+export interface DemandCell {
+  qty: number; borrowers: number; days: number;
+  top: { id: string; name: string; qty: number }[]; moreTypes: number;
+}
+export interface RentalInsights {
+  period: number; since: string; dataSince: string;
+  summary: { rentals: number; quantity: number; borrowers: number; itemTypes: number; holdMedianHours: number | null; holdP90Hours: number | null; longHolds: number; open: number };
+  timeDemand: {
+    borrow: number[][]; return: number[][];
+    /** 키는 `${요일}-${시}`(요일 0=일). */
+    borrowCells?: Record<string, DemandCell>; returnCells?: Record<string, DemandCell>;
+    borrowPeaks: { dow: number; hour: number; n: number }[]; returnPeaks: { dow: number; hour: number; n: number }[];
+    borrowByHour: number[]; returnByHour: number[];
+  };
+  buy: InsightItem[];
+  retire: { overuse: InsightItem[]; wear: InsightItem[]; unused: InsightItem[] };
+  pairs: { a: { id: string; name: string; rootSlot: string }; b: { id: string; name: string; rootSlot: string }; count: number }[];
+  sm: { ok: true; high: number; low: number } | { ok: false; reason: string };
+}
+const insightsCache = createRequestCache<RentalInsights>(30000);
+export function fetchRentalInsights(scriptUrl: string, days: number, fresh = false): Promise<RentalInsights> {
+  const key = `${scriptUrl}|${days}|${JSON.stringify(adminHeaders())}`;
+  return insightsCache(key, async () => {
+    const data = await apiGet(scriptUrl, "getRentalInsights", { days: String(days), ...(fresh ? { fresh: "1" } : {}) }, { timeoutMs: 20000, retries: 0 });
+    return data as RentalInsights;
+  }, fresh);
 }
 
 export async function fetchScenarioChanges(scriptUrl: string, since: string): Promise<ScenarioChangeEntry[]> {
@@ -1918,7 +1975,7 @@ export async function setBorrowLock(
   return apiPost(scriptUrl, "setBorrowLock", units !== undefined ? { locked, reason, units } : { locked, reason });
 }
 
-/* ══════════ 창고물품(공구 및 부품류) 대여로그 ══════════ */
+/* ══════════ 창고물품(COS 물품) 대여로그 ══════════ */
 export interface WarehouseLogEntry {
   rowIndex: number;
   timestamp: string;

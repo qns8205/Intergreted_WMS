@@ -3,26 +3,23 @@ import compression from "compression";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import "./db.js";
-import { bootstrapRouter } from "./routes/bootstrap.js";
-import { inventoryRouter } from "./routes/inventory.js";
-import { defectLogsRouter } from "./routes/defectLogs.js";
-import { rentalsRouter } from "./routes/rentals.js";
-import { sectorsRouter } from "./routes/sectors.js";
-import { borrowRouter } from "./routes/borrow.js";
-import { uploadsRouter } from "./routes/uploads.js";
 import { adminRouter } from "./routes/admin.js";
 import { gasRouter } from "./routes/gas.js";
 import { scenarioSyncRouter } from "./routes/scenarioSync.js";
 import { cameraRouter } from "./routes/camera.js";
 import { requestLookupRouter } from "./routes/requestLookup.js";
-import { locationLookupRouter } from "./routes/locationLookup.js";
 import { labelPrinterRouter } from "./routes/labelPrinter.js";
 import { unattendedRouter } from "./routes/unattended.js";
+import { signupRouter } from "./routes/signup.js";
+import { notificationsRouter } from "./routes/notifications.js";
+import { warehouseRequestsRouter } from "./routes/warehouseRequests.js";
+import { scenarioAiSearchRouter } from "./routes/scenarioAiSearch.js";
 import { uploadsDir } from "./lib/images.js";
 import { cleanupOldReturnPhotos } from "./lib/returnPhotoRetention.js";
 import { cancelUnclaimedPickups } from "./lib/pickupTimeout.js";
 import { startSmSync } from "./lib/smSync.js";
 import { applyUnattendedOverduePenalties } from "./lib/unattendedPenalties.js";
+import { warmAllAiSearch, toolAiConfigured } from "./lib/warehouseSearchService.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT) || 3001;
@@ -40,17 +37,16 @@ app.use(compression());
 app.use(express.json({ limit: "20mb" }));
 
 const api = express.Router();
-api.use(bootstrapRouter);
-api.use(inventoryRouter);
-api.use(defectLogsRouter);
-api.use(rentalsRouter);
-api.use(sectorsRouter);
-api.use(borrowRouter);
-api.use(uploadsRouter);
+// 예전 REST 경로(/bootstrap, /inventory, /rentals, /sectors, /defect-logs, /uploads/image)는
+// 화면이 모두 /api/gas로 옮겨가 쓰지 않는데 로그인 없이 쓰기까지 열려 있어 뺐다.
 // adminRouter보다 먼저 마운트해야 한다 — adminRouter의 GET /scenarios/:sid 가
 // /scenarios/sync-status 를 sid="sync-status" 로 삼켜 requireAdmin 401을 내보내기 때문.
 api.use(scenarioSyncRouter);
 api.use(unattendedRouter);
+api.use(signupRouter);
+api.use(notificationsRouter);
+api.use(warehouseRequestsRouter);
+api.use(scenarioAiSearchRouter);
 api.use(adminRouter);
 api.use(gasRouter);
 api.use(cameraRouter);
@@ -82,13 +78,18 @@ app.use((err, req, res, next) => {
 });
 
 cleanupOldReturnPhotos();
+if (toolAiConfigured) {
+  const warm = () => warmAllAiSearch().catch(err => console.warn("[ai-search] AI index unavailable:", err.message));
+  setTimeout(warm, 5000).unref();
+  setInterval(warm, 5 * 60 * 1000).unref();
+}
 setInterval(cleanupOldReturnPhotos, 6 * 60 * 60 * 1000); // 6시간마다 오래된 반납 사진 정리
-// 신청만 하고 안 가져간 대여를 되돌려 재고를 풀어준다. 5분마다 훑으므로 실제 취소 시각은
-// 설정한 제한시간 + 최대 5분이 된다.
+// 신청만 하고 안 가져간 대여를 되돌려 재고를 풀어준다. 1분마다 훑으므로 실제 취소 시각은
+// 설정한 제한시간 + 최대 1분이 된다.
 setInterval(() => {
   try { cancelUnclaimedPickups(); }
   catch (err) { console.error("[pickup-timeout] 자동 취소 확인 실패", err); }
-}, 5 * 60 * 1000);
+}, 60 * 1000);
 // 무인 모드에서 수령 후 24시간 동안 반납 처리를 하지 않은 신청을 10분마다 확인한다.
 // 위반 장부의 UNIQUE event_key 덕분에 같은 신청은 서버가 재시작돼도 한 번만 차감된다.
 const checkUnattendedPenalties = () => {
@@ -150,7 +151,6 @@ if (cameraPort !== port) {
   // 메인 앱(:3000)과 분리된 QR 전용 조회 화면. 긴 경로를 아는 QR 사용자만 접근하고,
   // 사진도 같은 :3002 오리진에서 읽게 해 메인 앱 화면이나 API를 노출하지 않는다.
   cameraApp.use(requestLookupRouter);
-  cameraApp.use(locationLookupRouter);
   cameraApp.use("/uploads", express.static(uploadsDir, { maxAge: "1h" }));
   cameraApp.use("/api", cameraRouter);
   cameraApp.use(cameraRouter); // /api 접두사 없이도 받는다

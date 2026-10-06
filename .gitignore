@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# local SQLite data & uploaded images (not committed — populated via xlsx import / uploads)
+server/data/
+server/uploads/
+
+# 임시 테스트 DB·작업 폴더·배포 산출물(대용량 exe/zip, 개인 자료 포함 가능)
+.tmp-*
+tmp/
+outputs/
+.claude/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+tools/printer-backups/

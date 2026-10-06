@@ -10,12 +10,21 @@ import { toInventoryItem, toDefectLog, toRentLog, toSector, toScenarioObject, to
 import { maybeSaveImage, uploadsDir } from "../lib/images.js";
 import fs from "node:fs";
 import path from "node:path";
-import { nowKst, shiftOf } from "../lib/time.js";
+import { nowKst, parseKstMs, shiftOf } from "../lib/time.js";
+import { REQUEST_LOOKUP_PATH } from "./requestLookup.js";
 import { employeeIdForRentalRow, normalizeEmployeeId, normalizePersonName, registeredUser, registeredUsersByName, resolveRegisteredIdentity } from "../lib/registeredUsers.js";
 import * as smObjects from "../lib/smObjects.js";
 import * as smObjectsSession from "../lib/smObjectsSession.js";
 import * as smLocationSync from "../lib/smLocationSync.js";
-import { nudge as smSyncNudge, syncChangesNow as runSmChangesNow, status as smSyncStatus } from "../lib/smSync.js";
+import { nudge as smSyncNudge, syncChangesNow as runSmChangesNow, syncAllNow as runSmFullReconcileNow, status as smSyncStatus } from "../lib/smSync.js";
+import { adminFromRequest } from "../lib/auth.js";
+import { unattendedEnabled } from "../lib/unattendedPenalties.js";
+import { getPickupTimeoutMinutes } from "../lib/pickupTimeout.js";
+import { rentalInsights } from "../lib/rentalInsights.js";
+import { applyWarehouseRent, applyWarehouseRentBulk, warehouseLoanGroups, warehouseIsConsumable } from "../lib/warehouseRentals.js";
+import { rankBorrowerSeats } from "../lib/borrowerSeatRecommendations.js";
+import { rentalSeatIndex, rentalSeatOf } from "../lib/rentalSeats.js";
+import { itemBorrowers } from "../lib/itemBorrowers.js";
 
 // 오브젝트 등록에 쓸 창구를 고른다.
 //   토큰 창구(smObjects)  — SM이 외부 시스템용으로 연 정식 경로. 중복 방지가 있어 더 안전하다.
@@ -51,6 +60,10 @@ function appVersion() {
 }
 
 const nowIso = nowKst;
+
+function inventoryConsumableValue(item, fallback = null) {
+  return item.isConsumable === undefined ? (item.consumable ?? fallback) : (item.isConsumable ? "Y" : "N");
+}
 
 function changeActor(payload) {
   return String(payload?._actor || payload?.manager || "관리자").trim() || "관리자";
@@ -107,7 +120,7 @@ async function addInventoryItem({ payload }) {
   const result = run(
     `INSERT INTO warehouse_items (location, subcategory, name, purchase_link, stock, updated_at, manager, manager2, note, image_path, keywords, consumable)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.location ?? null, item.spec ?? null, item.name ?? null, item.link ?? null, item.stock ?? null, item.updatedAt ?? nowIso(), item.manager ?? null, item.manager2 ?? null, item.note ?? null, null, item.keywords ?? null, item.consumable ?? null]
+    [item.location ?? null, item.spec ?? null, item.name ?? null, item.link ?? null, item.stock ?? null, item.updatedAt ?? nowIso(), item.manager ?? null, item.manager2 ?? null, item.note ?? null, null, item.keywords ?? null, inventoryConsumableValue(item)]
   );
   const id = result.lastInsertRowid;
   const imagePath = await maybeSaveImage(item.photo, "warehouse_items", id);
@@ -123,14 +136,17 @@ async function updateInventoryItem({ payload }) {
   const id = Number(item.rowIndex);
   const existing = get("SELECT * FROM warehouse_items WHERE id = ?", [id]);
   if (!existing) return { success: false, error: "물품을 찾을 수 없습니다." };
+  if (item.stock !== undefined && String(item.stock ?? "") !== String(existing.stock ?? "")) {
+    return { success: false, message: "등록된 물품의 재고는 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요." };
+  }
   const imagePath = item.photo !== undefined ? await maybeSaveImage(item.photo, "warehouse_items", id) : existing.image_path;
   const archived = item.archived !== undefined ? (item.archived ? "TRUE" : null) : existing.archived;
   run(
     `UPDATE warehouse_items SET location=?, subcategory=?, name=?, purchase_link=?, stock=?, updated_at=?, manager=?, manager2=?, note=?, image_path=?, keywords=?, consumable=?, archived=? WHERE id=?`,
     [
       item.location ?? existing.location, item.spec ?? existing.subcategory, item.name ?? existing.name, item.link ?? existing.purchase_link,
-      item.stock ?? existing.stock, item.updatedAt ?? nowIso(), item.manager ?? existing.manager, item.manager2 ?? existing.manager2,
-      item.note ?? existing.note, imagePath, item.keywords ?? existing.keywords, item.consumable ?? existing.consumable, archived, id,
+      existing.stock, item.updatedAt ?? nowIso(), item.manager ?? existing.manager, item.manager2 ?? existing.manager2,
+      item.note ?? existing.note, imagePath, item.keywords ?? existing.keywords, inventoryConsumableValue(item, existing.consumable), archived, id,
     ]
   );
   const after = toInventoryItem(get("SELECT * FROM warehouse_items WHERE id = ?", [id]));
@@ -146,12 +162,18 @@ async function updateInventoryItem({ payload }) {
 
 function updateMultipleInventoryItems({ payload }) {
   const items = payload?.items || [];
+  for (const item of items) {
+    const existing = get("SELECT stock FROM warehouse_items WHERE id = ?", [Number(item.rowIndex)]);
+    if (existing && item.stock !== undefined && String(item.stock ?? "") !== String(existing.stock ?? "")) {
+      return { success: false, message: `'${item.name || item.rowIndex}'의 재고는 일괄 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요.` };
+    }
+  }
   transaction(() => {
     for (const item of items) {
       const existing = get("SELECT * FROM warehouse_items WHERE id = ?", [Number(item.rowIndex)]);
       run(
         `UPDATE warehouse_items SET location=?, subcategory=?, name=?, purchase_link=?, stock=?, updated_at=?, manager=?, manager2=?, note=?, keywords=?, consumable=? WHERE id=?`,
-        [item.location ?? null, item.spec ?? null, item.name ?? null, item.link ?? null, item.stock ?? null, item.updatedAt ?? nowIso(), item.manager ?? null, item.manager2 ?? null, item.note ?? null, item.keywords ?? null, item.consumable ?? null, item.rowIndex]
+        [item.location ?? null, item.spec ?? null, item.name ?? null, item.link ?? null, existing?.stock ?? null, item.updatedAt ?? nowIso(), item.manager ?? null, item.manager2 ?? null, item.note ?? null, item.keywords ?? null, inventoryConsumableValue(item), item.rowIndex]
       );
       if (existing) {
         const before = toInventoryItem(existing);
@@ -234,9 +256,10 @@ async function addDefectLog({ payload }) {
     [log.name ?? null, log.qty ?? null, log.timestamp ?? nowIso(), log.defectType ?? null, log.note ?? null, log.actionTaken ?? null, null, log.culprit || log.manager || null]
   );
   const id = result.lastInsertRowid;
+  if (log._actor) run("UPDATE defect_logs SET reported_by = ? WHERE id = ?", [log._actor, id]);
   const imagePath = await maybeSaveImage(log.photo, "defect_logs", id);
   if (imagePath) run("UPDATE defect_logs SET image_path = ? WHERE id = ?", [imagePath, id]);
-  // 직접 불량 등록은 재고를 건드리지 않는다 — 공구·부품류 전용 창구이기 때문이다.
+  // 직접 불량 등록은 재고를 건드리지 않는다 — COS 물품 전용 창구이기 때문이다.
   // 시나리오 오브젝트 파손은 반납 화면의 "파손 처리"(recordDamagedReturn)로만 등록한다.
   // 거기서만 어느 종류(variant)가 파손됐는지 알 수 있어 재고가 정확히 깎인다.
   const stockWarning = "";
@@ -275,54 +298,13 @@ async function saveReturnPhoto({ payload }) {
 
 // ── 창고 물품 대여/반납/소모 ─────────────────────────────────
 
-const RENT_DELTA = { "대여": -1, "반납": 1, "소모": -1 };
-
-function applyWarehouseRent(entry) {
-  // "소모"로 기록되는 두 가지 경우를 구분해야 한다: (1) 대여 없이 바로 소모(BorrowSystemPage) —
-  // 이번에 처음 재고에서 빠지는 것이므로 -1이 맞다. (2) 이미 대여 중이던 물품을 반납 화면에서
-  // "소모로 전환"(AdminReturnPage는 type:"소모", MobileViewPage는 type:"반납"으로 보냄) — 대여
-  // 시점에 이미 -1이 적용된 상태라 여기서 또 재고를 건드리면 이중 차감(-1) 되거나 되레 복구(+1)
-  // 돼버린다. 두 화면 다 note에 [소모완료] 태그를 붙여 보내므로, 그 태그가 있으면 타입에 상관없이
-  // 재고를 건드리지 않는다.
-  const isResolvingExistingLoan = String(entry.note || "").includes("[소모완료]");
-  const sign = isResolvingExistingLoan ? 0 : (RENT_DELTA[entry.type] ?? 0);
-  const qty = Number(entry.qty) || 0;
-  const row = get("SELECT * FROM warehouse_items WHERE location = ? AND name = ?", [entry.location, entry.name]);
-  if (row) {
-    const current = Number(row.stock);
-    if (!Number.isNaN(current)) run("UPDATE warehouse_items SET stock = ? WHERE id = ?", [String(current + sign * qty), row.id]);
-  }
-  let identity = resolveRegisteredIdentity(entry.employeeId, entry.user);
-  if (!identity.ok && !String(entry.employeeId || "").trim()) {
-    const byName = registeredUsersByName(entry.user);
-    if (byName.length === 1) identity = { ok: true, employeeId: byName[0].employee_id, name: byName[0].name };
-  }
-  const manager = identity.ok ? identity.name : (entry.user ?? null);
-  const employeeId = identity.ok ? identity.employeeId : normalizeEmployeeId(entry.employeeId);
-  run(`INSERT INTO warehouse_rental_logs (occurred_at, type, location, name, qty, manager, employee_id, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [nowIso(), entry.type ?? null, entry.location ?? null, entry.name ?? null, qty, manager, employeeId || null, entry.note ?? null]);
-}
-
 function rentInventoryItem({ payload }) {
-  const entry = payload || {};
-  transaction(() => applyWarehouseRent(entry));
+  transaction(() => applyWarehouseRent(payload || {}));
   return {};
 }
 
 function rentInventoryItemsBulk({ payload }) {
-  const items = payload?.items || [];
-  const failed = [];
-  let processed = 0;
-  transaction(() => {
-    for (const item of items) {
-      try {
-        applyWarehouseRent(item);
-        processed++;
-      } catch (err) {
-        failed.push(item.name || "?");
-      }
-    }
-  });
-  return { processed, failed };
+  return applyWarehouseRentBulk(payload?.items);
 }
 
 // ── 랙 레이아웃 ──────────────────────────────────────────────
@@ -441,6 +423,8 @@ function buildUnreturnedRows() {
       // 반납 화면에서도 request 물품인지 바로 알아야 한다(업체에 나가는 물건이라 취급이 다르다)
       requestFor: obj.requestFor, personalOwner: obj.personalOwner,
       fragile: !!obj.fragile, fireRisk: !!obj.fireRisk,
+      typeLimitExempt: row.type_limit_exempt === "Y",
+      typeLimitExemptReason: row.type_limit_exempt_reason || "",
       ...variantInfo(parsed.id, row),
     });
   }
@@ -459,6 +443,8 @@ function buildUnreturnedRows() {
       image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0,
       requestFor: obj.requestFor, personalOwner: obj.personalOwner,
       fragile: !!obj.fragile, fireRisk: !!obj.fireRisk,
+      typeLimitExempt: row.type_limit_exempt === "Y",
+      typeLimitExemptReason: row.type_limit_exempt_reason || "",
       ...variantInfo(row.item_id, row),
     });
   }
@@ -479,15 +465,43 @@ function getUnreturnedItems({ query }) {
   return { items, hasMore };
 }
 
+function getItemBorrowers({ query }) {
+  return { borrowers: itemBorrowers(query) };
+}
+
 function getMyBorrowedItems({ query }) {
   const name = String(query.name || "").trim();
   if (!name) return { items: [] };
   const employeeId = String(query.employeeId || "").trim();
+  // 내 대여 조회는 보관 위치 대신 읽기 전용 물품 정보를 제공한다. 구매 링크·메모·위치는
+  // 포함하지 않아 일반 사용자 응답이 관리 정보나 픽업 동선을 우회 노출하지 않게 한다.
+  const withReadonlyDetails = (items) => items.map((item) => {
+    const object = get("SELECT * FROM scenario_items WHERE id = ?", [padSlot(item.itemId || "")]);
+    const variant = item.variantId
+      ? get("SELECT * FROM scenario_item_variants WHERE id = ? AND item_id = ?", [Number(item.variantId), padSlot(item.itemId || "")])
+      : null;
+    return {
+      ...item,
+      location: "",
+      details: object ? {
+        size: object.sm_size || "",
+        property: object.sm_property || "",
+        category: object.category || "",
+        subcategory: object.subcategory || "",
+        widthMm: variant?.width_mm ?? object.width_mm ?? null,
+        depthMm: variant?.depth_mm ?? object.depth_mm ?? null,
+        heightMm: variant?.height_mm ?? object.height_mm ?? null,
+        shape: variant?.shape || object.shape || "box",
+        stock: variant ? (Number(variant.stock) || 0) : (Number(object.stock) || 0),
+        variantName: variant?.name || item.variantName || "",
+      } : null,
+    };
+  });
   if (/^\d{4}$/.test(employeeId)) {
-    return { items: buildUnreturnedRows().filter((item) => item.employeeId === employeeId) };
+    return { items: withReadonlyDetails(buildUnreturnedRows().filter((item) => item.employeeId === employeeId)) };
   }
   const expectedEmail = expectedEmailFor({ affiliation: query.affiliation, employeeId: query.employeeId, name });
-  const items = buildUnreturnedRows().filter((item) => matchesBorrowerIdentity(item, name, expectedEmail));
+  const items = withReadonlyDetails(buildUnreturnedRows().filter((item) => matchesBorrowerIdentity(item, name, expectedEmail)));
   return { items };
 }
 
@@ -510,42 +524,12 @@ function compareRackSlot(la, lb) {
   return sa - sb;
 }
 
-// 창고물품(공구 및 부품류)은 시나리오 물품과 달리 "반납됨" 플래그가 있는 게 아니라, 로그(대여/반납/소모)만
+// 창고물품(COS 물품)은 시나리오 물품과 달리 "반납됨" 플래그가 있는 게 아니라, 로그(대여/반납/소모)만
 // 쌓인다. 그래서 미반납 수량은 위치+품명별로 대여 로그에서 반납 로그를 (오래된 대여부터) 차감해서
 // 계산해야 한다 — 원래 앱스크립트의 getWarehouseBorrowedItems_ 포팅.
-function getWarehouseBorrowedItems() {
-  const rows = all("SELECT * FROM warehouse_rental_logs ORDER BY id ASC");
-  // 물품(위치+이름)뿐 아니라 사람 단위로도 묶어야 한다 — 그렇지 않으면 A가 빌리고 B가 빌린 뒤
-  // B만 반납해도 "가장 오래된 대여 건"인 A의 기록이 엉뚱하게 상쇄되어 버린다.
-  const groups = new Map();
-  const order = [];
-
-  for (const row of rows) {
-    const loc = String(row.location || "").trim();
-    const nm = String(row.name || "").trim();
-    if (!loc && !nm) continue;
-    let q = Number(row.qty);
-    if (Number.isNaN(q) || q <= 0) q = 0;
-    const user = String(row.manager || "").trim() || "(이름 없음)";
-    const matched = normalizeEmployeeId(row.employee_id) || (registeredUsersByName(user).length === 1 ? registeredUsersByName(user)[0].employee_id : "");
-    const note = String(row.note || "").trim();
-    const typ = String(row.type || "").trim();
-
-    const key = `${loc}||${nm}||${matched || normalizePersonName(user)}`;
-    if (!groups.has(key)) { groups.set(key, { location: loc, name: nm, user, employeeId: matched, qty: 0, lastDate: "" }); order.push(key); }
-    const g = groups.get(key);
-
-    // 소모도 반납과 마찬가지로 "이 사람이 더 이상 들고 있지 않음"을 뜻하므로 미반납 집계에서 제외한다
-    // (반납은 재고로 돌아가고 소모는 재고에서 영구 차감된다는 차이는 재고 수량 쪽에서만 다루면 되고,
-    // "누가 아직 안 돌려줬는지" 집계에서는 둘 다 똑같이 해소된 것으로 봐야 한다).
-    const isConsumeNote = note.includes("[소모완료]") || note.includes("[즉시반납]");
-    if (typ === "반납" || typ === "소모" || isConsumeNote) {
-      g.qty -= q;
-    } else {
-      g.qty += q;
-      if (row.occurred_at) g.lastDate = row.occurred_at;
-    }
-  }
+function getWarehouseBorrowedItems({ admin } = {}) {
+  const groups = warehouseLoanGroups();
+  const order = [...groups.keys()];
 
   const result = [];
   for (const key of order) {
@@ -555,12 +539,31 @@ function getWarehouseBorrowedItems() {
       sheetType: "warehouse",
       borrowerName: g.user,
       employeeId: g.employeeId || "",
-      location: g.location,
+      // 일반 사용자(내 대여 조회)에게는 위치를 숨긴다. 관리자 반납 화면은 이 위치로 반납을 기록해야
+      // 대여 기록과 짝이 맞는다(위치+품명+사람으로 묶는다). 빈 위치로 반납하면 목록에서 영영 안 빠진다.
+      location: admin ? g.location : "",
       name: g.name,
       quantity: g.qty,
-      itemLabel: (g.location ? `[${g.location}] ` : "") + g.name + (g.qty > 1 ? ` x ${g.qty}` : ""),
+      itemLabel: g.name + (g.qty > 1 ? ` x ${g.qty}` : ""),
       borrowDate: g.lastDate,
       borrowPurpose: "",
+      ...(() => {
+        const item = get("SELECT * FROM warehouse_items WHERE location = ? AND name = ?", [g.location, g.name]);
+        if (!item) return { image: "", details: null };
+        const consumable = warehouseIsConsumable(item.consumable);
+        return {
+          image: item.image_path || "",
+          details: {
+            size: "",
+            property: consumable ? "소모품" : "대여품",
+            category: "COS 물품",
+            subcategory: item.subcategory || "",
+            widthMm: null, depthMm: null, heightMm: null, shape: "box",
+            stock: Number(item.stock) || 0,
+            variantName: "",
+          },
+        };
+      })(),
     });
   }
 
@@ -594,7 +597,11 @@ function buildScenarioLogRows() {
   const objMap = objectMap();
   const vMap = variantMap();
   const result = [];
-  for (const row of all("SELECT * FROM sid_rentals ORDER BY id DESC")) {
+  const sidRows = all("SELECT * FROM sid_rentals ORDER BY id DESC");
+  const generalRows = all("SELECT * FROM general_rentals ORDER BY id DESC");
+  const sidSeats = rentalSeatIndex(sidRows);
+  const generalSeats = rentalSeatIndex(generalRows);
+  for (const row of sidRows) {
     const employeeId = employeeIdForRentalRow(row);
     const borrowerName = registeredUser(employeeId)?.name || row.borrower_name;
     const parsed = parseItemLabel(row.item_label);
@@ -604,11 +611,11 @@ function buildScenarioLogRows() {
       itemLabel: row.item_label, location: obj.rootSlot || "", itemId: parsed.id, itemName: parsed.name,
       quantity: parsed.quantity || 1, borrowDate: row.borrow_date, borrowPurpose: row.purpose, email: row.email || "",
       batchId: row.batch_id || "", employeeId, returned: row.returned === "O", returnDate: row.return_date || "",
-      floor: row.floor || "", unit: row.unit || "", image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0,
+      ...rentalSeatOf(row, sidSeats), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0,
       ...rowVariantInfo(vMap, parsed.id, row),
     });
   }
-  for (const row of all("SELECT * FROM general_rentals ORDER BY id DESC")) {
+  for (const row of generalRows) {
     const employeeId = employeeIdForRentalRow(row);
     const borrowerName = registeredUser(employeeId)?.name || row.borrower_name;
     const obj = objMap[row.item_id] || {};
@@ -617,7 +624,7 @@ function buildScenarioLogRows() {
       itemLabel: (row.item_id ? `[${row.item_id}] ` : "") + (row.item_label || "") + ((row.qty || 1) > 1 ? ` x ${row.qty}` : ""),
       location: obj.rootSlot || "", quantity: row.qty || 1, borrowDate: row.borrow_date, borrowPurpose: row.purpose, email: row.email || "",
       batchId: row.batch_id || "", employeeId, generalOption: row.category || "", returned: row.returned === "O", returnDate: row.return_date || "",
-      floor: row.floor || "", unit: row.unit || "", image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0,
+      ...rentalSeatOf(row, generalSeats), image: obj.image || "", stock: obj.stock || 0, rented: obj.rented || 0,
       ...rowVariantInfo(vMap, row.item_id, row),
     });
   }
@@ -731,7 +738,9 @@ function isSeatExempt(floor, unit) {
 function getActiveItemTypeCount({ query }) {
   const name = String(query.name || "").trim();
   const expectedEmail = expectedEmailFor({ affiliation: query.affiliation, employeeId: query.employeeId, name });
-  const items = buildUnreturnedRows().filter((r) => matchesBorrowerIdentity(r, name, expectedEmail));
+  // 대여/반납 처리 화면에서 건별로 "종류 수 한도 제외"를 지정한 줄(주로 반납 없이
+  // 오래 보관되는 request 물품)은 한도 계산에서 뺀다.
+  const items = buildUnreturnedRows().filter((r) => matchesBorrowerIdentity(r, name, expectedEmail) && !r.typeLimitExempt);
   const penaltyRow = activePenaltyForName(name);
   const exempt = isSeatExempt(query.floor, query.unit);
   const baseMax = defaultMaxItemTypes();
@@ -754,6 +763,118 @@ function getActiveItemTypeCount({ query }) {
 
 // ── 재고 조정 / 실사 이력 (기존 inventory_history / inventory_audits 테이블 재사용) ──
 
+/**
+ * COS 물품 관리 화면 상단의 "최근 변동" 목록.
+ * 재고 조정(inventory_history), 물품 정보 변경(item_change_logs), 대여·반납·소모(warehouse_rental_logs)를
+ * 한 줄씩 합쳐 최신순으로 돌려준다. 기본 48시간, 최대 7일. 건수는 기본 200, 전체 보기 화면은 limit으로 늘려 받는다(최대 1000).
+ */
+function getWarehouseRecentChanges({ query }) {
+  const hours = Math.min(168, Math.max(1, Number(query.hours) || 48));
+  const limit = Math.min(1000, Math.max(1, Number(query.limit) || 200));
+  const cutoffMs = Date.now() - hours * 3600_000;
+  // DB 시각은 "YYYY-MM-DD HH:mm:ss"(서울)라 문자열로 먼저 넉넉히 거른 뒤 실제 시각으로 한 번 더 자른다.
+  const d = new Date(cutoffMs - 86400_000);
+  const pad = (x) => String(x).padStart(2, "0");
+  const since = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const items = [];
+  for (const r of all("SELECT * FROM inventory_history WHERE category = 'inventory' AND occurred_at >= ? ORDER BY id DESC", [since])) {
+    // 대여·반납·소모로 생긴 재고 변화는 아래 대여 장부 줄과 겹치므로 뺀다.
+    if (/대여|반납|소모/.test(r.reason || "")) continue;
+    items.push({ key: `stock:${r.id}`, at: r.occurred_at, kind: "stock", itemId: String(r.ref_id || ""), itemName: r.item_name || "",
+      summary: `재고 ${r.before_val} → ${r.after_val}${r.reason ? ` · ${r.reason}` : ""}`, diff: Number(r.diff) || 0, manager: r.manager || "" });
+  }
+  for (const r of all("SELECT * FROM item_change_logs WHERE category = 'inventory' AND occurred_at >= ? ORDER BY id DESC", [since])) {
+    items.push({ key: `edit:${r.id}`, at: r.occurred_at, kind: r.change_type || "updated", itemId: String(r.item_id || ""), itemName: r.item_name || "",
+      summary: r.summary || "", diff: 0, manager: r.manager || "" });
+  }
+  for (const r of all("SELECT * FROM warehouse_rental_logs WHERE occurred_at >= ? ORDER BY id DESC", [since])) {
+    const qty = Number(r.qty) || 0;
+    const kind = r.type === "반납" ? "return" : r.type === "소모" ? "consume" : "borrow";
+    items.push({ key: `rent:${r.id}`, at: r.occurred_at, kind, itemId: "", itemName: r.name || "", location: r.location || "",
+      summary: `${r.type} ${qty}개`, diff: kind === "return" ? qty : -qty, manager: r.manager || "" });
+  }
+  const recent = items.filter((it) => { const t = parseKstMs(it.at); return Number.isNaN(t) || t >= cutoffMs; });
+  recent.sort((a, b) => parseKstMs(b.at) - parseKstMs(a.at));
+  return { hours, items: recent.slice(0, limit) };
+}
+
+// 공구 랙마다 구역을 몇 개로 나눴는지(1~9). { "F-02": 7 } 식이고, 없으면 3구역이다.
+// 구역 번호는 앞줄(통로 쪽)부터 왼쪽 → 오른쪽으로 매긴다(src/utils/toolLocation.ts).
+const RACK_SECTIONS_KEY = "warehouse_rack_sections";
+function readRackSections() {
+  try {
+    const parsed = JSON.parse(get("SELECT value FROM settings WHERE key = ?", [RACK_SECTIONS_KEY])?.value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+function getWarehouseRackSections() {
+  return { sections: readRackSections() };
+}
+function setWarehouseRackSections({ payload }) {
+  const rack = String(payload?.rack || "").trim().toUpperCase();
+  const count = Number(payload?.sections);
+  if (!/^[A-Z0-9]+(-[A-Z0-9]+)?$/.test(rack)) return { success: false, message: "랙 코드를 확인해주세요. (예: F-02)" };
+  if (!Number.isInteger(count) || count < 1 || count > 9) return { success: false, message: "구역 수는 1~9 사이여야 합니다." };
+  const next = readRackSections();
+  if (next[rack] === count) return { success: true, sections: next };
+  const before = next[rack] || 3;
+  next[rack] = count;
+  run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [RACK_SECTIONS_KEY, JSON.stringify(next)]);
+  logItemChange("inventory", "", rack, "updated", `랙 구역 수: ${before} → ${count}`, payload);
+  return { success: true, sections: next };
+}
+
+// 공구 랙(F, G …)마다 층이 몇 개 있는지. { "F": 5 }면 F-00 ~ F-04. 물품이 없는 층도 목록에
+// "비어 있는 구역"으로 보여주려고 쓴다. 없으면 물품이 있는 층만 보인다.
+const RACK_LEVELS_KEY = "warehouse_rack_levels";
+function readRackLevels() {
+  try {
+    const parsed = JSON.parse(get("SELECT value FROM settings WHERE key = ?", [RACK_LEVELS_KEY])?.value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+function getWarehouseRackLevels() {
+  return { levels: readRackLevels() };
+}
+function setWarehouseRackLevels({ payload }) {
+  const rack = String(payload?.rack || "").trim().toUpperCase();
+  const count = Number(payload?.levels);
+  if (!/^[A-Z0-9]+$/.test(rack)) return { success: false, message: "랙 이름을 확인해주세요. (예: F)" };
+  if (!Number.isInteger(count) || count < 0 || count > 20) return { success: false, message: "층 수는 0~20 사이여야 합니다." };
+  const next = readRackLevels();
+  const before = next[rack] ?? 0;
+  if (before === count) return { success: true, levels: next };
+  if (count === 0) delete next[rack]; else next[rack] = count;
+  run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [RACK_LEVELS_KEY, JSON.stringify(next)]);
+  logItemChange("inventory", "", `${rack}랙`, "updated", `층 수: ${before || "미설정"} → ${count || "미설정"}`, payload);
+  return { success: true, levels: next };
+}
+
+// 각 랙 층(F-00, F-01 …)의 현재 적재 상태 사진. 물품 사진과 달리 층 전체를 보여주는
+// 사진이라 층 코드별로 한 장만 유지하고, 새로 찍으면 화면과 장부가 같은 사진을 가리킨다.
+const RACK_LEVEL_PHOTOS_KEY = "warehouse_rack_level_photos";
+function readRackLevelPhotos() {
+  try {
+    const parsed = JSON.parse(get("SELECT value FROM settings WHERE key = ?", [RACK_LEVEL_PHOTOS_KEY])?.value || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch { return {}; }
+}
+function getWarehouseRackLevelPhotos() {
+  return { photos: readRackLevelPhotos() };
+}
+async function setWarehouseRackLevelPhoto({ payload }) {
+  const level = String(payload?.level || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]+-[0-9]{2}$/.test(level)) return { success: false, message: "랙 층 코드를 확인해주세요. (예: F-02)" };
+  if (typeof payload?.photo !== "string" || !payload.photo.startsWith("data:image/")) return { success: false, message: "등록할 사진을 선택해주세요." };
+  const next = readRackLevelPhotos();
+  const replacing = !!next[level]?.photo;
+  const imagePath = await maybeSaveImage(payload.photo, "warehouse_rack_levels", level);
+  next[level] = { photo: imagePath, updatedAt: nowKst(), updatedBy: payload?._actor || "" };
+  run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [RACK_LEVEL_PHOTOS_KEY, JSON.stringify(next)]);
+  logItemChange("inventory", "", level, "updated", `${level} 층 현황 사진 ${replacing ? "교체" : "등록"}`, payload);
+  return { success: true, level, entry: next[level], photos: next };
+}
+
 function getStockChangeHistory({ query }) {
   let sql = "SELECT * FROM inventory_history";
   const params = [];
@@ -768,6 +889,8 @@ function getStockChangeHistory({ query }) {
 
 function adjustStock({ payload }) {
   const { category, rowIndex, id, newStock, newRented, reason, manager } = payload || {};
+  if (!String(reason || "").trim()) return { success: false, message: "재고 변경 사유를 입력해주세요." };
+  if (!Number.isFinite(Number(newStock)) || Number(newStock) < 0) return { success: false, message: "재고는 0 이상의 숫자로 입력해주세요." };
   let oldStock, oldRented, itemName, refId;
   if (category === "scenario") {
     const key = padSlot(id || rowIndex);
@@ -780,6 +903,11 @@ function adjustStock({ payload }) {
     }
     oldStock = row.stock; oldRented = row.rented; itemName = row.name; refId = row.id;
     run("UPDATE scenario_items SET stock = ?, rented = ? WHERE id = ?", [newStock ?? row.stock, newRented ?? row.rented, row.id]);
+  } else if (category === "tablecloth") {
+    const row = get("SELECT * FROM tablecloth_items WHERE id = ?", [Number(rowIndex)]);
+    if (!row) return { success: false, message: "테이블보를 찾을 수 없습니다." };
+    oldStock = row.stock; itemName = tableclothLabel(row.id); refId = String(row.id);
+    run("UPDATE tablecloth_items SET stock = ?, updated_at = ? WHERE id = ?", [Number(newStock) || 0, nowIso(), row.id]);
   } else {
     const row = get("SELECT * FROM warehouse_items WHERE id = ?", [Number(rowIndex)]);
     if (!row) return { success: false, message: "물품을 찾을 수 없습니다." };
@@ -819,34 +947,6 @@ function recordStockAudit({ payload }) {
 function getStockFormulaStatus({ query }) {
   const row = get("SELECT id FROM scenario_items WHERE id = ?", [padSlot(query.itemId)]);
   return { status: { found: !!row, stockIsFormula: false, rentedIsFormula: false } };
-}
-
-// ── 물품세트 (기존 item_sets 테이블, set_name으로 그룹핑) ───
-
-function getItemSets() {
-  const rows = all("SELECT * FROM item_sets ORDER BY id");
-  const bySet = new Map();
-  for (const r of rows) {
-    if (!bySet.has(r.set_name)) bySet.set(r.set_name, []);
-    bySet.get(r.set_name).push({ location: r.location, name: r.item_name, qty: r.qty });
-  }
-  return { sets: Array.from(bySet.entries()).map(([name, items]) => ({ name, items })) };
-}
-
-function saveItemSet({ payload }) {
-  const { name, items, originalName } = payload || {};
-  transaction(() => {
-    run("DELETE FROM item_sets WHERE set_name = ?", [originalName || name]);
-    for (const it of items || []) {
-      run("INSERT INTO item_sets (set_name, location, item_name, qty) VALUES (?, ?, ?, ?)", [name, it.location ?? null, it.name ?? null, it.qty ?? null]);
-    }
-  });
-  return { message: "물품세트를 저장했습니다." };
-}
-
-function deleteItemSet({ payload }) {
-  run("DELETE FROM item_sets WHERE set_name = ?", [payload.name]);
-  return { message: "물품세트를 삭제했습니다." };
 }
 
 // ── 좌석배치도 (settings.floor_plan JSON 재사용) ────────────
@@ -1025,7 +1125,7 @@ function variantChoiceOf(item) {
   return { variantId: vid || null, pending: false };
 }
 
-async function recordBorrow({ payload }) {
+async function recordBorrow({ payload, admin }) {
   const { borrowList } = payload || {};
   if (!Array.isArray(borrowList) || !borrowList.length) return { success: false, message: "대여 요청 정보가 없습니다." };
 
@@ -1040,27 +1140,6 @@ async function recordBorrow({ payload }) {
   for (const info of borrowList) {
     info.employeeId = identity.employeeId;
     info.borrowerName = identity.name;
-  }
-  // 무인 모드에서 request 표시 물품은 해당 SID의 필수 물품으로만 신청할 수 있다.
-  // 화면을 우회해도 서버가 막는다. 관리자 직접 대여는 실제 관리자 ID가 확인될 때만 예외다.
-  if (get("SELECT value FROM settings WHERE key = 'unattended_enabled'")?.value === "1") {
-    const adminDirect = borrowList.every((info) => info.adminDirect === true)
-      && !!get("SELECT id FROM admin_users WHERE id = ?", [Number(first.adminId)]);
-    if (!adminDirect) {
-      const isRequestItem = (id) => {
-        const row = get("SELECT request FROM scenario_items WHERE id = ?", [padSlot(id || "")]);
-        return !!row && row.request !== null;
-      };
-      for (const info of borrowList) {
-        const forbiddenGeneral = [...(info.borrowedItems || []), ...(info.additionalItems || [])].find((item) => isRequestItem(item.id));
-        if (forbiddenGeneral) return { success: false, message: `'${forbiddenGeneral.name || forbiddenGeneral.id}'은(는) 무인 모드에서 SID 대여로만 신청할 수 있는 request 물품입니다.` };
-        for (const item of info.requiredObjects || []) {
-          if (!isRequestItem(item.id)) continue;
-          const belongs = get("SELECT 1 FROM scenarios WHERE UPPER(REPLACE(sid,' ','')) = ? AND object_id = ?", [normalizeSid(info.scenarioId), padSlot(item.id || "")]);
-          if (!belongs) return { success: false, message: `'${item.name || item.id}' request 물품은 해당 SID의 필수 물품이 아닙니다.` };
-        }
-      }
-    }
   }
   const contact = resolveBorrowerContact(first);
 
@@ -1164,12 +1243,17 @@ async function recordBorrow({ payload }) {
 
       if (info.itemType !== "scenario") {
         const generalBatchId = crypto.randomUUID();
+        // 관리자 양도는 물건이 이미 받는 사람 손에 있으므로 대여 확인까지 끝난 대여로 만든다.
+        // 확인 전으로 남기면 QR에서 선반 픽업을 안내하고, 미수령 자동 취소에 걸리고,
+        // 받은 사람이 반납해도 "취소"로 기록된다. 대여 신청 API는 로그인 없이 열려 있으니
+        // 관리자 요청일 때만 적용한다 — 사용자가 "양도"로 보내 대여 확인을 건너뛰지 못하게.
+        const pickedUpAt = admin && info.generalOption === "양도" ? now : null;
         for (const item of info.borrowedItems || []) {
           const choice = variantChoiceOf(item);
           run(
-            `INSERT INTO general_rentals (borrower_name, item_id, item_label, qty, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, category, confirmed_at, status, floor, unit, variant_id, variant_pending, request_no)
-             VALUES (?, ?, ?, ?, ?, ?, 'X', NULL, ?, ?, ?, ?, NULL, 'active', ?, ?, ?, ?, ?)`,
-            [info.borrowerName, padSlot(item.id || ""), item.name || "", item.quantity || 1, borrowDate, purpose, contact.email || "", generalBatchId, now, info.generalOption || "", floor, unit, choice.variantId, choice.pending ? "Y" : null, requestNo]
+            `INSERT INTO general_rentals (borrower_name, item_id, item_label, qty, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, category, confirmed_at, status, floor, unit, variant_id, variant_pending, request_no, picked_up_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'X', NULL, ?, ?, ?, ?, NULL, 'active', ?, ?, ?, ?, ?, ?)`,
+            [info.borrowerName, padSlot(item.id || ""), item.name || "", item.quantity || 1, borrowDate, purpose, contact.email || "", generalBatchId, now, info.generalOption || "", floor, unit, choice.variantId, choice.pending ? "Y" : null, requestNo, pickedUpAt]
           );
           generalCount += item.quantity || 1;
           applyBorrowStock(item.id, item.quantity || 1, choice);
@@ -1214,23 +1298,28 @@ async function recordBorrow({ payload }) {
     run("UPDATE general_rentals SET employee_id = ? WHERE request_no = ?", [identity.employeeId, requestNo]);
   });
 
-  // 무인 모드 위치 QR용 토큰. 신청마다 하나만 발급하고, 이 신청 물품의 위치를 지금 보여줘도
-  // 되는지는 조회할 때마다 서버가 실시간으로 판정한다(server/lib/locationVisibility.js).
-  const locationToken = crypto.randomBytes(24).toString("base64url");
-  run(
-    "INSERT INTO location_tokens (token, request_no, borrower_name, employee_id, created_at) VALUES (?, ?, ?, ?, ?)",
-    [locationToken, requestNo, identity.name, identity.employeeId, now]
-  );
-
   // 재고가 없어 빠진 물품이 있으면 함께 돌려준다 — 화면이 "무엇이 빠졌는지"를 그대로 알려줄 수 있게.
   return {
     message: `SID ${scenarioCount}건, 일반 물품 ${generalCount}개를 기록했습니다.`,
-    requestNo, locationToken,
+    employeeId: identity.employeeId,
+    lookupPath: REQUEST_LOOKUP_PATH,
+    pickupTimeoutMinutes: getPickupTimeoutMinutes(),
     ...(shortages.length ? { skipped: shortages } : {}),
   };
 }
 
-async function processReturn({ payload }) {
+// 반납 경로. QR 위치 확인의 "미확인 반납"(선반에 되돌려 놓을 물품)은 admin/self/unattended만 보여준다.
+// 파손 줄은 선반으로 돌아가지 않고, 대여 확인 전에 반납된 줄은 가져간 적이 없으니 취소로 본다.
+const CLIENT_RETURN_SOURCES = new Set(["admin", "self", "transfer"]);
+function returnSourceOf(request, row, isAdmin) {
+  if (request.damaged) return "damage";
+  if (!row.picked_up_at) return "cancel";
+  // 관리자 로그인 없이 들어온 반납은 대여자 본인 화면에서 온 것이다 — 보낸 값을 믿지 않는다.
+  if (!isAdmin) return "self";
+  return CLIENT_RETURN_SOURCES.has(request.source) ? request.source : "admin";
+}
+
+async function processReturn({ payload, admin }) {
   const { returnRequests } = payload || {};
   if (!Array.isArray(returnRequests) || !returnRequests.length) return { success: false, message: "반납할 물품을 선택해주세요." };
 
@@ -1281,25 +1370,26 @@ async function processReturn({ payload }) {
       if (Number.isNaN(reqQty) || reqQty <= 0) reqQty = rowQty;
       if (reqQty > rowQty) reqQty = rowQty;
 
+      const returnSource = returnSourceOf(request, row, !!admin);
       if (reqQty < rowQty) {
         const remainQty = rowQty - reqQty;
         if (isScenario) {
           run(`UPDATE sid_rentals SET item_label = ? WHERE id = ?`, [scenarioItemLabel({ id: item.id, name: item.name, quantity: remainQty }), row.id]);
           run(
-            `INSERT INTO sid_rentals (borrower_name, sid, item_label, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, item_type, confirmed_at, status, variant_id, variant_pending, request_no)
-             VALUES (?, ?, ?, ?, ?, 'O', ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?)`,
-            [row.borrower_name, row.sid, scenarioItemLabel({ id: item.id, name: item.name, quantity: reqQty }), row.borrow_date, row.purpose, now, row.email, row.batch_id, row.applied_at, row.item_type, now, row.variant_id, row.variant_pending, row.request_no]
+            `INSERT INTO sid_rentals (borrower_name, sid, item_label, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, item_type, confirmed_at, status, variant_id, variant_pending, request_no, return_source, floor, unit, employee_id)
+             VALUES (?, ?, ?, ?, ?, 'O', ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?, ?, ?, ?, ?)`,
+            [row.borrower_name, row.sid, scenarioItemLabel({ id: item.id, name: item.name, quantity: reqQty }), row.borrow_date, row.purpose, now, row.email, row.batch_id, row.applied_at, row.item_type, now, row.variant_id, row.variant_pending, row.request_no, returnSource, row.floor, row.unit, row.employee_id]
           );
         } else {
           run(`UPDATE general_rentals SET qty = ? WHERE id = ?`, [remainQty, row.id]);
           run(
-            `INSERT INTO general_rentals (borrower_name, item_id, item_label, qty, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, category, confirmed_at, status, variant_id, variant_pending, request_no)
-             VALUES (?, ?, ?, ?, ?, ?, 'O', ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?)`,
-            [row.borrower_name, row.item_id, row.item_label, reqQty, row.borrow_date, row.purpose, now, row.email, row.batch_id, row.applied_at, row.category, now, row.variant_id, row.variant_pending, row.request_no]
+            `INSERT INTO general_rentals (borrower_name, item_id, item_label, qty, borrow_date, purpose, returned, return_date, email, batch_id, applied_at, category, confirmed_at, status, variant_id, variant_pending, request_no, return_source, floor, unit, employee_id)
+             VALUES (?, ?, ?, ?, ?, ?, 'O', ?, ?, ?, ?, ?, ?, 'archived', ?, ?, ?, ?, ?, ?, ?)`,
+            [row.borrower_name, row.item_id, row.item_label, reqQty, row.borrow_date, row.purpose, now, row.email, row.batch_id, row.applied_at, row.category, now, row.variant_id, row.variant_pending, row.request_no, returnSource, row.floor, row.unit, row.employee_id]
           );
         }
       } else {
-        run(`UPDATE ${table} SET returned = 'O', return_date = ?, confirmed_at = ?, status = 'archived' WHERE id = ?`, [now, now, row.id]);
+        run(`UPDATE ${table} SET returned = 'O', return_date = ?, confirmed_at = ?, status = 'archived', return_source = ? WHERE id = ?`, [now, now, returnSource, row.id]);
       }
 
       processed += reqQty;
@@ -1347,9 +1437,9 @@ async function recordDamagedReturn({ payload }) {
       const detail = keep ? `[교체 후 계속 대여] ${payload?.note ?? ""}`.trim() : payload?.note ?? null;
 
       run(
-        `INSERT INTO defect_logs (product, qty, occurred_date, defect_type, detail, action_taken, image_path, breaker)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, qty, now, defectType, detail, payload?.actionTaken ?? null, imagePath, culprit]
+        `INSERT INTO defect_logs (product, qty, occurred_date, defect_type, detail, action_taken, image_path, breaker, reported_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, qty, now, defectType, detail, payload?.actionTaken ?? null, imagePath, culprit, payload?._actor || null]
       );
       created++;
 
@@ -1465,7 +1555,29 @@ function confirmPickup({ payload }) {
 
 function getRegisteredUser({ query }) {
   const user = registeredUser(query.employeeId);
-  return user ? { found: true, employeeId: user.employee_id, name: user.name } : { found: false };
+  if (!user) return { found: false };
+  return {
+    found: true, employeeId: user.employee_id, name: user.name,
+    // 대여자 로그인에는 선택할 좌석 추천만 제공한다. 관리자 이력 조회는 별도로 제한한다.
+    ...(query.includeSeatRecommendations === "1"
+      ? { seatRecommendations: getBorrowerSeatRecommendations({ query }).items.slice(0, 3) }
+      : {}),
+  };
+}
+
+function getBorrowerSeatRecommendations({ query }) {
+  const user = registeredUser(query.employeeId);
+  if (!user) return { items: [] };
+  const rows = ["sid_rentals", "general_rentals"].flatMap((table) =>
+    all(`SELECT id, borrower_name, employee_id, email, request_no, batch_id, floor, unit,
+                borrow_date, applied_at, return_source FROM ${table}
+         WHERE employee_id = ? OR ((employee_id IS NULL OR employee_id = '') AND borrower_name = ?)`,
+      [user.employee_id, user.name])
+      .filter((row) => employeeIdForRentalRow(row) === user.employee_id)
+      .map((row) => ({ ...row, sheetType: table }))
+  );
+  // 현재 배치도에 대응시킨 뒤 집계한다. 옛 이름과 새 이름이 같은 유닛이면 합산한다.
+  return { items: rankBorrowerSeats(rows, 10, getSeatMap().map.floors) };
 }
 
 function searchRegisteredUsers({ query }) {
@@ -1519,7 +1631,7 @@ function swapBorrowItem({ payload }) {
   };
 
   transaction(() => {
-    run(`UPDATE ${table} SET returned = 'O', return_date = ?, status = 'archived' WHERE id = ?`, [now, rowIndex]);
+    run(`UPDATE ${table} SET returned = 'O', return_date = ?, status = 'archived', return_source = 'swap' WHERE id = ?`, [now, rowIndex]);
     if (sheetType === "scenario") {
       const oldParsed = parseItemLabel(row.item_label);
       putBack(oldParsed.id, oldParsed.quantity || 1);
@@ -1635,18 +1747,32 @@ function storedImageDataUrl(imagePath) {
   return `data:${mime};base64,${fs.readFileSync(filePath).toString("base64")}`;
 }
 
-async function pushScenarioMetadataRow(row) {
+const SM_METADATA_FIELD_KEYS = ["name", "sector", "rootSlot", "quantity", "rentalStatus", "productLink", "smSize", "smProperty", "productMemo", "image"];
+const SM_INFORMATION_FIELD_KEYS = SM_METADATA_FIELD_KEYS.filter((field) => field !== "quantity" && field !== "rentalStatus");
+
+async function pushScenarioMetadataRow(row, { fields } = {}) {
   if (!row) return { ok: false, reason: "WMS 물품을 찾지 못했습니다." };
-  return smLocationSync.pushItemChanges(row.id, {
-    name: smUploadName(row.name),
-    sector: row.sector || "",
-    rootSlot: row.root_slot || "",
-    productLink: row.purchase_link || "",
-    smSize: row.sm_size || "",
-    smProperty: row.sm_property || "",
-    productMemo: row.product_memo || "",
-    imageDataUrl: storedImageDataUrl(row.image_path),
-  });
+  const selected = Array.isArray(fields) ? new Set(fields) : null;
+  // fields 생략은 예전 호출과 동일하게 '정보 전체'이며, 수량은 명시적으로 선택했을 때만
+  // 건드린다. 수량은 재고 장부와 직접 연결되어 있어 묵시적으로 바꾸면 안 된다.
+  const includes = (key) => selected ? selected.has(key) : key !== "quantity";
+  const changes = {};
+  if (includes("name")) changes.name = smUploadName(row.name);
+  if (includes("sector")) changes.sector = row.sector || "";
+  if (includes("rootSlot")) changes.rootSlot = row.root_slot || "";
+  if (includes("productLink")) changes.productLink = row.purchase_link || "";
+  if (includes("smSize")) changes.smSize = row.sm_size || "";
+  if (includes("smProperty")) changes.smProperty = row.sm_property || "";
+  if (includes("productMemo")) changes.productMemo = row.product_memo || "";
+  if (includes("image")) changes.imageDataUrl = storedImageDataUrl(row.image_path);
+  const metadataResult = Object.keys(changes).length
+    ? await smLocationSync.pushItemChanges(row.id, changes)
+    : { ok: true, id: row.id, changed: [] };
+  if (!metadataResult?.ok) return metadataResult;
+  if (!includes("quantity")) return metadataResult;
+  const quantityResult = await smLocationSync.setAvailableQuantity(row.id, Number(row.stock) || 0, { itemName: row.name || "" });
+  if (!quantityResult?.ok) return quantityResult;
+  return { ok: true, id: row.id, changed: [...(metadataResult.changed || []), ...(quantityResult.changed || [])] };
 }
 
 // 클라이언트가 항상 전체 필드를 보내는 게 아니라(예: 보관함 토글은 {rowIndex, archived}만 보냄),
@@ -1655,8 +1781,17 @@ async function updateScenarioObject({ payload }) {
   const item = payload || {};
   const id = padSlot(item.rowIndex || item.id);
   const existing = get("SELECT * FROM scenario_items WHERE id = ?", [id]);
+  if (!existing) return { success: false, message: "물품을 찾을 수 없습니다." };
   const existingObj = existing ? toScenarioObject(existing, { forAdmin: true }) : {};
+  if (item.stock !== undefined && Number(item.stock) !== Number(existingObj.stock)) {
+    return { success: false, message: "등록된 물품의 재고는 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요." };
+  }
+  if (item.rented !== undefined && Number(item.rented) !== Number(existingObj.rented)) {
+    return { success: false, message: "대여 중 수량은 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요." };
+  }
   const merged = { ...existingObj, ...item };
+  merged.stock = existingObj.stock;
+  merged.rented = existingObj.rented;
   let smUpdate = null;
   const imagePath = item.image !== undefined ? await maybeSaveImage(item.image, "scenario_items", id) : existing?.image_path ?? null;
   run(
@@ -1803,6 +1938,32 @@ async function saveScenarioVariants({ payload }) {
   if (new Set(names).size !== names.length) return { success: false, message: "같은 이름의 종류가 두 개 이상입니다." };
 
   const existing = all("SELECT * FROM scenario_item_variants WHERE item_id = ?", [itemId]);
+  const stockAdjustment = payload?.stockAdjustment === true;
+  if (stockAdjustment && !String(payload?.reason || "").trim()) {
+    return { success: false, message: "재고 변경 사유를 입력해주세요." };
+  }
+  if (!stockAdjustment) {
+    for (const v of incoming) {
+      const prev = existing.find((r) => r.id === Number(v.id));
+      if (prev && Number(v.stock) !== Number(prev.stock)) {
+        return { success: false, message: `'${prev.name}' 종류의 재고는 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요.` };
+      }
+    }
+    for (const prev of existing) {
+      if (!incoming.some((v) => Number(v.id) === prev.id) && Number(prev.stock) !== 0) {
+        return { success: false, message: `재고가 남은 '${prev.name}' 종류는 편집에서 삭제할 수 없습니다. 먼저 '재고 변경'에서 0으로 조정해주세요.` };
+      }
+    }
+    if (Number(payload?.unassignedStock) !== Number(item.unassigned_stock || 0)) {
+      return { success: false, message: "미확인 재고는 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요." };
+    }
+  } else {
+    const incomingIds = incoming.map((v) => Number(v.id)).filter(Boolean).sort((a, b) => a - b);
+    const existingIds = existing.map((v) => Number(v.id)).sort((a, b) => a - b);
+    if (JSON.stringify(incomingIds) !== JSON.stringify(existingIds)) {
+      return { success: false, message: "재고 변경 화면에서는 종류를 추가하거나 삭제할 수 없습니다." };
+    }
+  }
   const keepIds = new Set(incoming.map((v) => Number(v.id)).filter(Boolean));
 
   // 대여 중이거나 대여 기록이 걸려 있는 종류는 지울 수 없다 — 지우면 그 대여 건이
@@ -1862,6 +2023,14 @@ async function saveScenarioVariants({ payload }) {
   });
 
   const after = get("SELECT * FROM scenario_items WHERE id = ?", [itemId]);
+  if (stockAdjustment && Number(after.stock) !== Number(item.stock)) {
+    const beforeStock = Number(item.stock) || 0;
+    const afterStock = Number(after.stock) || 0;
+    run(
+      `INSERT INTO inventory_history (occurred_at, category, ref_id, item_name, before_val, after_val, diff, reason, manager) VALUES (?, 'scenario', ?, ?, ?, ?, ?, ?, ?)`,
+      [nowIso(), itemId, item.name, beforeStock, afterStock, afterStock - beforeStock, String(payload.reason).trim(), payload.manager || null]
+    );
+  }
   const summary = incoming.length
     ? `종류 설정: ${incoming.map((v) => `${String(v.name).trim()} ${Number(v.stock) || 0}개`).join(", ")}${unassigned ? `, 미확인 ${unassigned}개` : ""}`
     : "종류 구분 해제";
@@ -1978,6 +2147,22 @@ function updateBorrowerSeat({ payload }) {
   return { success: true, updated, message: `${updated}건의 자리를 '${where}'(으)로 바꿨습니다.` };
 }
 
+// 대여/반납 처리 화면에서 건별로 "이 대여 줄은 종류 수 한도에서 뺀다"를 지정한다.
+// 반납 없이 오래 보관되는 request 물품이 다른 신규 대여를 막지 않도록 쓴다.
+function setTypeLimitExempt({ payload }) {
+  const sheetType = payload?.sheetType;
+  const id = Number(payload?.rowIndex);
+  const exempt = !!payload?.exempt;
+  const reason = String(payload?.reason || "").trim();
+  const table = sheetType === "scenario" ? "sid_rentals" : sheetType === "general" ? "general_rentals" : null;
+  if (!table || !id) return { success: false, message: "대여 기록을 찾을 수 없습니다." };
+  if (exempt && !reason) return { success: false, message: "한도 제외 사유를 입력해주세요." };
+  const row = get(`SELECT id, returned FROM ${table} WHERE id = ?`, [id]);
+  if (!row) return { success: false, message: "이미 삭제되었거나 존재하지 않는 대여 기록입니다." };
+  run(`UPDATE ${table} SET type_limit_exempt = ?, type_limit_exempt_reason = ? WHERE id = ?`, [exempt ? "Y" : null, exempt ? reason : null, id]);
+  return { success: true, exempt, reason: exempt ? reason : "", message: exempt ? "이 물품을 종류 수 한도에서 제외했습니다." : "이 물품을 다시 종류 수 한도에 포함했습니다." };
+}
+
 // ── 테이블보 ──────────────────────────────────────────────
 // 촬영용 천이라 시나리오 물품과 관리 항목이 다르다 — 재고·위치·사진과 펼친 크기만 본다.
 // 두께는 의미가 없어 가로·세로만 받는다.
@@ -2031,12 +2216,15 @@ async function updateTableclothItem({ payload }) {
   const id = Number(it.id);
   const existing = get("SELECT * FROM tablecloth_items WHERE id = ?", [id]);
   if (!existing) return { success: false, message: "없는 테이블보입니다." };
+  if (it.stock !== undefined && Number(it.stock) !== Number(existing.stock)) {
+    return { success: false, message: "등록된 테이블보의 재고는 편집에서 바꿀 수 없습니다. '재고 변경'을 이용해주세요." };
+  }
   // 클라이언트가 일부 필드만 보낼 수 있으므로 기존 값 위에 덮어쓴다
   const merged = { ...toTableclothItem(existing), ...it };
   const imagePath = it.image !== undefined ? await maybeSaveImage(it.image, "tablecloth_items", String(id)) : existing.image_path;
   run(
     `UPDATE tablecloth_items SET name=?, location=?, image_path=?, stock=?, width_mm=?, depth_mm=?, category=?, subcategory=?, link=?, note=?, archived=?, updated_at=? WHERE id=?`,
-    [tableclothLabel(id), merged.location ?? null, imagePath, Number(merged.stock) || 0,
+    [tableclothLabel(id), merged.location ?? null, imagePath, Number(existing.stock) || 0,
      numOrNull(merged.widthMm), numOrNull(merged.depthMm), merged.category || null, merged.subcategory || null,
      normalizeLinks(merged.link), merged.note ?? null, merged.archived ? "TRUE" : null, nowIso(), id]
   );
@@ -2856,7 +3044,7 @@ async function syncSmChangesNow() {
   };
 }
 
-async function pushScenarioMetadataIds(ids, { onItem } = {}) {
+async function pushScenarioMetadataIds(ids, { onItemStart, onItem, fields } = {}) {
   const metadataDone = [], metadataFailed = [];
   const queue = [...new Set(ids.map(padSlot).filter(Boolean))]
     .map((id) => ({ id, row: get("SELECT * FROM scenario_items WHERE id = ?", [id]) }))
@@ -2869,11 +3057,12 @@ async function pushScenarioMetadataIds(ids, { onItem } = {}) {
   const worker = async () => {
     while (queue.length) {
       const { id, row } = queue.shift();
+      if (onItemStart) onItemStart({ id, row });
       let lastReason = "SM 반영 실패";
       let done = false;
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const result = await pushScenarioMetadataRow(row);
+          const result = await pushScenarioMetadataRow(row, { fields });
           if (result?.ok) { metadataDone.push(id); done = true; break; }
           lastReason = result?.reason || lastReason;
         } catch (error) {
@@ -2897,6 +3086,7 @@ function publicSmUploadJob(job) {
   return {
     id: job.id,
     mode: job.mode,
+    fields: job.fields || [...SM_METADATA_FIELD_KEYS],
     status: job.status,
     phase: job.phase,
     total: job.total,
@@ -2904,6 +3094,8 @@ function publicSmUploadJob(job) {
     succeeded: job.succeeded,
     failed: job.failed,
     percent,
+    currentItemId: job.currentItemId || "",
+    currentItemName: job.currentItemName || "",
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt || "",
@@ -2922,29 +3114,64 @@ async function runSmUploadJob(job) {
     let ids = [];
     if (job.mode === "changes") {
       updateSmUploadJob(job, { phase: "변경 대상 집계 중" });
-      stock = await runSmChangesNow();
+      stock = await runSmChangesNow({
+        onProgress: ({ id, name, processed, total }) => updateSmUploadJob(job, {
+          phase: "재고·대여 현황 대조 중", total, processed,
+          currentItemId: id, currentItemName: name,
+        }),
+      });
       if (!stock?.ok) throw new Error(stock?.reason || "SM 재고/대여 동기화에 실패했습니다.");
       ids = smMetadataIdsForChanges();
     } else {
       updateSmUploadJob(job, { phase: "전체 대상 집계 중" });
       ids = all("SELECT id FROM scenario_items WHERE id IS NOT NULL ORDER BY id").map((row) => padSlot(row.id)).filter(Boolean);
+      if (job.fields.includes("rentalStatus")) {
+        updateSmUploadJob(job, { phase: "대여·반납 현황 대조 중", total: ids.length });
+        stock = await runSmFullReconcileNow({
+          onProgress: ({ id, name, processed, total }) => updateSmUploadJob(job, {
+            total, processed, currentItemId: id, currentItemName: name,
+          }),
+        });
+        if (!stock?.ok) throw new Error(stock?.reason || "SM 대여·반납 현황 동기화에 실패했습니다.");
+      }
     }
 
-    updateSmUploadJob(job, { phase: "SM 업로드 중", total: ids.length, processed: 0, succeeded: 0, failed: 0, errors: [] });
-    const { metadataDone, metadataFailed } = await pushScenarioMetadataIds(ids, {
-      onItem: ({ id, row, ok, reason }) => {
-        job.processed += 1;
-        if (ok) job.succeeded += 1;
-        else {
-          job.failed += 1;
-          job.errors.push({ id, name: row?.name || "", reason });
-        }
-        job.updatedAt = nowIso();
-      },
-    });
+    updateSmUploadJob(job, { phase: "SM 정보 반영 중", total: ids.length, processed: 0, succeeded: 0, failed: 0, errors: [], currentItemId: "", currentItemName: "" });
+    // 대여·반납 전체 대조는 가용 재고까지 함께 맞춘다. 같은 작업에서 수량을 다시 626번
+    // 개별 저장할 필요가 없으므로 메타데이터 단계에서는 수량 항목을 뺀다.
+    const rowFields = job.fields.includes("rentalStatus")
+      ? job.fields.filter((field) => field !== "quantity" && field !== "rentalStatus")
+      : job.fields;
+    let metadataDone = [];
+    let metadataFailed = [];
+    if (rowFields.length) {
+      ({ metadataDone, metadataFailed } = await pushScenarioMetadataIds(ids, {
+        fields: rowFields,
+        onItemStart: ({ id, row }) => updateSmUploadJob(job, {
+          currentItemId: id,
+          currentItemName: row?.name || "",
+        }),
+        onItem: ({ id, row, ok, reason }) => {
+          job.processed += 1;
+          if (ok) job.succeeded += 1;
+          else {
+            job.failed += 1;
+            job.errors.push({ id, name: row?.name || "", reason });
+          }
+          job.updatedAt = nowIso();
+        },
+      }));
+    } else {
+      // 대여·반납 현황(및 함께 맞춰지는 재고 수량)만 선택한 작업은 위 전체 대조에서
+      // 이미 끝났다. 빈 메타데이터 저장을 물품 수만큼 반복하지 않는다.
+      updateSmUploadJob(job, { processed: ids.length, succeeded: ids.length });
+    }
 
-    if (metadataDone.length) clearSmMetadataDirty(metadataDone);
-    if (!metadataFailed.length) {
+    // 일부 필드만 올린 경우에는 다른 변경 내용이 아직 SM에 남아 있을 수 있다. 이때 변경
+    // 대기 표시나 '전체 동기화 완료 시각'을 지우면 다음 전체 적용에서 누락되므로 유지한다.
+    const uploadedEveryInformationField = SM_INFORMATION_FIELD_KEYS.every((field) => job.fields.includes(field));
+    if (metadataDone.length && uploadedEveryInformationField) clearSmMetadataDirty(metadataDone);
+    if (!metadataFailed.length && uploadedEveryInformationField) {
       const key = job.mode === "all" ? "sm_metadata_full_sync_at" : "sm_metadata_sync_at";
       run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, nowIso()]);
     }
@@ -2954,22 +3181,29 @@ async function runSmUploadJob(job) {
       ok: metadataFailed.length === 0,
       manual: true,
       full: job.mode === "all",
+      fields: job.fields,
       at: nowIso(),
       total: ids.length,
       metadata: metadataDone.length,
       metadataFailed: metadataFailed.length,
       metadataErrors: metadataFailed,
-      reason: metadataFailed.length ? `SM 업로드 중 ${metadataFailed.length}건을 적용하지 못했습니다.` : "",
+      reason: metadataFailed.length ? `SM 정보 반영 중 ${metadataFailed.length}건을 적용하지 못했습니다.` : "",
     };
-    updateSmUploadJob(job, { status: metadataFailed.length ? "failed" : "done", phase: metadataFailed.length ? "오류 발생" : "완료", result, finishedAt: nowIso() });
+    updateSmUploadJob(job, { status: metadataFailed.length ? "failed" : "done", phase: metadataFailed.length ? "오류 발생" : "완료", currentItemId: "", currentItemName: "", result, finishedAt: nowIso() });
   } catch (error) {
-    const result = { ok: false, reason: error?.message || "SM 업로드에 실패했습니다.", metadataErrors: job.errors || [] };
-    updateSmUploadJob(job, { status: "failed", phase: "오류 발생", result, finishedAt: nowIso() });
+    const result = { ok: false, reason: error?.message || "SM 정보 반영에 실패했습니다.", metadataErrors: job.errors || [] };
+    updateSmUploadJob(job, { status: "failed", phase: "오류 발생", currentItemId: "", currentItemName: "", result, finishedAt: nowIso() });
   }
 }
 
 function startSmMetadataUpload({ payload }) {
   const mode = payload?.mode === "all" ? "all" : "changes";
+  const defaultFields = mode === "all" ? SM_METADATA_FIELD_KEYS : SM_INFORMATION_FIELD_KEYS;
+  const requestedFields = Array.isArray(payload?.fields)
+    ? payload.fields.filter((field) => SM_METADATA_FIELD_KEYS.includes(field))
+    : [...defaultFields];
+  const fields = [...new Set(requestedFields)];
+  if (!fields.length) return { ok: false, reason: "SM에 반영할 정보를 하나 이상 선택해주세요." };
   for (const job of smUploadJobs.values()) {
     if (job.status === "running") return { ok: true, running: true, job: publicSmUploadJob(job) };
   }
@@ -2977,12 +3211,15 @@ function startSmMetadataUpload({ payload }) {
   const job = {
     id,
     mode,
+    fields,
     status: "running",
     phase: "준비 중",
     total: 0,
     processed: 0,
     succeeded: 0,
     failed: 0,
+    currentItemId: "",
+    currentItemName: "",
     errors: [],
     result: null,
     startedAt: nowIso(),
@@ -3015,7 +3252,7 @@ async function syncAllSmMetadataNow() {
     metadata: metadataDone.length,
     metadataFailed: metadataFailed.length,
     metadataErrors: metadataFailed,
-    reason: metadataFailed.length ? `전체 업로드 중 ${metadataFailed.length}건을 SM에 적용하지 못했습니다.` : "",
+    reason: metadataFailed.length ? `정보 일괄 반영 중 ${metadataFailed.length}건을 SM에 적용하지 못했습니다.` : "",
   };
 }
 
@@ -3087,29 +3324,35 @@ async function probeSmObjectRegistration({ query }) {
   return smObjectsSession.probe(query.sector || "", query.locId || "", { full: query.full === "1" });
 }
 
+// 반납 로그 "분석" 화면: 구매·retire 추천, 시간대 수요, 같이 나가는 물품.
+async function getRentalInsights({ query }) {
+  return rentalInsights({ days: Number(query.days) || 30, fresh: query.fresh === "1" });
+}
+
 // ── 액션 라우팅 테이블 ───────────────────────────────────────
 
 const GET_ACTIONS = {
   getAll, getBorrowAppInfo, getObjectItems, getWarehouseInventoryOnly, getScenarioDefinition,
-  getUnreturnedItems, getMyBorrowedItems, isConfigDsRegistered, getRegisteredUser, searchRegisteredUsers, getWarehouseBorrowedItems,
+  getUnreturnedItems, getItemBorrowers, getMyBorrowedItems, isConfigDsRegistered, getRegisteredUser, searchRegisteredUsers, getBorrowerSeatRecommendations, getWarehouseBorrowedItems,
   getScenarioObjectsForAdmin, getScenarioAllLogs, getBatchDetail, getWarehouseLogs,
-  getPenalties, getActiveItemTypeCount, getStockChangeHistory, getStockAuditHistory, getStockFormulaStatus,
-  getItemSets, getSeatMap, getSeatOccupancy, getNotices, getNotice, getBorrowLock,
+  getPenalties, getActiveItemTypeCount, getStockChangeHistory, getStockAuditHistory, getStockFormulaStatus, getWarehouseRecentChanges, getWarehouseRackSections, getWarehouseRackLevels, getWarehouseRackLevelPhotos,
+  getSeatMap, getSeatOccupancy, getNotices, getNotice, getBorrowLock,
   getScenarioChanges, getItemChangeHistory, getScenarioChangeSummary, getReturnPhotos, getUnattendedReturnPhotos, getPickupPhotos, getItemPhotos, getItemPhotosBulk,
   getTableclothItems, getTableclothUnreturned, getTableclothRentalLogs,
   getMyTableclothRentals, getTableclothBorrowers,
   getTableclothCategories, getTableclothCategoryUsage, getTableclothActiveBorrowers,
   getSmObjectStatus, getSmSyncStatus, getSmUploadJob, previewSmObjectImports, previewSmObjectImport, compareSmObjectItem, inspectSmEditForm, probeSmObjectRegistration, compareSmLocations, getSmLocationJob, inspectSmObjects, probeSmObjectLookup,
+  getRentalInsights,
 };
 
 const POST_ACTIONS = {
   addInventoryItem, updateInventoryItem, updateMultipleInventoryItems, deleteInventoryItem,
   addDefectLog, rentInventoryItem, rentInventoryItemsBulk, saveSectorLayout, deleteSector,
-  recordBorrow, processReturn, confirmPickup, swapBorrowItem, recordDamagedReturn, updateBorrowerSeat,
+  recordBorrow, processReturn, confirmPickup, swapBorrowItem, recordDamagedReturn, updateBorrowerSeat, setTypeLimitExempt,
   updateScenarioObject, addScenarioObject, deleteScenarioObject, saveScenarioVariants, assignUnassignedStock, updateScenarioCategories,
   addTableclothItem, updateTableclothItem, updateTableclothLocations, updateTableclothCategories, updateTableclothArchived, saveTableclothCategories, deleteTableclothItem, deleteTableclothItems, duplicateTableclothItems,
   recordTableclothBorrow, confirmTableclothPickup, processTableclothReturn, swapTableclothRental,
-  adjustStock, recordStockAudit, saveItemSet, deleteItemSet, saveSeatMap,
+  adjustStock, recordStockAudit, saveSeatMap, setWarehouseRackSections, setWarehouseRackLevels, setWarehouseRackLevelPhoto,
   saveNotices, saveNotice, setBorrowLock, publishAppVersion,
   setScenarioChangesCheckpoint, saveReturnPhoto, addItemPhoto, deleteItemPhoto,
   verifySmLocation, applySmLocations, startSmLocationApply, importSmObjects, syncSmChangesNow, syncAllSmMetadataNow, startSmMetadataUpload, retrySmObjectMetadata,
@@ -3124,12 +3367,49 @@ const STOCK_CHANGING_ACTIONS = new Set([
   "rentInventoryItem", "rentInventoryItemsBulk", "addDefectLog",
 ]);
 
+// 대여자 화면(대여·반납 신청, 불량 신고)이 쓰는 기록 변경. 이것 말고는 관리자 로그인이 있어야 한다.
+// 불량 신고(addDefectLog)는 재고를 건드리지 않는 기록이라 대여자에게도 열어 둔다.
+const PUBLIC_POST_ACTIONS = new Set([
+  "recordBorrow", "processReturn", "rentInventoryItem", "rentInventoryItemsBulk",
+  "recordTableclothBorrow", "processTableclothReturn", "addDefectLog",
+]);
+
+// 관리자 화면에서만 쓰는 조회. 대여 기록 전체·사진·SM 연동 도구는 관리자에게만 준다.
+const ADMIN_ONLY_GET_ACTIONS = new Set([
+  "getBorrowerSeatRecommendations",
+  "getScenarioObjectsForAdmin", "getScenarioAllLogs", "getBatchDetail", "getScenarioChangeSummary",
+  "getItemChangeHistory", "getScenarioChanges", "getReturnPhotos", "getUnattendedReturnPhotos", "getPickupPhotos",
+  "getStockChangeHistory", "getStockAuditHistory", "getStockFormulaStatus", "getWarehouseLogs", "getWarehouseRecentChanges",
+  "getTableclothRentalLogs", "getTableclothCategoryUsage",
+  "getSmObjectStatus", "getSmSyncStatus", "getSmUploadJob", "previewSmObjectImports", "previewSmObjectImport",
+  "compareSmObjectItem", "inspectSmEditForm", "probeSmObjectRegistration", "compareSmLocations", "getSmLocationJob",
+  "inspectSmObjects", "probeSmObjectLookup", "getRentalInsights",
+]);
+const ADMIN_REQUIRED = { success: false, error: "관리자 로그인이 필요합니다. 다시 로그인해주세요." };
+
+// 무인 모드 중 비관리자에게는 시나리오 물품 보관 위치를 주지 않는다 — 화면에서만 가리면
+// API를 직접 열어 그대로 볼 수 있다. 위치는 무인 PC(대여 확인)와 QR 페이지로만 안내한다.
+// 공구·테이블보는 위치가 식별 키이거나 층 표시라 그대로 둔다.
+// 공구 줄(general)은 위치+이름이 반납 식별 키라서 건드리지 않는다.
+const blankRowLocations = (data) => { for (const row of data.items || []) if (row.sheetType === "scenario") row.location = ""; };
+const SCENARIO_LOCATION_SCRUB = {
+  getObjectItems: (data) => { for (const item of data.items || []) item.rootSlot = ""; },
+  getScenarioDefinition: (data) => { for (const item of data.scenario?.items || []) item.rootSlot = ""; },
+  getUnreturnedItems: blankRowLocations,
+};
+
 async function dispatch(action, ctx, table) {
   const handler = table[action];
   if (!handler) return { success: false, error: `알 수 없는 액션입니다: ${action}` };
+  if (!ctx.admin) {
+    if (table === POST_ACTIONS && !PUBLIC_POST_ACTIONS.has(action)) return ADMIN_REQUIRED;
+    if (table === GET_ACTIONS && ADMIN_ONLY_GET_ACTIONS.has(action)) return ADMIN_REQUIRED;
+  }
+  const hideScenarioLocation = !ctx.admin && unattendedEnabled();
   try {
     const data = await handler(ctx);
     if (data && data.success === false) return data;
+    if (hideScenarioLocation && data) SCENARIO_LOCATION_SCRUB[action]?.(data);
     // 응답을 붙잡아 두지 않는다. 짧게 모았다가 뒤에서 돈다.
     if (STOCK_CHANGING_ACTIONS.has(action)) smSyncNudge();
     return { success: true, ...data };
@@ -3142,7 +3422,7 @@ async function dispatch(action, ctx, table) {
 gasRouter.get("/gas", async (req, res) => {
   const action = req.query.action;
   if (!action) return res.json({ success: true }); // 파라미터 없는 GET(외부 신청 폼)은 이 앱에서 쓰지 않음
-  res.json(await dispatch(action, { query: req.query }, GET_ACTIONS));
+  res.json(await dispatch(action, { query: req.query, admin: adminFromRequest(req) }, GET_ACTIONS));
 });
 
 // GAS 프론트는 CORS 프리플라이트를 피하려고 Content-Type: text/plain으로 POST 본문을 보낸다.
@@ -3153,5 +3433,9 @@ gasRouter.post("/gas", express.text({ type: ["text/plain", "application/json"], 
   } catch (err) {
     return res.json({ success: false, error: "요청 본문을 해석할 수 없습니다." });
   }
-  res.json(await dispatch(body.action, { payload: body.payload || {} }, POST_ACTIONS));
+  const admin = adminFromRequest(req);
+  let payload = body.payload || {};
+  // 변경 이력의 "누가"는 로그인 세션에서 가져온다(화면이 보낸 이름보다 믿을 수 있다).
+  if (admin && typeof payload === "object" && !Array.isArray(payload)) payload = { ...payload, _actor: admin.name || admin.loginId };
+  res.json(await dispatch(body.action, { payload, admin }, POST_ACTIONS));
 });

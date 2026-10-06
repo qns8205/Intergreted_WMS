@@ -25,7 +25,7 @@ export default function ConnectionBadge({ connected, dirty, saving, lastSync }: 
     label = "저장 대기 중";
     color = WARN_COLOR;
   } else {
-    label = "시트 동기화됨";
+    label = "DB 동기화됨";
     color = OK_COLOR;
   }
 

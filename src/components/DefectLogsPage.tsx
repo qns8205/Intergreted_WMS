@@ -1,18 +1,21 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { InventoryItem, DefectLog } from "../types";
 import { AlertTriangle, Calendar, User, MapPin, Clipboard, Plus, Search, ArrowLeft, FileText, Check, Camera, Upload, X, ImageIcon } from "lucide-react";
 
 import { isFuzzyMatch, resizeAndCompressImage } from "../utils/drive";
+import CameraCaptureModal from "./CameraCaptureModal";
 import { smartMatch } from "../utils/search";
 import { parseDateString } from "../utils/date";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface DefectLogsPageProps {
   defectLogs: DefectLog[];
   inventory: InventoryItem[];
-  robotObjects?: any[];
   onAddDefectLog: (log: Omit<DefectLog, "rowIndex">) => Promise<void>;
   onClose: () => void;
   isLightMode: boolean;
+  scriptUrl: string;
+  connected: boolean;
 }
 
 const PANEL_BORDER = "var(--panel-border, #334155)";
@@ -97,10 +100,11 @@ function formatTimestampToMinutes(tsStr: string): string {
 export default function DefectLogsPage({
   defectLogs,
   inventory,
-  robotObjects = [],
   onAddDefectLog,
   onClose,
   isLightMode,
+  scriptUrl,
+  connected,
 }: DefectLogsPageProps) {
   // Form states
   const [locationInput, setLocationInput] = useState("");
@@ -110,9 +114,9 @@ export default function DefectLogsPage({
   const [noteInput, setNoteInput] = useState("");
   const [actionTakenInput, setActionTakenInput] = useState("");
   const [photoInput, setPhotoInput] = useState<string>("");
-  
-  // Tab-selector for items category: 랙 자재 vs 로봇 오브젝트
-  const [itemCategory, setItemCategory] = useState<"rack" | "robot">("rack");
+  // 서버 PC 웹캠으로 바로 찍기 (파일 업로드 대신 쓸 수 있는 선택지)
+  const [cameraOpen, setCameraOpen] = useState(false);
+
   
   // Custom manual input mode toggles
   const [manualItemName, setManualItemName] = useState(false);
@@ -138,7 +142,7 @@ export default function DefectLogsPage({
       
       // Automatically resize to max 1200px width/height and compress to 0.75 JPEG quality
       // This prevents payload limit or timeout errors during sync
-      const compressedBase64 = await resizeAndCompressImage(file, 1200, 1200, 0.75);
+      const compressedBase64 = await resizeAndCompressImage(file);
       
       setPhotoInput(compressedBase64);
     } catch (err: any) {
@@ -198,50 +202,31 @@ export default function DefectLogsPage({
     );
   }, [uniqueItems, itemSearchQuery]);
 
-  // Extract unique robot objects for selection
-  const uniqueRobotObjects = useMemo(() => {
-    const seen = new Set<string>();
-    const items: { name: string; location: string; spec?: string }[] = [];
-    for (const item of robotObjects) {
-      if (item.name && !seen.has(item.name)) {
-        seen.add(item.name);
-        items.push({
-          name: item.name,
-          location: item.location || "",
-          spec: item.spec || "",
-        });
-      }
-    }
-    return items.sort((a, b) => a.name.localeCompare(b.name));
-  }, [robotObjects]);
+  // 검색 결과 목록 열림 여부
+  const [itemListOpen, setItemListOpen] = useState(false);
 
-  const filteredRobotObjects = useMemo(() => {
-    if (!itemSearchQuery.trim()) return uniqueRobotObjects;
-    return uniqueRobotObjects.filter((item) =>
-      isFuzzyMatch(item.name || "", itemSearchQuery) ||
-      isFuzzyMatch(item.location || "", itemSearchQuery) ||
-      isFuzzyMatch(item.spec || "", itemSearchQuery)
-    );
-  }, [uniqueRobotObjects, itemSearchQuery]);
+  // 후보를 목록 모양으로 정규화한다 (name / sub / right).
+  const itemOptions = useMemo(
+    () =>
+      filteredUniqueItems.map((item: any) => ({
+        name: item.name,
+        sub: item.location ? `(${item.location})` : "",
+        right: item.stock != null ? `재고 ${item.stock}개` : "",
+      })),
+    [filteredUniqueItems]
+  );
+
+  const itemOptionCount = itemOptions.length;
+  // 목록이 길면 렌더링 비용이 커지므로 상위 50개만 그린다 (더 좁히려면 검색어를 추가 입력)
+  const visibleItemOptions = useMemo(() => itemOptions.slice(0, 50), [itemOptions]);
 
   const handleItemSelectChange = (name: string) => {
     setNameInput(name);
-    if (itemCategory === "rack") {
-      const found = inventory.find((item) => item.name === name);
-      if (found) {
-        setLocationInput(found.location || "-");
-      } else {
-        setLocationInput("-");
-      }
-    } else {
-      const found = robotObjects.find((item) => item.name === name);
-      if (found) {
-        setLocationInput(found.location || "로봇 구역");
-      } else {
-        setLocationInput("로봇 구역");
-      }
-    }
+    const found = inventory.find((item) => item.name === name);
+    setLocationInput(found ? found.location || "-" : "-");
   };
+
+  const [analysisOpen, setAnalysisOpen] = useState(false);
 
   const handleAddLogSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -282,7 +267,7 @@ export default function DefectLogsPage({
         note: noteInput.trim(),
         actionTaken: actionTakenInput.trim(),
         photo: photoInput || undefined,
-        itemCategory: itemCategory, // Pass category to Google Apps Script
+        itemCategory: "rack", // 이 폼은 COS 물품 전용 — 재고 차감 대상이 아니다
       });
 
       // Reset form fields
@@ -290,6 +275,7 @@ export default function DefectLogsPage({
       setActionTakenInput("");
       setQtyInput(1);
       setPhotoInput("");
+
       setFormError(null);
     } catch (err: any) {
       setFormError(err.message || "불량 로그 등록에 실패했습니다.");
@@ -337,6 +323,7 @@ export default function DefectLogsPage({
 
   return (
     <div
+      className="dlp-root"
       style={{
         display: "flex",
         flexDirection: "column",
@@ -348,8 +335,36 @@ export default function DefectLogsPage({
         overflowY: "auto",
       }}
     >
+      {/* 예전엔 데스크톱에서 1.15배 확대(zoom)했는데, 왼쪽 등록 폼이 그만큼 더 길어지면서
+          저장 버튼("불량로그 등록하기")이 화면 아래로 밀려 안 보이는 문제가 있었다 — 확대 없이
+          실제 크기 그대로 페이지 안에 맞춘다. */}
+      <style>{`
+        @media (max-width: 760px) {
+          .dlp-root { padding: 14px !important; height: auto !important; min-height: 0; }
+          /* 앱 서랍 메뉴로 오가므로 "돌아가기" 버튼과 구분선은 모바일에서 뺀다. */
+          .dlp-back, .dlp-sep { display: none !important; }
+          .dlp-head { margin-bottom: 12px !important; padding-bottom: 12px !important; }
+          .dlp-head h1 { font-size: 17px !important; }
+          .dlp-head p { font-size: 11.5px !important; }
+          .dlp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px !important; margin-bottom: 14px !important; }
+          .dlp-stats > div { padding: 10px 12px !important; }
+          .dlp-main { grid-template-columns: minmax(0, 1fr) !important; gap: 16px !important; }
+          /* 필터 줄: 유형 선택과 검색창이 한 줄을 나눠 쓰고, 검색창이 남는 폭을 채운다. */
+          .dlp-list-toolbar, .dlp-list-filters { width: 100%; }
+          .dlp-list-filters > div { flex: 1 1 0; width: auto !important; min-width: 0; }
+          .dlp-list-filters input { width: 100% !important; min-width: 0; }
+          /* 기록 표: 한 줄이 한 장의 카드가 되도록 세로로 푼다. 각 칸 이름은 data-label로 붙인다. */
+          .dlp-table { min-width: 0 !important; }
+          .dlp-table thead { display: none; }
+          .dlp-table, .dlp-table tbody, .dlp-table tr, .dlp-table td { display: block; width: 100% !important; box-sizing: border-box; }
+          .dlp-table tr { padding: 6px 0; margin: 0 0 8px; border: 1px solid var(--panel-border, #334155) !important; border-radius: 10px; }
+          .dlp-table td { display: flex !important; align-items: center; gap: 10px; border: none !important; padding: 5px 12px !important; text-align: left !important; justify-content: flex-start !important; }
+          .dlp-table td::before { content: attr(data-label); flex: 0 0 64px; font-size: 11px; font-weight: 700; color: var(--text-dim, #94a3b8); }
+        }
+      `}</style>
       {/* 1. Header Area */}
       <div
+        className="dlp-head"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -359,8 +374,9 @@ export default function DefectLogsPage({
           paddingBottom: "16px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", width: "100%" }}>
           <button
+            className="dlp-back"
             onClick={onClose}
             style={{
               background: "var(--input-bg, #0f172a)",
@@ -375,20 +391,110 @@ export default function DefectLogsPage({
           >
             <ArrowLeft size={16} /> WMS 모니터링으로 돌아가기
           </button>
-          <div style={{ height: 24, width: 1, background: PANEL_BORDER }} />
+          <div className="dlp-sep" style={{ height: 24, width: 1, background: PANEL_BORDER }} />
           <div>
             <h1 style={{ fontSize: "20px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
               ⚠️ 실시간 불량로그 관리
             </h1>
             <p style={{ fontSize: "12px", color: TEXT_DIM, margin: "4px 0 0 0" }}>
-              입고 혹은 재고 이동 시 발생한 불량 현황을 실시간으로 등록하고 구글 시트에 즉시 동기화합니다.
+              입고 혹은 재고 이동 시 발생한 불량 현황을 실시간으로 등록하고 서버에 즉시 동기화합니다.
             </p>
           </div>
+          <button
+            onClick={() => setAnalysisOpen(true)}
+            style={{
+              marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px",
+              padding: "9px 16px", borderRadius: "8px", cursor: "pointer",
+              border: `1px solid ${ACCENT}`, background: `${ACCENT}18`, color: "#a5b4fc",
+              fontSize: "13px", fontWeight: 700,
+            }}
+          >
+            📊 분석
+          </button>
         </div>
       </div>
 
+      {/* 불량 분석 */}
+      {analysisOpen ? (() => {
+        const norm = (v?: string) => String(v || "").trim();
+        const robotLogs = defectLogs; // 전체 로그 대상 (파손자 통계는 값이 있는 건만 집계)
+
+        const tally = (pick: (l: DefectLog) => string) => {
+          const m = new Map<string, { key: string; count: number; qty: number }>();
+          robotLogs.forEach((l) => {
+            const k = norm(pick(l));
+            if (!k) return;
+            if (!m.has(k)) m.set(k, { key: k, count: 0, qty: 0 });
+            const g = m.get(k)!;
+            g.count += 1;
+            g.qty += Number(l.qty) || 1;
+          });
+          return Array.from(m.values()).sort((a, b) => b.qty - a.qty || b.count - a.count);
+        };
+
+        const byCulprit = tally((l) => l.culprit || "");
+        const byType = tally((l) => l.defectType);
+        const byItem = tally((l) => l.name);
+        const unknown = robotLogs.filter((l) => !norm(l.culprit)).length;
+        const maxQty = (arr: { qty: number }[]) => Math.max(1, ...arr.map((x) => x.qty));
+
+        const Section = ({ title, rows, note }: { title: string; rows: { key: string; count: number; qty: number }[]; note?: string }) => (
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 800, color: TEXT_MAIN, marginBottom: "8px" }}>
+              {title} {note ? <span style={{ fontWeight: 500, fontSize: "11.5px", color: TEXT_DIM }}>{note}</span> : null}
+            </div>
+            {rows.length === 0 ? (
+              <div style={{ fontSize: "12px", color: TEXT_DIM, padding: "10px 0" }}>기록이 없습니다.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                {rows.slice(0, 10).map((r, i) => (
+                  <div key={r.key} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ width: "18px", fontSize: "11px", fontWeight: 800, color: i < 3 ? "#a5b4fc" : TEXT_DIM, textAlign: "center", flexShrink: 0 }}>{i + 1}</span>
+                    <span style={{ flex: "0 0 130px", fontSize: "12.5px", fontWeight: 700, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.key}>{r.key}</span>
+                    <div style={{ flex: 1, height: "8px", borderRadius: "999px", background: PANEL_BORDER, overflow: "hidden" }}>
+                      <div style={{ width: `${(r.qty / maxQty(rows)) * 100}%`, height: "100%", background: ACCENT, borderRadius: "999px" }} />
+                    </div>
+                    <span style={{ flexShrink: 0, fontSize: "11.5px", fontWeight: 800, color: TEXT_MAIN, minWidth: "62px", textAlign: "right" }}>
+                      {r.qty}개 <span style={{ fontWeight: 500, color: TEXT_DIM }}>({r.count}건)</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+
+        return (
+          <div
+            onClick={() => setAnalysisOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: "min(620px, 100%)", maxHeight: "85vh", overflowY: "auto",
+                background: "var(--panel-bg, #1e293b)", border: `1px solid ${PANEL_BORDER}`, borderRadius: "16px", padding: "22px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                <span style={{ fontSize: "16px", fontWeight: 800, color: TEXT_MAIN, flex: 1 }}>📊 불량 분석</span>
+                <button onClick={() => setAnalysisOpen(false)} style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "16px" }}>✕</button>
+              </div>
+              <div style={{ fontSize: "12px", color: TEXT_DIM, marginBottom: "18px" }}>
+                전체 {defectLogs.length}건 · 파손자 미기재 {unknown}건
+              </div>
+
+              <Section title="파손자별" rows={byCulprit} note="(파손자가 기록된 건만)" />
+              <Section title="불량 유형별" rows={byType} />
+              <Section title="물품별" rows={byItem} />
+            </div>
+          </div>
+        );
+      })() : null}
+
       {/* 2. Stat Widgets */}
       <div
+        className="dlp-stats"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -450,6 +556,7 @@ export default function DefectLogsPage({
           gap: "24px",
           alignItems: "flex-start",
         }}
+        className="dlp-main"
       >
         {/* LEFT COLUMN: Input Form */}
         <div
@@ -475,7 +582,9 @@ export default function DefectLogsPage({
                   onClick={() => {
                     setManualItemName(!manualItemName);
                     setNameInput("");
-                    setLocationInput("");
+                                setLocationInput("");
+                    setItemSearchQuery("");
+                    setItemListOpen(false);
                   }}
                   style={{
                     background: "transparent",
@@ -511,127 +620,125 @@ export default function DefectLogsPage({
                 />
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {/* 분류 선택 (랙 자재 vs 로봇 오브젝트) */}
-                  <div style={{ display: "flex", gap: "8px", marginBottom: "4px" }}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItemCategory("rack");
-                        setNameInput("");
-                        setLocationInput("");
-                        setItemSearchQuery("");
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        border: `1px solid ${itemCategory === "rack" ? ACCENT : PANEL_BORDER}`,
-                        background: itemCategory === "rack" ? `${ACCENT}15` : "transparent",
-                        color: itemCategory === "rack" ? "#a5b4fc" : TEXT_DIM,
-                        cursor: "pointer",
-                        transition: "all 0.2s"
-                      }}
-                    >
-                      🗄️ 랙 선반 자재
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setItemCategory("robot");
-                        setNameInput("");
-                        setLocationInput("");
-                        setItemSearchQuery("");
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: "6px",
-                        fontSize: "12px",
-                        fontWeight: 700,
-                        border: `1px solid ${itemCategory === "robot" ? ACCENT : PANEL_BORDER}`,
-                        background: itemCategory === "robot" ? `${ACCENT}15` : "transparent",
-                        color: itemCategory === "robot" ? "#a5b4fc" : TEXT_DIM,
-                        cursor: "pointer",
-                        transition: "all 0.2s"
-                      }}
-                    >
-                      🤖 로봇 오브젝트
-                    </button>
+                  {/* 시나리오 오브젝트는 여기서 등록하지 않는다 — 종류를 고를 수단이 없어
+                      미확인 재고에서만 깎이고 실제로는 차감이 안 된다.
+                      파손은 반납 화면의 "파손 처리"로 등록해야 종류별 재고가 정확히 반영된다. */}
+                  <div style={{ fontSize: "11px", color: TEXT_DIM, lineHeight: 1.45, marginBottom: "4px" }}>
+                    🗄️ 랙 선반 <b>COS 물품</b> 전용입니다. 시나리오 물품 파손은{" "}
+                    <b>반납 화면의 파손 처리</b>로 등록해주세요 — 종류별 재고가 정확히 반영됩니다.
                   </div>
 
+                  {/* 검색어를 치면 아래에 실시간으로 후보가 뜨고, 없으면 그 자리에서 직접 입력으로 넘어간다 */}
                   <div style={{ position: "relative" }}>
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={itemCategory === "rack" ? "랙 자재 목록 검색..." : "로봇 오브젝트 검색 (이름, 규격 등)..."}
+                      placeholder="랙 COS 물품 검색..."
                       value={itemSearchQuery}
-                      onChange={(e) => setItemSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setItemSearchQuery(e.target.value);
+                        setItemListOpen(true);
+                        // 검색어를 바꾸면 기존 선택은 해제한다 (선택했다고 착각하는 것을 방지)
+                        if (nameInput) { setNameInput(""); setLocationInput(""); }
+                      }}
+                      onFocus={() => setItemListOpen(true)}
                       style={{
                         width: "100%",
                         background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
+                        border: `1px solid ${nameInput ? ACCENT : PANEL_BORDER}`,
                         color: TEXT_MAIN,
-                        padding: "8px 10px 8px 32px",
+                        padding: "10px 12px 10px 32px",
                         borderRadius: "6px",
-                        fontSize: "12px",
+                        fontSize: "13px",
                         outline: "none",
                       }}
                     />
                   </div>
 
-                  {itemCategory === "rack" ? (
-                    <select
-                      required
-                      value={nameInput}
-                      onChange={(e) => handleItemSelectChange(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
-                        color: TEXT_MAIN,
-                        padding: "10px 12px",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                      }}
-                    >
-                      <option value="">랙 자재 선택... ({filteredUniqueItems.length}개 검색됨)</option>
-                      {filteredUniqueItems.map((item, idx) => (
-                        <option key={idx} value={item.name}>
-                          {item.name} {item.location ? `(${item.location})` : ""} {item.stock != null ? ` - 재고: ${item.stock}개` : ""}
-                        </option>
-                      ))}
-                      {filteredUniqueItems.length === 0 && (
-                        <option disabled>일치하는 자재 품목이 없습니다.</option>
+                  {/* 선택 완료 표시 */}
+                  {nameInput && !itemListOpen ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 10px", borderRadius: "6px", background: `${ACCENT}12`, border: `1px solid ${ACCENT}40` }}>
+                      <span style={{ fontSize: "12.5px", fontWeight: 700, color: TEXT_MAIN, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {nameInput}
+                      </span>
+                      {locationInput ? <span style={{ fontSize: "11px", color: TEXT_DIM, flexShrink: 0 }}>{locationInput}</span> : null}
+                      <button
+                        type="button"
+                        onClick={() => { setNameInput(""); setLocationInput(""); setItemSearchQuery(""); setItemListOpen(true); }}
+                        style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer", fontSize: "11.5px", fontWeight: 700, flexShrink: 0 }}
+                      >
+                        변경
+                      </button>
+                    </div>
+                  ) : null}
+
+                  {/* 실시간 후보 목록 */}
+                  {itemListOpen ? (
+                    <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: "6px", maxHeight: "220px", overflowY: "auto", background: "var(--input-bg, #0f172a)" }}>
+                      {visibleItemOptions.length > 0 ? (
+                        visibleItemOptions.map((opt, idx) => (
+                          <div
+                            key={`${opt.name}-${idx}`}
+                            onClick={() => {
+                              handleItemSelectChange(opt.name);
+                              setItemSearchQuery(opt.name);
+                              setItemListOpen(false);
+                            }}
+                            style={{
+                              padding: "8px 10px",
+                              cursor: "pointer",
+                              borderBottom: `1px solid ${PANEL_BORDER}`,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              background: nameInput === opt.name ? `${ACCENT}15` : "transparent",
+                            }}
+                          >
+                            <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 600, color: TEXT_MAIN, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {opt.name}
+                              {opt.sub ? <span style={{ color: TEXT_DIM, fontWeight: 500 }}> {opt.sub}</span> : null}
+                            </span>
+                            {opt.right ? <span style={{ flexShrink: 0, fontSize: "11px", color: TEXT_DIM }}>{opt.right}</span> : null}
+                          </div>
+                        ))
+                      ) : (
+                        <div style={{ padding: "14px 12px", textAlign: "center" }}>
+                          <div style={{ fontSize: "12px", color: TEXT_DIM, marginBottom: "10px" }}>
+                            일치하는 품목이 없습니다.
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // 검색어를 그대로 품목명으로 삼아 직접 입력 모드로 전환
+                              setManualItemName(true);
+                              setNameInput(itemSearchQuery.trim());
+                              setLocationInput("");
+                              setItemListOpen(false);
+                            }}
+                            disabled={!itemSearchQuery.trim()}
+                            style={{
+                              padding: "7px 14px",
+                              borderRadius: "6px",
+                              border: `1px solid ${ACCENT}`,
+                              background: `${ACCENT}18`,
+                              color: "#a5b4fc",
+                              cursor: itemSearchQuery.trim() ? "pointer" : "not-allowed",
+                              fontSize: "12px",
+                              fontWeight: 700,
+                              opacity: itemSearchQuery.trim() ? 1 : 0.5,
+                            }}
+                          >
+                            {itemSearchQuery.trim() ? `"${itemSearchQuery.trim()}"(으)로 직접 입력` : "직접 입력하려면 이름을 먼저 입력하세요"}
+                          </button>
+                        </div>
                       )}
-                    </select>
-                  ) : (
-                    <select
-                      required
-                      value={nameInput}
-                      onChange={(e) => handleItemSelectChange(e.target.value)}
-                      style={{
-                        width: "100%",
-                        background: "var(--input-bg, #0f172a)",
-                        border: `1px solid ${PANEL_BORDER}`,
-                        color: TEXT_MAIN,
-                        padding: "10px 12px",
-                        borderRadius: "6px",
-                        fontSize: "13px",
-                      }}
-                    >
-                      <option value="">로봇 오브젝트 선택... ({filteredRobotObjects.length}개 검색됨)</option>
-                      {filteredRobotObjects.map((item, idx) => (
-                        <option key={idx} value={item.name}>
-                          {item.name} {item.spec ? `[${item.spec}]` : ""} ({item.location})
-                        </option>
-                      ))}
-                      {filteredRobotObjects.length === 0 && (
-                        <option disabled>일치하는 로봇 오브젝트가 없습니다.</option>
-                      )}
-                    </select>
-                  )}
+                      {visibleItemOptions.length > 0 && itemOptionCount > visibleItemOptions.length ? (
+                        <div style={{ padding: "7px 10px", fontSize: "11px", color: TEXT_DIM, textAlign: "center" }}>
+                          상위 {visibleItemOptions.length}개 표시 중 · 총 {itemOptionCount}개 — 검색어를 더 입력해 좁혀보세요
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -769,6 +876,28 @@ export default function DefectLogsPage({
                   </button>
                 )}
               </div>
+
+              {/* 서버 PC에 연결된 카메라로 바로 촬영 — 파일을 따로 옮길 필요가 없다 */}
+              {!photoInput && (
+                <button
+                  type="button"
+                  onClick={() => setCameraOpen(true)}
+                  style={{
+                    width: "100%",
+                    marginBottom: "8px",
+                    padding: "10px",
+                    borderRadius: "8px",
+                    border: `1px solid ${PANEL_BORDER}`,
+                    background: "var(--input-bg, #0f172a)",
+                    color: ACCENT,
+                    fontSize: "12.5px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  📷 카메라로 촬영 (서버 PC 웹캠)
+                </button>
+              )}
 
               {/* 드래그 앤 드롭 및 클릭 파일 업로드 영역 */}
               {!photoInput && (
@@ -911,7 +1040,7 @@ export default function DefectLogsPage({
                 gap: 8,
               }}
             >
-              {submitting ? "구글 시트 연동 기록 중..." : "불량로그 등록하기"}
+              {submitting ? "서버 연동 기록 중..." : "불량로그 등록하기"}
             </button>
           </form>
         </div>
@@ -933,10 +1062,12 @@ export default function DefectLogsPage({
         >
           {/* List Toolbar */}
           <div
+            className="dlp-list-toolbar"
             style={{
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
+              flexWrap: "wrap",
               gap: 12,
               borderBottom: `1px solid ${PANEL_BORDER}`,
               paddingBottom: "14px",
@@ -947,7 +1078,7 @@ export default function DefectLogsPage({
             </h2>
 
             {/* Search/Filter Controls */}
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="dlp-list-filters" style={{ display: "flex", gap: 10, alignItems: "center" }}>
               {/* Type selector */}
               <select
                 value={filterType}
@@ -978,6 +1109,7 @@ export default function DefectLogsPage({
                   borderRadius: "6px",
                   padding: "0 10px",
                   width: 220,
+                  minWidth: 0,
                 }}
               >
                 <Search size={14} style={{ color: TEXT_DIM, marginRight: 6 }} />
@@ -1012,7 +1144,7 @@ export default function DefectLogsPage({
             }}
           >
             {filteredLogs.length > 0 ? (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", minWidth: "900px" }}>
+              <table className="dlp-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", minWidth: "900px" }}>
                 <thead>
                   <tr style={{ background: isLightMode ? "#f8fafc" : "#1e293b", borderBottom: `2px solid ${PANEL_BORDER}`, position: "sticky", top: 0, zIndex: 10 }}>
                     <th style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, textAlign: "left", width: "18%" }}>제품명</th>
@@ -1035,12 +1167,12 @@ export default function DefectLogsPage({
                         }}
                       >
                         {/* 제품명 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, fontWeight: 700 }}>
+                        <td data-label="제품명" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, fontWeight: 700 }}>
                           {log.name}
                         </td>
 
                         {/* 사진 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
+                        <td data-label="사진" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
                           {log.photo ? (
                             <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
                               <img
@@ -1067,17 +1199,17 @@ export default function DefectLogsPage({
                         </td>
                         
                         {/* 개수 */}
-                        <td className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: DANGER, fontWeight: 800, textAlign: "center" }}>
+                        <td data-label="개수" className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: DANGER, fontWeight: 800, textAlign: "center" }}>
                           {log.qty}개
                         </td>
                         
                         {/* 기록 시간 */}
-                        <td className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN }}>
+                        <td data-label="기록 시간" className="mono" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN }}>
                           {formatTimestampToMinutes(log.timestamp || "")}
                         </td>
 
                         {/* 불량 유형 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
+                        <td data-label="불량 유형" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, textAlign: "center" }}>
                           {(() => {
                             let bg = "rgba(148, 163, 184, 0.15)";
                             let color = "var(--text-dim, #94a3b8)";
@@ -1120,12 +1252,12 @@ export default function DefectLogsPage({
                         </td>
                         
                         {/* 세부 사항 */}
-                        <td style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, lineHeight: 1.4 }}>
+                        <td data-label="세부 사항" style={{ padding: "10px 14px", borderRight: `1px solid ${PANEL_BORDER}`, color: TEXT_MAIN, lineHeight: 1.4 }}>
                           {log.note || <span style={{ color: TEXT_DIM, fontStyle: "italic" }}>기재안됨</span>}
                         </td>
                         
                         {/* 대처 방안 */}
-                        <td style={{ padding: "10px 14px", color: TEXT_MAIN, lineHeight: 1.4 }}>
+                        <td data-label="대처 방안" style={{ padding: "10px 14px", color: TEXT_MAIN, lineHeight: 1.4 }}>
                           {log.actionTaken ? (
                             <span style={{ display: "flex", alignItems: "center", gap: "4px", color: isLightMode ? "#047857" : OK, fontWeight: 600 }}>
                               <Check size={12} /> {log.actionTaken}
@@ -1217,6 +1349,15 @@ export default function DefectLogsPage({
           </div>
         </div>
       )}
+      <ScrollToTopButton />
+
+      <CameraCaptureModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(dataUrl) => setPhotoInput(dataUrl)}
+        title="불량 사진 촬영"
+        isLightMode={isLightMode}
+      />
     </div>
   );
 }

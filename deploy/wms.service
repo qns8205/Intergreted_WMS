@@ -1,0 +1,29 @@
+# /etc/systemd/system/wms.service
+#
+# 설치:
+#   sudo cp deploy/wms.service /etc/systemd/system/wms.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now wms
+#
+# 로그 확인: journalctl -u wms -f
+
+[Unit]
+Description=WMS local backend (Express + SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=wms
+WorkingDirectory=/opt/wms
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=WMS_DB_PATH=/var/wms/db.sqlite3
+Environment=WMS_UPLOADS_DIR=/var/wms/uploads
+# scenario-manager 스크래퍼가 /api/scenarios/sync 호출 시 쓰는 공유 시크릿. 값을 채워넣으세요.
+Environment=SCRAPER_API_KEY=
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

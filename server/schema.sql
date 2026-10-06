@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS sid_rentals (
   -- variant_pending='Y'는 신청자가 "종류 상관없음"을 골라 아직 확정되지 않은 줄 —
   -- 이 줄은 재고를 차감하지 않은 상태이며, 대여 확인 때 담당자가 종류를 지정하면 차감된다.
   variant_id INTEGER,
-  variant_pending TEXT
+  variant_pending TEXT,
+  type_limit_exempt TEXT,
+  type_limit_exempt_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS general_rentals (
@@ -92,7 +94,9 @@ CREATE TABLE IF NOT EXISTS general_rentals (
   -- variant_pending='Y'는 신청자가 "종류 상관없음"을 골라 아직 확정되지 않은 줄 —
   -- 이 줄은 재고를 차감하지 않은 상태이며, 대여 확인 때 담당자가 종류를 지정하면 차감된다.
   variant_id INTEGER,
-  variant_pending TEXT
+  variant_pending TEXT,
+  type_limit_exempt TEXT,
+  type_limit_exempt_reason TEXT
 );
 
 -- 한 번의 대여 신청에 사람이 읽을 수 있는 연속 번호를 하나만 발급한다.
@@ -112,6 +116,38 @@ CREATE TABLE IF NOT EXISTS registered_users (
   name TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   imported_at TEXT
+);
+
+-- 명부에 없는 사람이 스스로 넣는 가입 신청. 관리자가 승인해야 registered_users에 들어간다.
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by TEXT
+);
+
+-- 관리자 계정 가입 신청. Scenario Manager와 같은 아이디·비밀번호여야 신청이 들어오고,
+-- 기존 관리자가 승인하면 admin_users에 들어간다. 비밀번호는 해시만 두고, 처리가 끝나면 비운다.
+CREATE TABLE IF NOT EXISTS admin_signup_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  login_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  password_hash TEXT,
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected
+  created_at TEXT NOT NULL,
+  resolved_at TEXT,
+  resolved_by TEXT
+);
+
+-- 관리자별 알림 읽음 표시. notif_key는 "<원본 테이블>:<id>" (예: edit:1071, defect:42).
+CREATE TABLE IF NOT EXISTS admin_notification_reads (
+  admin_id INTEGER NOT NULL,
+  notif_key TEXT NOT NULL,
+  read_at TEXT NOT NULL,
+  PRIMARY KEY (admin_id, notif_key)
 );
 
 CREATE TABLE IF NOT EXISTS rental_locations (
@@ -134,6 +170,38 @@ CREATE TABLE IF NOT EXISTS warehouse_rental_logs (
   manager TEXT,
   employee_id TEXT,
   note TEXT
+);
+
+CREATE TABLE IF NOT EXISTS warehouse_manual_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL UNIQUE,
+  employee_id TEXT NOT NULL,
+  borrower_name TEXT NOT NULL,
+  floor TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  image_path TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS warehouse_manual_request_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id INTEGER NOT NULL REFERENCES warehouse_manual_requests(id),
+  entered_name TEXT NOT NULL,
+  qty INTEGER NOT NULL,
+  item_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  reason TEXT,
+  rental_log_id INTEGER,
+  resolved_at TEXT,
+  resolver TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_warehouse_manual_pending ON warehouse_manual_request_items(status, request_id);
+
+-- 사진 보관 기간이 끝나도 반납의 중복 방지 기록은 남긴다.
+CREATE TABLE IF NOT EXISTS warehouse_manual_returns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL UNIQUE,
+  employee_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  items_json TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS defect_logs (
@@ -301,19 +369,6 @@ CREATE TABLE IF NOT EXISTS unattended_penalty_events (
   details TEXT
 );
 
--- 무인 모드 대여 신청 QR. 신청(recordBorrow) 성공 시 한 번만 발급되며, 그 신청(request_no)에
--- 속한 물품의 위치를 보여줄지는 매 조회마다 sid_rentals/general_rentals의 현재 상태로
--- 실시간 계산한다(server/lib/locationVisibility.js) — 이 표 자체에는 만료 시각을 저장하지 않는다.
-CREATE TABLE IF NOT EXISTS location_tokens (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  token TEXT NOT NULL UNIQUE,
-  request_no INTEGER NOT NULL,
-  borrower_name TEXT,
-  employee_id TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_location_tokens_request ON location_tokens(request_no);
-
 CREATE TABLE IF NOT EXISTS notices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT,
@@ -321,14 +376,6 @@ CREATE TABLE IF NOT EXISTS notices (
   content TEXT,
   detail TEXT,
   title TEXT
-);
-
-CREATE TABLE IF NOT EXISTS item_sets (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  set_name TEXT,
-  location TEXT,
-  item_name TEXT,
-  qty REAL
 );
 
 CREATE TABLE IF NOT EXISTS scenarios (
@@ -347,6 +394,14 @@ CREATE TABLE IF NOT EXISTS admin_users (
   password_hash TEXT,
   name TEXT,
   slack_id TEXT
+);
+
+-- 관리자 로그인 세션. 원문 토큰은 브라우저만 갖고, 여기엔 sha256 해시만 둔다.
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  admin_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS staff_accounts (

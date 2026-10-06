@@ -1,0 +1,29 @@
+# 이 미니 PC(configds@192.168.219.104) 전용 systemd 유닛.
+# Node.js를 nvm으로 설치했으므로 ExecStart가 nvm 설치 경로를 직접 가리킵니다.
+#
+# 설치:
+#   sudo cp deploy/wms.service.configds-minipc /etc/systemd/system/wms.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now wms
+#   sudo systemctl status wms
+#
+# 로그 확인: journalctl -u wms -f
+
+[Unit]
+Description=WMS local backend (Express + SQLite)
+After=network.target
+
+[Service]
+Type=simple
+User=configds
+WorkingDirectory=/home/configds/wms
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# scenario-manager 스크래퍼가 /api/scenarios/sync 호출 시 쓰는 공유 시크릿. 값을 채워넣으세요.
+Environment=SCRAPER_API_KEY=
+ExecStart=/home/configds/.nvm/versions/node/v24.19.0/bin/node server/index.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow,noarchive" />
+  <title>대여 물품 위치 확인</title>
+  <style>
+    :root{font-family:Pretendard,"Noto Sans KR",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#19171d;background:#f5f4f8;--purple:#7c3aed;--purple-dark:#5b21b6;--purple-soft:#f1eafe;--mint:#20c9a6;--line:#ebe8ef;--dim:#7b7782}*{box-sizing:border-box}html{background:#f5f4f8}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#fff 0,#f7f5fa 460px,#f5f4f8 100%);letter-spacing:-.02em}.top{height:58px;background:rgba(255,255,255,.92);backdrop-filter:blur(14px);display:flex;align-items:center;justify-content:center;padding:0 18px;font-size:16px;font-weight:900;position:sticky;top:0;z-index:4;border-bottom:1px solid rgba(235,232,239,.8)}.top:before{content:"⌖";margin-right:8px;color:var(--purple);font-size:20px}.wrap{width:min(820px,calc(100% - 28px));margin:auto;padding:22px 0 calc(72px + env(safe-area-inset-bottom))}.intro{position:relative;overflow:hidden;min-height:216px;padding:28px 28px 58px;border-radius:28px;background:linear-gradient(135deg,#6d28d9 0%,#9333ea 58%,#b34df2 100%);color:#fff;box-shadow:0 20px 45px rgba(109,40,217,.25)}.intro:before,.intro:after{content:"";position:absolute;border-radius:50%;background:rgba(255,255,255,.11)}.intro:before{width:180px;height:180px;right:-62px;top:-72px}.intro:after{width:100px;height:100px;right:64px;bottom:-58px}.eyebrow{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid rgba(255,255,255,.25);border-radius:999px;background:rgba(255,255,255,.12);font-size:11px;font-weight:850;letter-spacing:.04em}.icon{width:50px;height:50px;border-radius:16px;background:rgba(255,255,255,.16);display:grid;place-items:center;margin:18px 0 13px;font-size:26px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.18)}.intro h1{margin:0;font-size:clamp(26px,6vw,36px);line-height:1.22;letter-spacing:-.05em}.intro p{margin:10px 0 0;max-width:530px;color:rgba(255,255,255,.8);font-size:14px;line-height:1.6}.box,.summary,.empty{background:#fff;border:1px solid rgba(235,232,239,.92);box-shadow:0 10px 30px rgba(48,35,64,.08)}.box{position:relative;z-index:2;margin:-32px 16px 0;padding:18px;border-radius:21px}label{display:block;font-size:12px;font-weight:900;margin-bottom:9px;color:#4d4852}.row{display:flex;gap:9px}.field{position:relative}.date-field{flex:1}.serial-field{flex:.65;min-width:112px;display:flex;align-items:center;gap:9px}.separator{color:var(--dim);font-size:22px;font-weight:900}input{width:100%;height:52px;border:1.5px solid #e8e3ed;border-radius:14px;background:#faf9fc;padding:0 16px;font-size:18px;font-weight:900;letter-spacing:.08em;outline:none;color:#211d25;transition:border-color .2s,box-shadow .2s,background .2s}#request-seq{text-align:center;font-family:ui-monospace,SFMono-Regular,monospace;letter-spacing:.1em}input:focus{border-color:#9d5cf0;background:#fff;box-shadow:0 0 0 4px rgba(124,58,237,.1)}button{height:52px;min-width:108px;border:0;border-radius:14px;background:linear-gradient(135deg,var(--purple),#9d3ff1);color:#fff;font-size:15px;font-weight:900;cursor:pointer;box-shadow:0 8px 18px rgba(124,58,237,.2);transition:transform .15s ease,filter .15s ease,box-shadow .15s ease}button:active{transform:scale(.97)}button:disabled{opacity:.58;cursor:wait}.error{margin-top:11px;padding:10px 12px;border-radius:11px;background:#fff1f2;color:#dc2626;font-size:12px;font-weight:800}.result{margin-top:22px}.summary{position:relative;overflow:hidden;padding:21px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:13px;border-radius:21px}.summary:after{content:"";position:absolute;width:94px;height:94px;border-radius:50%;right:-34px;top:-45px;background:var(--purple-soft)}.caption{font-size:11px;color:var(--dim);font-weight:850;margin-bottom:5px}.number{font-size:24px;font-weight:950;color:#211d25;letter-spacing:-.04em}.status{position:relative;z-index:1;padding:8px 12px;border-radius:999px;background:var(--purple-soft);color:var(--purple-dark);font-size:11px;font-weight:900;line-height:1.35;text-align:center}.status.done{background:#e9fbf6;color:#087a64}.activity-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:5px;background:#eae7ef;border-radius:17px;margin:14px 0 5px;position:sticky;top:66px;z-index:3;box-shadow:0 8px 20px rgba(48,35,64,.08)}.activity-tab{min-width:0;height:49px;background:transparent;color:#79737f;border-radius:13px;box-shadow:none;touch-action:manipulation;transition:transform .12s ease,background .2s ease,color .2s ease,box-shadow .2s ease}.activity-tab.active{background:#fff;color:var(--purple);box-shadow:0 4px 12px rgba(48,35,64,.1)}.activity-tab.return.active{color:#0f9076}.tab-count{display:inline-grid;place-items:center;min-width:23px;height:23px;margin-left:5px;padding:0 6px;border-radius:999px;background:#eaddff;color:var(--purple-dark);font-size:11px}.activity-tab.return .tab-count{background:#d8f8ef;color:#087a64}.time-group{margin-top:20px}.time-head{display:flex;align-items:center;gap:10px;margin:0 4px 10px;font-size:13px;font-weight:900;color:#38323e}.time-head:after{content:"";height:1px;background:#dfdbe4;flex:1}.time-head.return{color:#0f9076}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:13px}.card{min-height:128px;display:flex;overflow:hidden;border-radius:20px;background:#fff;border:1px solid rgba(235,232,239,.96);box-shadow:0 8px 24px rgba(48,35,64,.075);transition:transform .18s ease,box-shadow .18s ease}.card.returned{opacity:.72;border-color:#bcefe2}.photo{width:124px;flex:none;margin:10px;border-radius:15px;overflow:hidden;background:linear-gradient(145deg,#f2edfa,#ece8f1);display:grid;place-items:center;color:#a29ca8;font-size:30px}.photo img{width:100%;height:100%;object-fit:cover}.content{padding:17px 16px 15px 4px;min-width:0;flex:1}.titleline{display:flex;gap:8px;align-items:flex-start;justify-content:space-between}.name{font-size:16px;line-height:1.38;font-weight:900;color:#211d25}.qty{white-space:nowrap;padding:3px 7px;border-radius:8px;background:#f3eefb;color:var(--purple-dark);font-size:12px;font-weight:900}.variant{margin-top:6px;display:inline-block;padding:4px 8px;border-radius:999px;color:var(--purple-dark);background:var(--purple-soft);font-size:10px;font-weight:850}.location{margin-top:10px;padding:8px 10px;border-radius:10px;background:#f7f3fd;color:#4c1d95;font-size:14px;font-weight:950}.location:before{content:"⌖";color:#8b5cf6;margin-right:6px}.meta{margin-top:7px;color:var(--dim);font-size:10.5px;font-weight:750}.exempt-note{margin-top:7px;padding:7px 9px;border-radius:9px;background:#fff7ed;color:#9a3412;font-size:10.5px;font-weight:850;line-height:1.45}.empty{padding:38px 24px;text-align:center;color:var(--dim);border-radius:20px;font-size:13px;font-weight:750}@media(hover:hover){.card:hover{transform:translateY(-2px);box-shadow:0 13px 28px rgba(48,35,64,.11)}button:not(:disabled):hover{filter:brightness(1.03)}}@media(max-width:520px){body{background:linear-gradient(180deg,#fff 0,#f7f5fa 380px,#f5f4f8 100%)}.top{height:54px;font-size:15px}.wrap{width:min(100% - 22px,820px);padding-top:12px}.intro{min-height:208px;padding:24px 22px 54px;border-radius:24px}.intro h1{font-size:27px}.intro p{font-size:13px}.box{margin:-30px 10px 0;padding:15px;border-radius:19px}.row{align-items:stretch;flex-wrap:wrap}.date-field{flex:1 1 100%}.serial-field{flex:.65}.row button{width:100%}.summary{align-items:flex-start;flex-direction:column;padding:18px}.status{font-size:10.5px;text-align:left}.activity-tabs{top:61px}.grid{grid-template-columns:1fr}.photo{width:105px;margin:9px}.content{padding:14px 13px 13px 2px}.name{font-size:15px}.time-head{font-size:12px}}@media(prefers-reduced-motion:reduce){button,.card,input{transition:none}}
+  </style>
+  <style>
+    /* 메인 WMS의 블루 팔레트와 맞춘 Finnq형 레이아웃 컬러 오버라이드 */
+    :root{background:#f4f7fb;--purple:#4f76b9;--purple-dark:#345b9c;--purple-soft:#eef4fb;--line:#e2e8f0;--dim:#64748b}
+    html{background:#f4f7fb}
+    body{background:linear-gradient(180deg,#fff 0,#f7f9fc 460px,#f4f7fb 100%)}
+    .top{border-bottom-color:rgba(226,232,240,.9)}
+    .top:before{content:"";width:8px;height:8px;border-radius:50%;margin-right:9px;background:#5e8bc5;box-shadow:0 0 0 4px #edf4fb}
+    .intro{min-height:202px;background:linear-gradient(135deg,#416faf 0%,#4f82bd 58%,#68a4ca 100%);box-shadow:0 18px 40px rgba(50,96,150,.18)}
+    .intro h1{margin-top:10px}
+    .box,.summary,.empty{border-color:rgba(226,232,240,.96);box-shadow:0 10px 30px rgba(30,64,175,.075)}
+    input{border-color:#dbe4f0;background:#f8fafc}
+    input:focus{border-color:#668fc4;box-shadow:0 0 0 4px rgba(79,118,185,.11)}
+    button{background:linear-gradient(135deg,#4f76b9,#5f91c8);box-shadow:0 8px 18px rgba(50,96,150,.17)}
+    .activity-tabs{background:#e8edf5;box-shadow:0 8px 20px rgba(30,64,175,.07)}
+    .tab-count{background:#dbeafe}
+    .card{border-color:rgba(226,232,240,.98);box-shadow:0 8px 24px rgba(30,64,175,.065)}
+    .photo{background:linear-gradient(145deg,#eff6ff,#e8eef7)}
+    .qty{background:#eaf2ff}
+    .location{background:#eff6ff;color:#1e40af}
+    .location:before{color:#5e8bc5}
+    .flow{margin-top:20px}.flow-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 4px 11px}.flow-kicker{color:var(--purple);font-size:11px;font-weight:900;letter-spacing:.05em}.flow-head h2{margin:3px 0 0;font-size:21px}.flow-step{color:var(--purple-dark);font-size:15px;font-weight:950}.flow-track{height:7px;margin-bottom:14px;border-radius:999px;background:#dfe8f3;overflow:hidden}.flow-track span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#4f76b9,#68a4ca);transition:width .25s ease}.flow-card{min-height:152px;border:2px solid #dbe7f4;box-shadow:0 12px 30px rgba(50,96,150,.1)}.flow-card.returned{opacity:1}.flow-confirm{width:100%;height:58px;margin-top:14px;font-size:16px}.flow-help{margin:9px 0 0;color:var(--dim);font-size:11px;font-weight:750;text-align:center}.flow-finished{margin-top:20px;padding:36px 24px;border:1px solid #dce7f3;border-radius:22px;background:#fff;text-align:center;box-shadow:0 10px 28px rgba(50,96,150,.08)}.flow-finished-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:50%;display:grid;place-items:center;background:#e9f7f2;color:#0f9076;font-size:25px;font-weight:950}.flow-finished h2{margin:0;font-size:21px}.flow-finished p{margin:9px auto 0;max-width:440px;color:var(--dim);font-size:13px;line-height:1.6}.flow-waiting{display:inline-flex;margin-top:15px;padding:8px 12px;border-radius:999px;background:#eef4fb;color:#345b9c;font-size:11px;font-weight:900}
+    .status{height:auto;min-width:0;padding:9px 13px;border:1px solid #d7e4f2;background:#eef4fb;color:#345b9c;box-shadow:none;line-height:1.35}.status:not(:disabled):after{content:" ›"}.status:disabled{cursor:default;opacity:1;background:#f1f5f9;color:#64748b}.history{margin-top:20px}.history-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 3px 12px}.history-head h2{margin:0;font-size:21px}.history-head p{margin:5px 0 0;color:var(--dim);font-size:12px}.history-close{height:40px;min-width:0;padding:0 13px;border:1px solid #d7e4f2;background:#fff;color:#345b9c;box-shadow:none;font-size:12px}.history-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:13px}.history-grid .flow-card{min-height:128px;border-width:1px}
+    .history-section-title{display:flex;align-items:center;gap:9px;margin:18px 3px 10px;color:#345b9c;font-size:13px;font-weight:950}.history-section-title:after{content:"";height:1px;flex:1;background:#dbe5f0}.history-section-title.cancel{margin-top:24px;color:#9a5b21}.history-section-title.cancel:after{background:#f0dfcc}
+    .route-notice-inline{margin-top:20px;padding:34px 28px 28px;border:1px solid #dce7f3;border-radius:22px;background:#fff;box-shadow:0 10px 28px rgba(50,96,150,.08);text-align:center}.route-notice-icon{width:68px;height:68px;margin:0 auto 18px;border-radius:22px;display:grid;place-items:center;background:linear-gradient(145deg,#eaf2fc,#dceafb);color:#3f6faa;font-size:34px;font-weight:950}.route-notice-label{display:inline-flex;padding:6px 10px;border-radius:999px;background:#eef4fb;color:#345b9c;font-size:11px;font-weight:950}.route-notice-inline h2{margin:13px 0 0;color:#172033;font-size:25px;line-height:1.3;letter-spacing:-.045em}.route-notice-inline p{margin:10px auto 22px;max-width:430px;color:#64748b;font-size:13px;font-weight:700;line-height:1.65}.route-notice-confirm{width:min(360px,100%);height:56px;font-size:16px}.route-notice-confirm:focus-visible{outline:3px solid rgba(79,118,185,.28);outline-offset:3px}
+    @media(hover:hover){.card:hover{box-shadow:0 13px 28px rgba(30,64,175,.1)}}
+    @media(max-width:520px){body{background:linear-gradient(180deg,#fff 0,#f7f9fc 380px,#f4f7fb 100%)}.route-notice-inline{padding:28px 20px 20px;border-radius:20px}.route-notice-inline h2{font-size:23px}}
+  </style>
+</head>
+<body>
+  <div class="top">대여 물품 위치 확인</div>
+  <main class="wrap">
+    <section class="intro"><h1>물품 위치를<br />빠르게 확인하세요</h1><p>4자리 사번으로 대여 물품과 창고 보관 위치를 한 번에 확인할 수 있습니다.</p></section>
+    <form class="box" id="search-form"><label for="employee-id">사번</label><div class="row"><div class="field date-field"><input id="employee-id" inputmode="numeric" autocomplete="off" autofocus placeholder="4자리 사번" maxlength="4" /></div><button id="submit" type="submit">조회</button></div><div class="error" id="error" hidden></div></form>
+    <section class="result" id="result" hidden><div class="summary"><div><div class="caption">대여자</div><div class="number" id="number"></div></div><button type="button" class="status" id="status" disabled></button></div><div class="activity-tabs" role="tablist"><button type="button" class="activity-tab active" id="borrow-tab" role="tab" aria-selected="true">대여 물품 확인 <span class="tab-count" id="borrow-count">0</span></button><button type="button" class="activity-tab return" id="return-tab" role="tab" aria-selected="false">미확인 반납 <span class="tab-count" id="return-count">0</span></button></div><div id="items"></div></section>
+  </main>
+  <script>
+    const BASE = "__LOOKUP_PATH__";
+    const form = document.getElementById("search-form"), employeeInput = document.getElementById("employee-id"), button = document.getElementById("submit"), error = document.getElementById("error"), result = document.getElementById("result"), items = document.getElementById("items"), statusButton = document.getElementById("status"), activityTabs = document.querySelector(".activity-tabs"), borrowTab = document.getElementById("borrow-tab"), returnTab = document.getElementById("return-tab");
+    let loadedItems = [], activeTab = "borrow", contentMinHeight = 0, currentEmployeeId = "", pollTimer = 0, routeNoticePending = false;
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const timeLabel = (value) => {
+      const raw = String(value || "").trim();
+      if (!raw) return "시각 미기록";
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw)) return raw.slice(0, 16);
+      const date = new Date(raw);
+      return Number.isNaN(date.getTime()) ? raw.slice(0, 16) : new Intl.DateTimeFormat("ko-KR", { timeZone:"Asia/Seoul", year:"numeric", month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }).format(date);
+    };
+    const itemKey = (item) => String(item.key || `${item.eventType}:${item.id}:${item.eventTime}:${item.name}`);
+    const progressKey = (tab) => `wms_lookup_flow_v1:${currentEmployeeId}:${tab}`;
+    const readDone = (tab) => {
+      try { const value = JSON.parse(localStorage.getItem(progressKey(tab)) || "[]"); return Array.isArray(value) ? value.map(String) : []; }
+      catch { return []; }
+    };
+    const writeDone = (tab, keys) => {
+      try { localStorage.setItem(progressKey(tab), JSON.stringify(keys)); } catch { /* 진행 중에는 메모리 렌더링을 계속한다. */ }
+    };
+    const isCancelled = (item) => !!item.cancelled || item.returnSource === "cancel";
+    const orderedItems = (tab) => {
+      // 반납 동선에는 관리자 반납·본인 반납·무인 반납만 올린다. 취소·양도·교체·파손은 "이번 근무일 반납"에서만 보인다.
+      // 대여 동선에는 아직 대여 확인(관리자 확인 또는 무인 PC에서 본인 확인)이 안 된 물품만 남긴다.
+      // 체크 여부와 상관없이 확인되면 사라진다.
+      const selected = loadedItems.filter((item) => tab === "return" ? item.returned && SHELF_RETURN_SOURCES.has(item.returnSource) && !item.returnStepAutoDone : (!item.returned && !item.pickedUp));
+      if (tab === "return") return selected;
+      return selected.filter((item) => !item.typeLimitExempt).concat(selected.filter((item) => item.typeLimitExempt));
+    };
+    // 사용자가 아직 "가져갔어요/반납했어요"를 누르지 않은 물품 수. 0이면 그 탭은 숨긴다.
+    const pendingCount = (tab) => {
+      const doneSet = new Set(readDone(tab));
+      return orderedItems(tab).filter((item) => !doneSet.has(itemKey(item))).length;
+    };
+    // 대여와 반납이 함께 있으면 반납을 먼저 열되, 사용자가 대여 탭으로 직접 전환할 수 있다.
+    const nextTab = () => pendingCount("return") ? "return" : pendingCount("borrow") ? "borrow" : "empty";
+    const refreshTabs = () => {
+      const borrowPending = pendingCount("borrow"), returnPending = pendingCount("return");
+      borrowTab.hidden = borrowPending === 0;
+      returnTab.hidden = returnPending === 0;
+      activityTabs.hidden = borrowPending === 0 && returnPending === 0;
+      activityTabs.style.gridTemplateColumns = borrowPending > 0 && returnPending > 0 ? "1fr 1fr" : "1fr";
+      document.getElementById("borrow-count").textContent = borrowPending;
+      document.getElementById("return-count").textContent = returnPending;
+    };
+    const RETURN_LABELS = { admin:"관리자 반납 처리 완료", self:"본인 반납 완료", unattended:"무인 반납 완료", cancel:"취소", transfer:"양도", swap:"관리자 물품 교체", damage:"파손 반납" };
+    const SHELF_RETURN_SOURCES = new Set(["admin", "self", "unattended"]);
+    // 이번 근무일 반납 목록은 내역 확인용이라 보관 위치를 싣지 않는다(showLocation=false).
+    const cardHtml = (item, showLocation = true) => `<article class="card flow-card ${item.returned ? "returned" : ""}"><div class="photo">${item.image ? `<img src="${esc(item.image)}" alt="${esc(item.name)} 사진" />` : "▦"}</div><div class="content"><div class="titleline"><div class="name">${esc(item.name)}</div><div class="qty">× ${Number(item.quantity)||1}</div></div>${item.variantName ? `<div class="variant">종류 · ${esc(item.variantName)}</div>` : ""}${showLocation ? `<div class="location">${esc(item.location || "위치 미등록")}</div>` : ""}${item.scenarioId ? `<div class="meta">SID ${esc(item.scenarioId)}</div>` : ""}<div class="meta">${item.returned ? (RETURN_LABELS[item.returnSource] || "반납 완료") : "대여 확인 전"} · ${esc(timeLabel(item.eventTime))}</div>${item.typeLimitExempt ? `<div class="exempt-note">한도 제외${item.typeLimitExemptReason ? ` · ${esc(item.typeLimitExemptReason)}` : ""}</div>` : ""}</div></article>`;
+    const renderItems = () => {
+      if (routeNoticePending) {
+        items.innerHTML = `<section class="route-notice-inline" aria-labelledby="route-notice-title"><div class="route-notice-icon" aria-hidden="true">→</div><div class="route-notice-label">대여 · 반납 공통 안내</div><h2 id="route-notice-title">일방통행으로 이동해주세요</h2><p>안전하고 원활한 이동을 위해 화면에 표시되는 물품 순서대로 이동해주세요.</p><button type="button" class="route-notice-confirm">확인</button></section>`;
+        const confirm = items.querySelector(".route-notice-confirm");
+        confirm.addEventListener("click", () => {
+          routeNoticePending = false;
+          renderItems();
+          window.scrollTo({ top: items.offsetTop - 74, behavior: "smooth" });
+        });
+        requestAnimationFrame(() => confirm.focus());
+        return;
+      }
+      if (activeTab === "empty") {
+        borrowTab.classList.remove("active"); returnTab.classList.remove("active");
+        borrowTab.setAttribute("aria-selected", "false"); returnTab.setAttribute("aria-selected", "false");
+        items.innerHTML = `<div class="empty">지금 보여드릴 물품이 없습니다.</div>`;
+        return;
+      }
+      if (activeTab === "history") {
+        borrowTab.classList.remove("active"); returnTab.classList.remove("active");
+        borrowTab.setAttribute("aria-selected", "false"); returnTab.setAttribute("aria-selected", "false");
+        const history = loadedItems.filter((item) => item.returned), returned = history.filter((item) => !isCancelled(item)), cancelled = history.filter(isCancelled);
+        items.innerHTML = `<section class="history"><div class="history-head"><div><h2>이번 근무일 처리 내역</h2><p>실제 반납과 대여 확인 전 취소를 구분한 내역입니다.</p></div><button type="button" class="history-close">닫기</button></div>${returned.length ? `<h3 class="history-section-title">반납 · ${returned.length}종</h3><div class="history-grid">${returned.map((item) => cardHtml(item, false)).join("")}</div>` : ""}${cancelled.length ? `<h3 class="history-section-title cancel">취소 · ${cancelled.length}종</h3><div class="history-grid">${cancelled.map((item) => cardHtml(item, false)).join("")}</div>` : ""}</section>`;
+        items.querySelector(".history-close").addEventListener("click", () => {
+          activeTab = nextTab();
+          renderItems();
+        });
+        return;
+      }
+      const selected = orderedItems(activeTab);
+      borrowTab.classList.toggle("active", activeTab === "borrow"); returnTab.classList.toggle("active", activeTab === "return");
+      borrowTab.setAttribute("aria-selected", String(activeTab === "borrow")); returnTab.setAttribute("aria-selected", String(activeTab === "return"));
+      if (!selected.length) { items.innerHTML = `<div class="empty">${activeTab === "return" ? "제자리에 놓을 반납 물품이 없습니다." : "대여 확인을 기다리는 물품이 없습니다."}</div>`; return; }
+      const validKeys = new Set(selected.map(itemKey));
+      const doneKeys = readDone(activeTab).filter((key) => validKeys.has(key));
+      writeDone(activeTab, doneKeys);
+      const doneSet = new Set(doneKeys);
+      const current = selected.find((item) => !doneSet.has(itemKey(item)));
+      if (!current) {
+        // 이 탭에서 더 확인할 물품이 없으면 남은 탭으로 넘기고, 둘 다 없으면 빈 화면을 보여준다.
+        refreshTabs();
+        activeTab = nextTab();
+        renderItems();
+        return;
+      }
+      const completed = doneKeys.length, total = selected.length, percent = Math.round((completed / total) * 100);
+      items.innerHTML = `<section class="flow"><div class="flow-head"><div><div class="flow-kicker">${activeTab === "return" ? "반납 동선" : "픽업 동선"}</div><h2>${completed + 1}번째 물품</h2></div><div class="flow-step">${completed + 1} / ${total}</div></div><div class="flow-track"><span style="width:${percent}%"></span></div>${cardHtml(current)}<button type="button" class="flow-confirm">${activeTab === "return" ? "이 물품을 제자리에 반납했어요" : "이 물품을 가져갔어요"}</button><p class="flow-help">${activeTab === "return" ? "반납 처리 후 30분이 지나면 누르지 않아도 이 위치 안내가 자동으로 종료됩니다." : "확인해야 다음 물품과 위치가 표시됩니다."}</p></section>`;
+      items.querySelector(".flow-confirm").addEventListener("click", () => {
+        const nextDone = doneKeys.concat(itemKey(current));
+        writeDone(activeTab, nextDone);
+        refreshTabs();
+        if (navigator.vibrate) navigator.vibrate(18);
+        renderItems();
+        window.scrollTo({ top: document.querySelector(".activity-tabs").offsetTop - 68, behavior: "smooth" });
+      });
+    };
+    const switchTab = (next) => {
+      if (activeTab === next) return;
+      const scrollBefore = window.scrollY;
+      contentMinHeight = Math.max(contentMinHeight, items.offsetHeight);
+      items.style.minHeight = `${contentMinHeight}px`;
+      activeTab = next;
+      if (navigator.vibrate) navigator.vibrate(12);
+      renderItems();
+      // 탭마다 물품 수가 달라도 문서 높이가 갑자기 줄지 않게 하고 현재 읽던 위치를 유지한다.
+      requestAnimationFrame(() => {
+        contentMinHeight = Math.max(contentMinHeight, items.scrollHeight);
+        items.style.minHeight = `${contentMinHeight}px`;
+        window.scrollTo({ top: scrollBefore, left: 0, behavior: "auto" });
+      });
+    };
+    borrowTab.addEventListener("click", () => switchTab("borrow"));
+    returnTab.addEventListener("click", () => switchTab("return"));
+    statusButton.addEventListener("click", () => {
+      if (statusButton.disabled) return;
+      activeTab = "history";
+      renderItems();
+      window.scrollTo({ top: result.offsetTop - 60, behavior: "smooth" });
+    });
+    const preset = new URLSearchParams(location.search).get("employeeId") || "";
+    // 사번이 포함된 QR 링크도 조회 후 공통 동선 안내를 먼저 보여준다.
+    if (/^\d{4}$/.test(preset)) { employeeInput.value = preset; setTimeout(() => form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit", { cancelable: true })), 0); }
+    employeeInput.addEventListener("input", () => { employeeInput.value = employeeInput.value.replace(/\D/g, "").slice(0, 4); error.hidden = true; });
+    const applyLookupData = (data, preserveTab) => {
+      currentEmployeeId = String(data.employeeId || currentEmployeeId);
+      document.getElementById("number").textContent = `${data.borrowerName} · ${data.employeeId}`;
+      loadedItems = (data.items || []).map((item) => ({ ...item, returnSource: item.returnSource || (item.cancelled ? "cancel" : "") }));
+      const handledToday = loadedItems.filter((item) => item.returned), returnedToday = handledToday.filter((item) => !isCancelled(item)).length, cancelledToday = handledToday.filter(isCancelled).length;
+      // 처리 내역은 이 버튼을 눌렀을 때만 펼친다. 대여 확인 전에 닫힌 건은 반납이 아니라 취소다.
+      statusButton.textContent = returnedToday && cancelledToday ? `이번 근무일 · 반납 ${returnedToday}종 · 취소 ${cancelledToday}종 보기` : returnedToday ? `이번 근무일 반납 · ${returnedToday}종 보기` : `이번 근무일 취소 · ${cancelledToday}종 보기`;
+      statusButton.hidden = handledToday.length === 0;
+      statusButton.disabled = handledToday.length === 0;
+      refreshTabs();
+      const borrowPending = pendingCount("borrow"), returnPending = pendingCount("return");
+      const next = nextTab();
+      if (!preserveTab || activeTab === "empty" || (activeTab === "borrow" && !borrowPending) || (activeTab === "return" && !returnPending) || (activeTab === "history" && !handledToday.length)) activeTab = next;
+      if (!preserveTab) routeNoticePending = true;
+      contentMinHeight = 0; items.style.minHeight = "0";
+      renderItems();
+      result.hidden = false;
+    };
+    const loadLookup = async (employeeId, silent = false) => {
+      if (!silent) { button.disabled = true; button.textContent = "조회 중"; error.hidden = true; result.hidden = true; }
+      try {
+        const response = await fetch(BASE + "/api?employeeId=" + encodeURIComponent(employeeId), { cache:"no-store" });
+        // 서버 재시작 중 등으로 JSON이 아닌 응답이 오면 파싱 오류 문구 대신 안내를 보여준다.
+        const data = await response.json().catch(() => ({ success: false, error: response.status === 429 ? "잠시 후 다시 시도해주세요." : "서버 응답을 읽지 못했습니다. 잠시 후 다시 시도해주세요." }));
+        if (!response.ok || !data.success) throw new Error(data.error || "조회하지 못했습니다.");
+        if (!data.found) throw new Error("등록된 사번을 찾지 못했습니다. 사번을 다시 확인해주세요.");
+        applyLookupData(data, silent);
+      } catch (e) {
+        if (!silent) { error.textContent = e.message || "조회 중 오류가 발생했습니다."; error.hidden = false; }
+      } finally {
+        if (!silent) { button.disabled = false; button.textContent = "조회"; }
+      }
+    };
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const employeeId = employeeInput.value.replace(/\D/g, "");
+      if (employeeId.length !== 4) {
+        // 휴대폰을 돌려 쓰는 경우 앞사람의 조회 결과와 자동 새로고침이 남지 않게 한다.
+        window.clearInterval(pollTimer); result.hidden = true; loadedItems = [];
+        error.textContent = "4자리 사번을 입력해주세요."; error.hidden = false; return;
+      }
+      currentEmployeeId = employeeId;
+      window.clearInterval(pollTimer);
+      await loadLookup(employeeId);
+      // 관리자 확인 상태는 자동 반영하되, QR 사용자가 여럿이어도 조회 제한에 걸리지 않도록
+      // 짧은 연속 요청 대신 15초 간격으로만 갱신한다.
+      if (!result.hidden) pollTimer = window.setInterval(() => loadLookup(employeeId, true), 15000);
+    });
+  </script>
+</body>
+</html>

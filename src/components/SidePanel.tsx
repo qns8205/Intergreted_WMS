@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { InventoryItem, Rack } from "../types";
-import { parseLocation, hexToRgba, getGoogleDriveImageUrl } from "../utils/drive";
+import { parseLocation, hexToRgba, getThumbImageUrl } from "../utils/drive";
 import { Trash2, Edit3, Plus, ExternalLink, Image, Package } from "lucide-react";
 
 interface SidePanelProps {
@@ -584,7 +584,7 @@ export default function SidePanel({
                           {/* Items belonging to this subcategory */}
                           {subItems.map((item) => {
                             const hasImage = !!item.photo;
-                            const imageUrl = hasImage ? getGoogleDriveImageUrl(item.photo) : "";
+                            const imageUrl = hasImage ? getThumbImageUrl(item.photo) : "";
                             const isItemHighlighted = highlightedItemRowIndex === item.rowIndex;
 
                             return (

@@ -5,15 +5,16 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 
 // Subcomponents
 import AdminConnectionSettings from "./components/AdminConnectionSettings";
+import NotificationBell from "./components/NotificationBell";
 import DbViewerPage from "./components/DbViewerPage";
 import ScenarioChangesPage from "./components/ScenarioChangesPage";
+import WarehouseChangesPage from "./components/WarehouseChangesPage";
 import ReturnPhotosPage from "./components/ReturnPhotosPage";
 import ItemFormModal from "./components/ItemFormModal";
 import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap, withGasConcurrencyLimit, clearIdentity } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import AdminReturnPage from "./components/AdminReturnPage";
 import AdminDirectBorrowModal from "./components/AdminDirectBorrowModal";
-import ItemSetManageModal from "./components/ItemSetManageModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
 import SidePanel from "./components/SidePanel";
 import RackGroupedView from "./components/RackGroupedView";
@@ -28,10 +29,10 @@ import RentalPage from "./components/RentalPage";
 import BorrowSystemPage from "./components/BorrowSystemPage";
 import BrowsePage from "./components/BrowsePage";
 import BorrowerLoginPage, { BorrowerSession } from "./components/BorrowerLoginPage";
-import MobileViewPage from "./components/MobileViewPage";
 import UnattendedModeSettings from "./components/UnattendedModeSettings";
 import UnattendedReturnPage from "./components/UnattendedReturnPage";
 import { getVersionWorkItems, VERSION_WORK_CHANGED_EVENT, VersionWorkItem } from "./utils/versionWorkGuard";
+import { adminHeaders, getAdminToken, logoutAdmin } from "./utils/adminAuth";
 
 // Icons
 import {
@@ -179,7 +180,7 @@ export default function App() {
   // 1. 상태 선언
   // 열람 화면에 어느 단계로 들어갈지 (SID 열람 등)
   const [browseInitialStep, setBrowseInitialStep] = useState<"sid" | "sidBorrow" | null>(null);
-  const [currentView, setCurrentView] = useState<"gate" | "borrowerLogin" | "seatChange" | "landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap" | "adminReturn" | "adminBorrow" | "connectionSettings" | "rentalSettings" | "dbViewer" | "scenarioChanges" | "returnPhotos" | "tablecloth" | "unattended">("landing");
+  const [currentView, setCurrentView] = useState<"gate" | "borrowerLogin" | "seatChange" | "landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap" | "adminReturn" | "adminBorrow" | "connectionSettings" | "rentalSettings" | "dbViewer" | "scenarioChanges" | "toolChanges" | "returnPhotos" | "tablecloth" | "unattended">("landing");
   // 무인 화면에서는 브라우저 뒤로가기도 일반 모드 이탈 수단이 되면 안 된다.
   // 하단 관리자 로그인이 성공한 순간에만 이 잠금을 해제한다.
   const unattendedLockedRef = useRef(typeof window !== "undefined" && window.location.hash.split("/")[1] === "unattended");
@@ -241,7 +242,7 @@ export default function App() {
   const baselineAppVersionRef = useRef<string | null>(null);
   // 열람 조회 → 대여 신청으로 넘길 신원 정보 (장바구니 연동)
   const [borrowIdentity, setBorrowIdentity] = useState<{ name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null>(null);
-  const [borrowKind, setBorrowKind] = useState<"scenario" | "warehouse" | "tablecloth" | null>(null);
+  const [borrowKind, setBorrowKind] = useState<"scenario" | "tablecloth" | null>(null);
   // 물품 열람의 신원 입력에서 받아둔 좌석. 대여 화면이 같은 것을 또 묻지 않도록 넘겨준다.
   const [borrowSeat, setBorrowSeat] = useState<{ floor: string; unit: string } | null>(null);
   // SID 대여로 담았다면 그 번호. 대여 화면이 방식과 SID를 다시 묻지 않는다.
@@ -324,6 +325,9 @@ export default function App() {
       return false;
     }
   });
+  // 대기 중인 가입 신청 수. 사이드바 "계정 설정" 옆에 띄운다(상단 알림 벨이 주기적으로 알려준다).
+  const [pendingSignups, setPendingSignups] = useState(0);
+  useEffect(() => { if (!isAdmin) setPendingSignups(0); }, [isAdmin]);
   const [mountedAdminViews, setMountedAdminViews] = useState<Set<PersistentAdminView>>(() => new Set());
   useEffect(() => {
     if (!isAdmin || !isPersistentAdminView(currentView)) return;
@@ -445,7 +449,7 @@ export default function App() {
         setCurrentView("adminReturn");
       } else if (path === "adminBorrow") {
         setCurrentView("adminBorrow");
-      } else if (path === "scenario") {
+      } else if (path === "scenario" || path === "scenariotab") {
         setCurrentView("scenario");
       } else if (path === "seatmap") {
         setCurrentView("seatmap");
@@ -457,7 +461,9 @@ export default function App() {
         setCurrentView("dbViewer");
       } else if (path === "scenarioChanges") {
         setCurrentView("scenarioChanges");
-      } else if (path === "tablecloth") {
+      } else if (path === "toolChanges") {
+        setCurrentView("toolChanges");
+      } else if (path === "tablecloth" || path === "tableclothtab") {
         setCurrentView("tablecloth");
       } else if (path === "returnPhotos") {
         setCurrentView("returnPhotos");
@@ -472,7 +478,7 @@ export default function App() {
       // 이 로직을 타면 원래 보여야 할 "물품 관리 / 대여 & 반납 관리" 선택 화면이 사라진다.
       const isDirectSectionLink = hash.split("/")[2] === "direct";
       if (isDirectSectionLink) {
-        if (path === "monitor" || path === "scenario" || path === "defect" || path === "returnPhotos" || path === "tablecloth") {
+        if (path === "monitor" || path === "toolChanges" || path === "scenario" || path === "defect" || path === "returnPhotos" || path === "tablecloth") {
           setAdminSection("items");
         } else if (path === "adminReturn" || path === "adminBorrow" || path === "rent" || path === "seatmap") {
           setAdminSection("rental");
@@ -525,9 +531,7 @@ export default function App() {
   const [maxItemTypesDefault, setMaxItemTypesDefault] = useState("");
   const [savingMaxItemTypes, setSavingMaxItemTypes] = useState(false);
   function adminApiHeaders(): HeadersInit {
-    let adminId = "";
-    try { adminId = localStorage.getItem("wms_admin_id") || ""; } catch {}
-    return { "Content-Type": "application/json", "x-admin-id": adminId };
+    return adminHeaders({ "Content-Type": "application/json" });
   }
   useEffect(() => {
     if (!isAdmin) return;
@@ -750,14 +754,12 @@ export default function App() {
   const [defaultSpecForNewItem, setDefaultSpecForNewItem] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [stockAdjustItem, setStockAdjustItem] = useState<InventoryItem | null>(null);
-  const [showItemSetManager, setShowItemSetManager] = useState(false);
 
   // 탭(뷰)을 전환하면 열려 있던 품목 편집/추가 모달을 닫는다.
   useEffect(() => {
     setEditingItem(null);
     setShowAddForm(false);
     setStockAdjustItem(null);
-    setShowItemSetManager(false);
   }, [currentView]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -771,8 +773,7 @@ export default function App() {
   const [displayMode, setDisplayMode] = useState<"grid" | "canvas">("grid");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   // 모바일에서는 사이드바가 화면을 가리므로 평소에는 접어두고 햄버거로 연다.
-  // 예전에는 모바일 전용 화면(MobileViewPage)이 탭 막대를 따로 갖고 있었는데, 같은 기능을
-  // 두 벌로 만들다 보니 한쪽만 고쳐지고 검색창도 둘로 갈렸다. 이제 PC와 같은 사이드바를 쓴다.
+  // 관리 화면마다 모바일용을 따로 만들지 않는다 — PC와 같은 사이드바(서랍)로 오간다.
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useEffect(() => { setMobileNavOpen(false); }, [currentView]);
 
@@ -920,6 +921,23 @@ export default function App() {
     safeSetLocalStorage("wms_is_admin", String(isAdmin));
   }, [isAdmin]);
 
+  // 브라우저에 남은 "관리자" 표시만 믿지 않는다 — 서버 세션이 살아 있는지 처음에 한 번 확인한다.
+  // (예전 방식으로 로그인해 둔 브라우저도 여기서 한 번 다시 로그인하게 된다)
+  useEffect(() => {
+    if (!isAdmin) return;
+    const dropAdmin = () => {
+      setIsAdmin(false);
+      setCurrentUser(null);
+      try { localStorage.removeItem("wms_current_user"); } catch { /* 저장소 접근 불가 */ }
+      showToast("관리자 로그인이 만료되었습니다. 다시 로그인해주세요.", "warn");
+    };
+    if (!getAdminToken()) { dropAdmin(); return; }
+    fetch("/api/admin/me", { headers: adminHeaders(), cache: "no-store" })
+      .then((r) => { if (r.status === 401) dropAdmin(); })
+      .catch(() => { /* 서버에 못 닿으면 그대로 둔다 — 다음 요청에서 다시 확인된다 */ });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   /* ---------------- 로컬 백엔드 API 연동 로직 ---------------- */
   async function callScript(action: string, payload: any) {
     if (!scriptUrl) throw new Error("서버 연동 URL이 입력되지 않았습니다.");
@@ -933,7 +951,7 @@ export default function App() {
     try {
       res = await withGasConcurrencyLimit(() => fetch(scriptUrl, {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" }, // CORS 프리플라이트를 피하기 위한 text/plain 설정
+        headers: adminHeaders({ "Content-Type": "text/plain;charset=utf-8" }), // CORS 프리플라이트를 피하기 위한 text/plain 설정
         body: JSON.stringify({
           action,
           payload: payload && typeof payload === "object" && !Array.isArray(payload)
@@ -983,7 +1001,7 @@ export default function App() {
           const bust = `_ts=${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
           const url = `${scriptUrl}?action=getAll&part=${part}${forceRefresh ? "&forceRefresh=1" : ""}&${bust}`;
           try {
-            const r = await withGasConcurrencyLimit(() => fetch(url, { cache: "no-store" }));
+            const r = await withGasConcurrencyLimit(() => fetch(url, { cache: "no-store", headers: adminHeaders() }));
             const t = await r.text();
             d = JSON.parse(t); // 조각이 JSON이 아니면 catch로 넘어가 재시도
             lastErr = null;
@@ -1728,7 +1746,7 @@ export default function App() {
     }
   }
 
-  // 공구 및 부품류 물품 여러 개를 골라서 한 번에 다른 위치로 옮긴다 (RackGroupedView의 "선택해서 위치 이동").
+  // COS 물품 물품 여러 개를 골라서 한 번에 다른 위치로 옮긴다 (RackGroupedView의 "선택해서 위치 이동").
   async function handleBulkMoveLocation(rowIndexes: number[], newLocation: string) {
     const itemsToUpdate = inventory.filter((item) => rowIndexes.includes(item.rowIndex));
     if (itemsToUpdate.length === 0) return;
@@ -1798,7 +1816,7 @@ export default function App() {
     }
   }
 
-  // 공구 및 부품류 보관 처리 토글 — 시나리오 물품의 보관함과 같은 개념: 목록·대여 카탈로그에서 치워둔다.
+  // COS 물품 보관 처리 토글 — 시나리오 물품의 보관함과 같은 개념: 목록·대여 카탈로그에서 치워둔다.
   async function toggleArchiveInventoryItem(item: InventoryItem) {
     const next = !item.archived;
     setInventory((prev) => prev.map((i) => (i.rowIndex === item.rowIndex ? { ...i, archived: next } : i)));
@@ -1835,6 +1853,7 @@ export default function App() {
           setLastSync(new Date());
           safeSetLocalStorage("wms_last_sync", new Date().toISOString());
           showToast("✅ 불량 로그 DB 기록 완료", "ok");
+          window.dispatchEvent(new Event("wms-notifications-changed"));
         })
         .catch((err: any) => {
           console.error("불량로그 동기화 실패:", err);
@@ -1974,12 +1993,12 @@ export default function App() {
    * 관리자든 대여자든 로그인해야 안으로 들어간다. 예전에는 아무나 바로 열람·대여로
    * 들어갈 수 있어서, 누가 무엇을 빌렸는지는 신청 순간에야 알 수 있었다. */
   if (currentView === "unattended") {
-    return <UnattendedReturnPage isLightMode={isLightMode} showToast={showToast} onAdminExit={(user) => { unattendedLockedRef.current = false; setCurrentUser(user); safeSetLocalStorage("wms_current_user", JSON.stringify(user)); setIsAdmin(true); safeSetLocalStorage("wms_is_admin", "true"); setAdminSection(null); window.location.hash = "#/landing"; setCurrentView("landing"); refreshUnattendedStatus(); showToast(`${user.name || user.id} 관리자님, 일반 모드로 전환했습니다.`, "ok"); }} />;
+    return <UnattendedReturnPage isLightMode={isLightMode} showToast={showToast} onAdminExit={(user) => { unattendedLockedRef.current = false; setCurrentUser(user); safeSetLocalStorage("wms_current_user", JSON.stringify(user)); setIsAdmin(true); safeSetLocalStorage("wms_is_admin", "true"); setAdminSection(null); window.location.hash = "#/landing"; setCurrentView("landing"); refreshUnattendedStatus(); showToast(`${user.name || user.id} 관리자님, 무인 모드를 끄고 일반 모드로 전환했습니다.`, "ok"); }} />;
   }
 
   // 무인 키오스크는 일반 로그인 관문과 별개로 자체 사번 로그인을 사용한다.
   if (currentView === "unattended" || window.location.hash.split("/")[1] === "unattended") {
-    return <UnattendedReturnPage isLightMode={isLightMode} showToast={showToast} onAdminExit={(user) => { unattendedLockedRef.current = false; setCurrentUser(user); safeSetLocalStorage("wms_current_user", JSON.stringify(user)); setIsAdmin(true); safeSetLocalStorage("wms_is_admin", "true"); setAdminSection(null); window.location.hash = "#/landing"; setCurrentView("landing"); refreshUnattendedStatus(); showToast(`${user.name || user.id} 관리자님, 일반 모드로 전환했습니다.`, "ok"); }} />;
+    return <UnattendedReturnPage isLightMode={isLightMode} showToast={showToast} onAdminExit={(user) => { unattendedLockedRef.current = false; setCurrentUser(user); safeSetLocalStorage("wms_current_user", JSON.stringify(user)); setIsAdmin(true); safeSetLocalStorage("wms_is_admin", "true"); setAdminSection(null); window.location.hash = "#/landing"; setCurrentView("landing"); refreshUnattendedStatus(); showToast(`${user.name || user.id} 관리자님, 무인 모드를 끄고 일반 모드로 전환했습니다.`, "ok"); }} />;
   }
 
   if (!isAdmin && !borrower && currentView !== "login" && currentView !== "borrowerLogin") {
@@ -2053,6 +2072,7 @@ export default function App() {
         isAdmin={isAdmin}
         adminName={currentUser?.name || currentUser?.id || ""}
         onAdminLogout={() => {
+          void logoutAdmin();
           setIsAdmin(false);
           setCurrentUser(null);
           localStorage.removeItem("wms_is_admin");
@@ -2196,7 +2216,6 @@ export default function App() {
         initialSid={borrowSid}
         initialAdditionalItems={borrowAdditionalItems}
         onGoPickItems={(target) => { setBorrowKind(null); setBrowseInitialStep(target === "sid" ? "sidBorrow" : null); window.location.hash = target === "sid" ? "#/browse/sid" : "#/browse"; setCurrentView("browse"); }}
-        onBackToWarehouseBrowse={() => { setBorrowKind(null); setCurrentView("browse"); }}
         onInventoryChanged={handleRefresh}
       />
     );
@@ -2215,6 +2234,12 @@ export default function App() {
         showToast={showToast}
         purpose={currentView === "mylookup" ? "mylookup" : "browse"}
         session={borrower}
+        onSeatChange={(seat) => {
+          if (!borrower) return;
+          const session = { ...borrower, ...seat };
+          setBorrower(session);
+          touchBorrower(session);
+        }}
         initialStep={browseInitialStep}
         onGoTableclothReturn={() => {
           // 이미 로그인한 사람이다 — 이름·사번·좌석을 다시 묻지 않고 내 기록으로 바로 간다.
@@ -2275,7 +2300,7 @@ export default function App() {
         >
           {[
             { key: "rental" as const, icon: <Undo2 size={28} />, title: "대여 & 반납 관리", desc: "반납 처리 · 반납 로그 · 좌석 배치도", view: "adminReturn" },
-            { key: "items" as const, icon: <Package size={28} />, title: "물품 관리", desc: "시나리오 물품 · 공구 및 부품류 · 불량로그", view: "scenario" },
+            { key: "items" as const, icon: <Package size={28} />, title: "물품 관리", desc: "시나리오 물품 · COS 물품 · 불량로그", view: "scenario" },
             { key: "settings" as const, icon: <Settings size={28} />, title: "설정", desc: "연결 설정 · 대여/반납 설정 · DB 설정", view: "connectionSettings" },
           ].map((c) => (
             <a
@@ -2318,6 +2343,7 @@ export default function App() {
           </button>
           <button
             onClick={() => {
+              void logoutAdmin();
               setIsAdmin(false);
               setCurrentUser(null);
               setAdminSection(null);
@@ -2360,43 +2386,41 @@ export default function App() {
     );
   }
 
-  // 모바일에서 관리자는 PC와 똑같은 화면·사이드바를 쓴다. 예전에는 여기서 MobileViewPage라는
-  // 별도 구현으로 빠졌는데, 같은 기능이 두 벌이 되면서 한쪽만 고쳐지고, 탭 막대와 검색창이
-  // 둘로 갈리고, 화면마다 동작이 달랐다. 이제 껍데기 하나만 두고 사이드바로 오간다.
-  //
-  // 비관리자 조회는 아직 이 화면을 쓴다 — 창고 물품을 훑어보기만 하는 흐름이라 모바일에
-  // 맞춰 만든 것이 여전히 낫고, 관리 기능이 섞여 있지 않아 헷갈릴 일도 없다.
-  if (isMobile && !isAdmin && currentView === "monitor") {
-    return (
-      <MobileViewPage
-        inventory={inventory}
-        rentLogs={rentLogs}
-        defectLogs={defectLogs}
-        racks={racks}
-        isAdmin={isAdmin}
-        currentUser={currentUser}
-        onAddRentLog={handleAddRentLog}
-        onAddDefectLog={handleAddDefectLog}
-        onSaveInventoryItem={saveInventoryItem}
-        onSaveNewInventoryItemAwaited={saveNewInventoryItemAwaited}
-        onDeleteInventory={deleteInventoryItemRow}
-        onBulkMoveLocation={handleBulkMoveLocation}
-        onBack={() => setCurrentView("landing")}
-        isLightMode={isLightMode}
-        toggleLightMode={toggleLightMode}
-        connected={connected}
-        scriptUrl={scriptUrl}
-        currentView={currentView}
-        onOpenScenario={() => setCurrentView("scenario")}
-        onRefreshInventory={handleRefresh}
-        inventoryRefreshing={inventoryRefreshing}
-      />
-    );
-  }
+  // 관리자 페이지 본문의 바깥 여백. PC는 24px, 모바일은 화면이 좁아 14px.
+  const pageGutter = isMobile ? 14 : 24;
 
-  // 모바일 시나리오·테이블보 화면을 위한 전용 래퍼가 여기 있었다. 같은 컴포넌트를
-  // 다른 껍데기로 한 번 더 감싸느라 탭 막대가 생기고 사이드바와 길이 갈렸다.
-  // 이제 두 화면 모두 아래의 공용 레이아웃에서 그대로 렌더된다.
+  /** COS 물품 목록. PC와 모바일 관리자가 같은 화면을 쓴다 — 두 벌로 두면 한쪽에만 기능이 생긴다.
+   *  편집·재고 변경·사진 창은 이 App이 띄우므로 모바일에서도 같다. */
+  const renderToolList = (opts: { title?: string; gutter?: number; stickyBg?: string }) => (
+    <RackGroupedView
+      title={opts.title}
+      gutter={opts.gutter}
+      stickyBg={opts.stickyBg}
+      inventory={inventory}
+      isLightMode={isLightMode}
+      isAdmin={isAdmin}
+      scriptUrl={scriptUrl}
+      onEditItem={(item) => setEditingItem(item)}
+      onAdjustStock={(item) => setStockAdjustItem(item)}
+      onDeleteItem={(item) => deleteInventoryItemRow(item.rowIndex)}
+      onToggleArchive={(item) => toggleArchiveInventoryItem(item)}
+      onOpenAllChanges={() => setCurrentView("toolChanges")}
+      onImageClick={(url) => setImageModalUrl(url)}
+      onRefresh={handleRefresh}
+      refreshing={inventoryRefreshing}
+      onAddItem={(presetLocation) => {
+        // 해당 랙/슬롯 위치를 미리 채운 채 등록 화면을 연다
+        setDefaultLocationForNewItem(presetLocation);
+        setEditingItem(null);
+        setShowAddForm(true);
+      }}
+      onBulkMoveLocation={handleBulkMoveLocation}
+    />
+  );
+
+  // 모바일 관리자도 PC와 똑같은 화면·사이드바를 쓴다. 관리 화면을 모바일용으로 따로 만들면 한쪽만
+  // 고쳐지고 기능이 갈린다 — 그래서 모바일 전용 화면(예전의 MobileViewPage)은 없앴고, 반응형 규칙은
+  // 각 페이지 안에 두고 서랍 메뉴로 오간다. (비관리자 모바일은 위에서 PC 전용 안내가 먼저 막는다.)
 
   // 대여 잠금 설정 모달 (관리자)
   const lockModal = lockModalOpen ? (
@@ -2662,26 +2686,6 @@ export default function App() {
         />
       ) : null}
 
-      {/* 물품 관리 모바일 화면은 큰 상단 헤더만 숨긴다. 사이드바는 이 작은 단추로
-          언제든 열 수 있어 다른 관리 영역으로 이동하는 길을 없애지 않는다. */}
-      {isMobile && isAdmin && adminSection === "items" && !mobileNavOpen ? (
-        <button
-          onClick={() => setMobileNavOpen(true)}
-          aria-label="관리 메뉴 열기"
-          title="관리 메뉴 열기"
-          style={{
-            position: "fixed", left: 10, bottom: 14, zIndex: 108,
-            width: 42, height: 42, borderRadius: 12,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            border: "1px solid var(--panel-border, #334155)",
-            background: "var(--header-bg, #1e293b)", color: "var(--text-main, #f1f5f9)",
-            boxShadow: "0 8px 22px rgba(0,0,0,0.28)", cursor: "pointer",
-          }}
-        >
-          <Menu size={20} />
-        </button>
-      ) : null}
-
       {/* ===== 1. 좌측 사이드바 ===== */}
       {/* 모바일에서는 화면 폭이 좁아 사이드바가 상시로 자리를 차지할 수 없다. 화면 위로
           겹쳐 나오는 서랍으로 두고, 상단 햄버거로 연다. 메뉴 구성은 PC와 완전히 같다. */}
@@ -2862,13 +2866,13 @@ export default function App() {
               </a>
             );
 
-            // 관리자가 아니면 예전처럼 공구 및 부품류만 보인다
-            if (!isAdmin) return navBtn("monitor", <Package size={18} />, "공구 및 부품류");
+            // 관리자가 아니면 예전처럼 COS 물품만 보인다
+            if (!isAdmin) return navBtn("monitor", <Package size={18} />, "COS 물품");
 
             const SECTION_META: Record<"items" | "rental" | "settings", { icon: React.ReactNode; label: string; desc: string; view: typeof currentView }> = {
               rental: { icon: <Undo2 size={18} />, label: "대여 & 반납 관리", desc: "반납 · 로그 · 좌석 배치도", view: "adminReturn" },
               // 목록 첫 항목이 시나리오 물품이라 진입 화면도 그것으로 맞춘다.
-              items: { icon: <Package size={18} />, label: "물품 관리", desc: "시나리오 · 공구 · 불량로그", view: "scenario" },
+              items: { icon: <Package size={18} />, label: "물품 관리", desc: "시나리오 · COS 물품 · 불량로그", view: "scenario" },
               settings: { icon: <Settings size={18} />, label: "설정", desc: "연결 설정 · 대여/반납 설정 · DB 설정", view: "connectionSettings" },
             };
 
@@ -2878,7 +2882,7 @@ export default function App() {
               items: [
                 // 시나리오 물품이 가장 자주 쓰는 화면이라 맨 위에 둔다.
                 { view: "scenario", icon: <Boxes size={16} />, label: "시나리오 물품" },
-                { view: "monitor", icon: <Package size={16} />, label: "공구 및 부품류" },
+                { view: "monitor", icon: <Package size={16} />, label: "COS 물품" },
                 { view: "tablecloth", icon: <Layers size={16} />, label: "테이블보" },
                 { view: "defect", icon: <AlertTriangle size={16} />, label: "불량로그" },
                 { view: "returnPhotos", icon: <Camera size={16} />, label: "대여 · 반납 사진" },
@@ -2890,7 +2894,7 @@ export default function App() {
                 { view: "seatmap", icon: <LayoutGrid size={16} />, label: "좌석 배치도" },
               ],
               settings: [
-                { view: "connectionSettings", icon: <Users size={16} />, label: "계정 설정" },
+                { view: "connectionSettings", icon: <Users size={16} />, label: pendingSignups ? `계정 설정 (${pendingSignups})` : "계정 설정" },
                 { view: "rentalSettings", icon: <ShieldAlert size={16} />, label: "대여/반납 설정" },
                 { view: "dbViewer", icon: <Database size={16} />, label: "DB 설정" },
                 { view: "scenarioChanges", icon: <History size={16} />, label: "물품 상태 변경 이력" },
@@ -2923,6 +2927,7 @@ export default function App() {
               );
             };
 
+            const subOn = (view: string) => currentView === view || (view === "monitor" && currentView === "toolChanges");
             const subBtn = (view: string, icon: React.ReactNode, label: string) => (
               <a
                 key={view}
@@ -2937,8 +2942,8 @@ export default function App() {
                   fontSize: 13,
                   fontWeight: 600,
                   justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                  background: currentView === view ? (isLightMode ? "rgba(37, 99, 235, 0.06)" : "rgba(37, 99, 235, 0.12)") : "transparent",
-                  color: currentView === view ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
+                  background: subOn(view) ? (isLightMode ? "rgba(37, 99, 235, 0.06)" : "rgba(37, 99, 235, 0.12)") : "transparent",
+                  color: subOn(view) ? (isLightMode ? "#23272f" : "#e8eaed") : "var(--text-dim, #94a3b8)",
                   display: "flex",
                   alignItems: "center",
                   gap: sidebarCollapsed ? 0 : 8,
@@ -2957,9 +2962,7 @@ export default function App() {
                 {adminSection === "rental" && SUB_ITEMS.rental.map((it) => subBtn(it.view, it.icon, it.label))}
 
                 {topLevelBtn("items")}
-                {/* 모바일 물품 관리는 본문 탭으로 전환한다. 사이드바 자체는 남기되 같은
-                    항목을 하위 메뉴로 한 번 더 나열하지 않는다. */}
-                {adminSection === "items" && !isMobile && SUB_ITEMS.items.map((it) => subBtn(it.view, it.icon, it.label))}
+                {adminSection === "items" && SUB_ITEMS.items.map((it) => subBtn(it.view, it.icon, it.label))}
 
                 {topLevelBtn("settings")}
                 {adminSection === "settings" && SUB_ITEMS.settings.map((it) => subBtn(it.view, it.icon, it.label))}
@@ -2982,6 +2985,7 @@ export default function App() {
         >
           <button
             onClick={() => {
+              void logoutAdmin();
               setIsAdmin(false);
               setCurrentUser(null);
               localStorage.removeItem("wms_is_admin");
@@ -3028,7 +3032,7 @@ export default function App() {
       <header
         style={{
           height: 64,
-          display: isMobile && isAdmin && adminSection === "items" ? "none" : "flex",
+          display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: isMobile ? "0 12px" : "0 24px",
@@ -3055,7 +3059,7 @@ export default function App() {
             </button>
           ) : null}
           <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {currentView === "monitor" ? "📦 공구 및 부품류" : currentView === "adminReturn" ? "↩️ 대여 및 반납" : currentView === "adminBorrow" ? "🤝 대여 신청" : currentView === "rent" ? "📋 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : currentView === "connectionSettings" ? "🔌 연결 설정" : currentView === "rentalSettings" ? "⚙️ 대여/반납 설정" : currentView === "dbViewer" ? "🗄️ DB 설정" : currentView === "scenarioChanges" ? "🕘 물품 상태 변경 이력" : currentView === "tablecloth" ? "🧵 테이블보 관리" : currentView === "returnPhotos" ? "📸 대여 · 반납 사진" : "⚠️ 불량로그 기록"}
+            {currentView === "monitor" ? "📦 COS 물품" : currentView === "adminReturn" ? "↩️ 대여 및 반납" : currentView === "adminBorrow" ? "🤝 대여 신청" : currentView === "rent" ? "📋 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : currentView === "connectionSettings" ? "🔌 연결 설정" : currentView === "rentalSettings" ? "⚙️ 대여/반납 설정" : currentView === "dbViewer" ? "🗄️ DB 설정" : currentView === "scenarioChanges" ? "🕘 물품 상태 변경 이력" : currentView === "toolChanges" ? "🕘 COS 물품 변동 내역" : currentView === "tablecloth" ? "🧵 테이블보 관리" : currentView === "returnPhotos" ? "📸 대여 · 반납 사진" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -3112,6 +3116,14 @@ export default function App() {
 
         {/* 우측 보조 컨트롤 영역 */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {isAdmin ? (
+            <NotificationBell
+              isLightMode={isLightMode}
+              onSignupCount={setPendingSignups}
+              onOpenSignups={() => { setAdminSection("settings"); setCurrentView("connectionSettings" as any); }}
+              onOpenChanges={() => { setAdminSection("settings"); setCurrentView("scenarioChanges" as any); }}
+            />
+          ) : null}
           <button
             onClick={cycleFontScale}
             style={{
@@ -3178,8 +3190,8 @@ export default function App() {
         style={{
           background: connected ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.12)",
           borderBottom: connected ? "1px solid rgba(16, 185, 129, 0.25)" : "1px solid rgba(245, 158, 11, 0.35)",
-          padding: "8px 24px",
-          display: isMobile && isAdmin && adminSection === "items" ? "none" : "flex",
+          padding: isMobile ? "5px 12px" : "8px 24px",
+          display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
           fontSize: "12px",
@@ -3190,57 +3202,31 @@ export default function App() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 500 }}>
           <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981" }} />
-          <span>
+          {isMobile ? <span style={{ fontSize: 11 }}><strong>실시간 동기화 중</strong> · 다른 PC의 변경도 바로 반영됩니다.</span> : <span>
             <strong>[실시간 동기화 상태]</strong> 로컬 서버와 연결되어 <strong>2분 간격으로 자동 동기화 중</strong>(화면을 다시 열면 즉시 갱신)이며, 다른 사용자 PC에서도 동일하게 내용이 실시간 반영됩니다.
-          </span>
+          </span>}
         </div>
       </div>
 
       {/* ===== 2. 본문 메인 ===== */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {isMobile && isAdmin && adminSection === "items" ? (
-          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
-            <MobileViewPage
-              inventory={inventory}
-              rentLogs={rentLogs}
-              defectLogs={defectLogs}
-              racks={racks}
-              isAdmin
-              currentUser={currentUser}
-              onAddRentLog={handleAddRentLog}
-              onAddDefectLog={handleAddDefectLog}
-              onSaveInventoryItem={saveInventoryItem}
-              onSaveNewInventoryItemAwaited={saveNewInventoryItemAwaited}
-              onDeleteInventory={deleteInventoryItemRow}
-              onBulkMoveLocation={handleBulkMoveLocation}
-              onBack={() => setMobileNavOpen(true)}
-              isLightMode={isLightMode}
-              toggleLightMode={toggleLightMode}
-              connected={connected}
-              scriptUrl={scriptUrl}
-              currentView={currentView}
-              onRefreshInventory={handleRefresh}
-              inventoryRefreshing={inventoryRefreshing}
-              hideHeader
-            />
-          </div>
-        ) : null}
         {/* 작업 보존 화면: 한 번 연 뒤에는 숨길 뿐 제거하지 않는다. 업로드·대여·반납
             요청도 백그라운드에서 끝까지 진행되며, 돌아오면 입력/장바구니/진행 상태가 남는다. */}
-        {isAdmin && !(isMobile && adminSection === "items") && (mountedAdminViews.has("scenario") || currentView === "scenario") ? (
+        {isAdmin && (mountedAdminViews.has("scenario") || currentView === "scenario") ? (
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: currentView === "scenario" ? "flex" : "none", overflow: "hidden" }}>
-            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+            <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
               <ScenarioAdminPage
                 scriptUrl={scriptUrl}
                 connected={connected}
                 isLightMode={isLightMode}
                 showToast={showToast}
                 adminName={currentUser?.name || currentUser?.id || ""}
+                gutter={pageGutter}
               />
             </div>
           </div>
         ) : null}
-        {isAdmin && !(isMobile && adminSection === "items") && (mountedAdminViews.has("tablecloth") || currentView === "tablecloth") ? (
+        {isAdmin && (mountedAdminViews.has("tablecloth") || currentView === "tablecloth") ? (
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: currentView === "tablecloth" ? "flex" : "none", overflow: "hidden" }}>
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", background: "var(--canvas-bg, #020617)" }}>
               <TableclothAdminPage scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode} showToast={showToast} />
@@ -3265,6 +3251,7 @@ export default function App() {
               scriptUrl={scriptUrl}
               connected={connected}
               isLightMode={isLightMode}
+              isActive={currentView === "adminBorrow"}
               showToast={showToast}
               onCompleted={handleRefresh}
               onClose={() => setCurrentView("adminReturn")}
@@ -3272,7 +3259,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {isMobile && isAdmin && adminSection === "items" ? null : isAdmin && isPersistentAdminView(currentView) ? null : currentView === "tablecloth" && !isAdmin ? (
+        {isAdmin && isPersistentAdminView(currentView) ? null : currentView === "tablecloth" && !isAdmin ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)", fontSize: "14px" }}>
             테이블보 관리는 관리자만 사용할 수 있습니다.
           </div>
@@ -3292,13 +3279,14 @@ export default function App() {
             시나리오 물품 관리는 관리자만 사용할 수 있습니다.
           </div>
         ) : currentView === "scenario" ? (
-          <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <ScenarioAdminPage
               scriptUrl={scriptUrl}
               connected={connected}
               isLightMode={isLightMode}
               showToast={showToast}
               adminName={currentUser?.name || currentUser?.id || ""}
+              gutter={pageGutter}
             />
           </div>
         ) : currentView === "seatmap" && !isAdmin ? (
@@ -3348,6 +3336,7 @@ export default function App() {
               scriptUrl={scriptUrl}
               connected={connected}
               isLightMode={isLightMode}
+              isActive
               showToast={showToast}
               onCompleted={handleRefresh}
               onClose={() => setCurrentView("adminReturn")}
@@ -3355,7 +3344,7 @@ export default function App() {
           </div>
         ) : currentView === "rent" ? (
           // 대여/반납 대장: 시나리오·공구 구분은 페이지 안의 분야 탭에서 처리한다
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <ScenarioLogsPage
               scriptUrl={scriptUrl}
               connected={connected}
@@ -3369,15 +3358,15 @@ export default function App() {
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "connectionSettings" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
-            <AdminConnectionSettings embedded visibleTabs={["admins", "borrowers"]} isLightMode={isLightMode} showToast={showToast} />
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
+            <AdminConnectionSettings embedded initialTab="signups" visibleTabs={["signups", "admins", "borrowers"]} isLightMode={isLightMode} showToast={showToast} />
           </div>
         ) : currentView === "rentalSettings" && !isAdmin ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "rentalSettings" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <div style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: 20 }}>
               <UnattendedModeSettings
                 showToast={showToast}
@@ -3496,15 +3485,23 @@ export default function App() {
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "dbViewer" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <DbViewerPage isLightMode={isLightMode} showToast={showToast} />
+          </div>
+        ) : currentView === "toolChanges" && !isAdmin ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>
+            관리자만 접근할 수 있습니다.
+          </div>
+        ) : currentView === "toolChanges" ? (
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
+            <WarehouseChangesPage scriptUrl={scriptUrl} isLightMode={isLightMode} onBack={() => setCurrentView("monitor")} />
           </div>
         ) : currentView === "scenarioChanges" && !isAdmin ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "scenarioChanges" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <ScenarioChangesPage scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode} showToast={showToast} />
           </div>
         ) : currentView === "returnPhotos" && !isAdmin ? (
@@ -3512,7 +3509,7 @@ export default function App() {
             관리자만 접근할 수 있습니다.
           </div>
         ) : currentView === "returnPhotos" ? (
-          <div style={{ flex: 1, overflowY: "auto", padding: "24px", background: "var(--canvas-bg, #020617)" }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: pageGutter, background: "var(--canvas-bg, #020617)" }}>
             <ReturnPhotosPage scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode} showToast={showToast} />
           </div>
         ) : currentView === "__never_rent__" ? (
@@ -3535,32 +3532,10 @@ export default function App() {
                 background: "var(--canvas-bg, #020617)",
                 overflowY: "auto",
                 overflowX: "hidden",
-                padding: "24px",
+                padding: pageGutter,
               }}
             >
-              <RackGroupedView
-                title="🗂 공구 및 부품류"
-                inventory={inventory}
-                isLightMode={isLightMode}
-                isAdmin={isAdmin}
-                unattendedEnabled={unattendedEnabled}
-                scriptUrl={scriptUrl}
-                onEditItem={(item) => setEditingItem(item)}
-                onAdjustStock={(item) => setStockAdjustItem(item)}
-                onDeleteItem={(item) => deleteInventoryItemRow(item.rowIndex)}
-                onToggleArchive={(item) => toggleArchiveInventoryItem(item)}
-                onManageSets={() => setShowItemSetManager(true)}
-                onImageClick={(url) => setImageModalUrl(url)}
-                onRefresh={handleRefresh}
-                refreshing={inventoryRefreshing}
-                onAddItem={(presetLocation) => {
-                  // 해당 랙/슬롯 위치를 미리 채운 채 등록 화면을 연다
-                  setDefaultLocationForNewItem(presetLocation);
-                  setEditingItem(null);
-                  setShowAddForm(true);
-                }}
-                onBulkMoveLocation={handleBulkMoveLocation}
-              />
+              {renderToolList({ title: "🗂 COS 물품", gutter: pageGutter })}
             </div>
           </>
         )}
@@ -3600,7 +3575,7 @@ export default function App() {
         />
       )}
 
-      {/* ===== 4-1. 재고 변경 모달 (공구 및 부품류) ===== */}
+      {/* ===== 4-1. 재고 변경 모달 (COS 물품) ===== */}
       {stockAdjustItem && (
         <StockAdjustModal
           scriptUrl={scriptUrl}
@@ -3617,18 +3592,6 @@ export default function App() {
           onSaved={(newStock) => {
             setInventory((prev) => prev.map((it) => (it.rowIndex === stockAdjustItem.rowIndex ? { ...it, stock: newStock } : it)));
           }}
-        />
-      )}
-
-      {/* ===== 4-2. 물품 세트 관리 모달 ===== */}
-      {showItemSetManager && (
-        <ItemSetManageModal
-          scriptUrl={scriptUrl}
-          connected={connected}
-          isLightMode={isLightMode}
-          inventory={inventory}
-          showToast={showToast}
-          onClose={() => setShowItemSetManager(false)}
         />
       )}
 

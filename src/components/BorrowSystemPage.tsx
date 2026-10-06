@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import QRCode from "qrcode";
 import {
   ArrowLeft, Search, User, Building2, MoreHorizontal, Fingerprint, Boxes,
   HandHelping, PackageOpen, Package, ShoppingCart, Undo2, MapPin, ChevronRight, Plus, Minus, X, Check,
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Flame, PlusCircle, IdCard,
-  Warehouse, Trash2, RefreshCw, AlertTriangle, Layers} from "lucide-react";
+  Trash2, RefreshCw, AlertTriangle, Layers, Clock3} from "lucide-react";
 import ImageZoomModal from "./ImageZoomModal";
 import TableclothPanel from "./TableclothPanel";
 import { SizeViewerModal, hasDims } from "./SizeViewer";
@@ -13,18 +14,15 @@ import {
   fetchBorrowAppVersion, fetchObjectItems, fetchScenarioDefinition, fetchUnreturnedItems,
   fetchMyBorrowedItems, checkConfigDsRegistered, postRecordBorrow, postProcessReturn,
   DEMO_OBJECT_ITEMS, loadBrowseCart, clearBrowseCart, saveIdentity, loadIdentity,
-  WarehouseItem, WarehouseCartItem, parseRackSlot, warehouseStockNum, compareRackSlot,
-  ItemSet, fetchItemSets,
   SeatFloor, fetchSeatMap,
   ActiveItemTypeInfo, fetchActiveItemTypeCount,
-  fetchWarehouseInventory, fetchWarehouseBorrowedItems, postWarehouseRent, postWarehouseRentBulk,
-  loadWarehouseCart, clearWarehouseCart,
   ensureUpToDate, isVersionMismatchMessage, signalVersionOutdated,
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, getThumbImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
 import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
+import { useNoticeCountdown } from "../utils/useNoticeCountdown";
 
 /* ══════════════════════════════ 타입 ══════════════════════════════ */
 
@@ -32,7 +30,6 @@ type Mode =
   | "mode"
   | "pickBorrowKind" | "pickReturnKind" | "tc"
   | "b1" | "b2" | "b3g" | "b4g" | "b3s" | "b4s"
-  | "wbname" | "wborrow" | "wborrow2" | "wreturn"
   | "return"
   | "result";
 
@@ -90,8 +87,8 @@ interface BorrowSystemPageProps {
   entry?: "borrow" | "return";
   /** 열람 조회에서 넘어온 신원 (사번/성함 자동 입력 + 장바구니 연동) */
   initialIdentity?: { name: string; employeeId: string; affiliation?: "cfgw" | "configds" | "other" } | null;
-  /** 열람에서 바로 넘어온 경우: "scenario"면 일반대여 흐름, "warehouse"면 창고대여 흐름으로 직행 */
-  initialKind?: "scenario" | "warehouse" | "tablecloth" | null;
+  /** 열람에서 바로 넘어온 경우: "scenario"면 일반대여 흐름, "tablecloth"면 테이블보 흐름으로 직행 */
+  initialKind?: "scenario" | "tablecloth" | null;
   /** 물품 열람에서 이미 받아둔 좌석. 있으면 이 화면에서 다시 묻지 않는다. */
   initialSeat?: { floor: string; unit: string } | null;
   /** 물품 열람에서 SID 대여로 담았을 때 그 시나리오 번호. 있으면 SID 대여로, 없으면 일반 대여로 본다. */
@@ -100,34 +97,32 @@ interface BorrowSystemPageProps {
   initialAdditionalItems?: CartItem[];
   /** 시나리오 물품은 이 화면에서 고르지 않는다 — 물품을 담는 화면으로 보낸다. */
   onGoPickItems?: (target?: "sid") => void;
-  /** 뒤로가기 시 창고 열람으로 복귀해야 하는 경우 */
-  onBackToWarehouseBrowse?: () => void;
-  // 공구 및 부품류 대여/반납/소모 성공 시, "물품 관리" 화면이 쓰는 앱 전체 재고
+  // COS 물품 대여/반납/소모 성공 시, "물품 관리" 화면이 쓰는 앱 전체 재고
   // 상태도 즉시 갱신되도록 알려준다.
   onInventoryChanged?: () => void;
   isAdmin?: boolean;
-  /** 무인 모드 중에는 관리자가 아니면 영수증·물품 카드에서 보관 위치를 숨기고,
-   *  신청 완료 시 그 신청 물품의 위치만 보여주는 QR을 대신 발급한다. */
+  /** 무인 모드 중에는 관리자가 아니면 물품 카드에서 보관 위치를 숨긴다. */
   unattendedEnabled?: boolean;
 }
 
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
-export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast: showToastRaw, entry = "borrow", initialIdentity = null, initialKind = null, initialSeat = null, initialSid = "", initialAdditionalItems = [], onGoPickItems, onBackToWarehouseBrowse, onInventoryChanged, isAdmin = false, unattendedEnabled = false }: BorrowSystemPageProps) {
-  // 무인 모드 중에는 비관리자에게 보관 위치를 숨기고, 대여 신청 완료 시 그 신청 물품의
-  // 위치만 보여주는 QR을 대신 보여준다.
+export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast: showToastRaw, entry = "borrow", initialIdentity = null, initialKind = null, initialSeat = null, initialSid = "", initialAdditionalItems = [], onGoPickItems, onInventoryChanged, isAdmin = false, unattendedEnabled = false }: BorrowSystemPageProps) {
+  // 무인 모드 중에는 비관리자에게 보관 위치를 숨긴다. 대여 신청 후에는
+  // 서버가 확인한 사번으로 위치 확인 사이트 QR을 보여준다.
   const hideLocation = unattendedEnabled && !isAdmin;
-  // 열람에서 공구 및 부품류를 담아 넘어오면 창고 대여로, 시나리오면 일반대여로 직행
+  // 열람에서 시나리오 물품을 담아 넘어오면 일반대여로 직행
   // 테이블보로 들어오면 곧바로 천 목록을 연다 — 분야를 방금 골라놓고 또 고르게 할 이유가 없다.
   // 테이블보 반납으로 곧장 들어왔고 신원·좌석이 이미 있으면 묻는 단계를 건너뛴다 —
   // 로그인할 때 받은 것을 또 받을 이유가 없다.
   const tcReturnDirect = initialKind === "tablecloth" && entry === "return" && !!initialIdentity?.name && !!initialSeat?.floor;
   const rootMode: Mode = tcReturnDirect ? "tc"
-    : initialKind === "warehouse" ? "wbname"
     : initialKind === "scenario" || initialKind === "tablecloth" ? "b1"
     : entry === "return" ? "pickReturnKind" : "pickBorrowKind";
   // 테이블보는 아직 임시로 여는 기능이라, 이 화면의 모드 흐름(b1/wbname/return…)에
   // 끼워 넣지 않고 자체 완결형 패널로 띄운다. 기존 대여 흐름을 건드리지 않기 위해서다.
+  // COS 물품 대여·반납은 사용자 화면에서 없앴다 — 관리자 직접 대여(AdminDirectBorrowModal)와
+  // 관리자 반납(AdminReturnPage)으로만 한다.
 
   /* 알림은 몇 초 뒤 사라진다. 자동 신청이 이유를 알리고 멈춘 경우 그 이유까지 함께 사라져
    * "아무 일도 안 일어났다"로 보였다. 마지막 알림을 남겨 화면에서 다시 읽을 수 있게 한다. */
@@ -204,7 +199,23 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   // 기타 소속인데 성함을 안 적고 다음으로 넘어가려 할 때 — 토스트로는 놓치기 쉬워 큰 팝업으로 확실히 막는다.
   const [nameRequiredModal, setNameRequiredModal] = useState(false);
   const otherNameInputRef = useRef<HTMLInputElement>(null);
-  const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; receipt?: { borrower: string; date: string; due?: string; action: string; items: { name: string; qty: number; location?: string; note?: string; itemId?: string; variantName?: string }[] } }>({ ok: true, isSyncing: false, title: "", sub: "" });
+  const [resultInfo, setResultInfo] = useState<{ ok: boolean; isSyncing?: boolean; title: string; sub: string; pickupTimeoutMinutes?: number; borrowQr?: { image: string; url: string; expiresAt: number } }>({ ok: true, isSyncing: false, title: "", sub: "" });
+  const [borrowQrSeconds, setBorrowQrSeconds] = useState(30);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+  useEffect(() => {
+    const expiresAt = mode === "result" && resultInfo.ok && !resultInfo.isSyncing ? resultInfo.borrowQr?.expiresAt : undefined;
+    if (!expiresAt) return;
+    let closed = false;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      setBorrowQrSeconds(remaining);
+      if (remaining === 0 && !closed) { closed = true; window.clearInterval(timer); onBackRef.current(); }
+    };
+    const timer = window.setInterval(tick, 250);
+    tick();
+    return () => window.clearInterval(timer);
+  }, [mode, resultInfo.borrowQr?.expiresAt, resultInfo.isSyncing, resultInfo.ok]);
 
   /* ---------- 대여 신청 상태 ---------- */
   /* 대여 신청이 신원을 잃고 옛 단계 화면으로 떨어지는 일이 있었다.
@@ -303,12 +314,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const [reqSub, setReqSub] = useState("");
   const [reqSort, setReqSort] = useState<ItemSortKey>("id_desc");
 
-  /* ---------- 공구 및 부품류 상태 ---------- */
-  const [whItems, setWhItems] = useState<WarehouseItem[]>([]);
-  const [whLoaded, setWhLoaded] = useState(false);
-  const [whLoading, setWhLoading] = useState(false);
-  const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
-
   // 대여·반납을 한 번 하면 이 화면이 들고 있던 재고와 보유 현황은 곧바로 낡은 값이 된다.
   // 앱 전체 동기화(2분)를 기다리면, 방금 반납한 걸 바로 다시 빌릴 때 옛 숫자로 막힌다.
   // 그래서 처리 직후 이 값을 올려 재고 목록과 보유 현황을 다시 받아오게 한다.
@@ -336,44 +341,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     return () => { cancelled = true; };
   }, [connected, scriptUrl, effectiveBorrowerName, selFloor, selUnit, employeeId, affiliation, dataNonce]);
 
-  const [itemSets, setItemSets] = useState<ItemSet[]>([]);
-  const [itemSetsLoaded, setItemSetsLoaded] = useState(false);
-  // 세트 담기 결과 (토스트는 연달아 뜨면 덮이므로 화면에 남겨 원인을 확인할 수 있게 한다)
-  const [setAddResult, setSetAddResult] = useState<{ setName: string; added: number; notFound: string[]; shortages: string[] } | null>(null);
-  const [whSearch, setWhSearch] = useState("");
-  const [whCustomLoc, setWhCustomLoc] = useState("");
-  // 목록에 없는 물품 직접 입력 (예전에는 검색창 값을 재사용해 검색어가 지워지는 문제가 있었다)
-  const [whCustomName, setWhCustomName] = useState("");
-  // 장바구니: 평소엔 숨기고 우측 하단 아이콘으로만 접근한다
-  const [whCartOpen, setWhCartOpen] = useState(false);
-  const [whCartPulse, setWhCartPulse] = useState(false);
-  // 담을 때 카드에서 장바구니로 날아가는 점 애니메이션
-  const [flyDots, setFlyDots] = useState<{ id: number; x: number; y: number }[]>([]);
-  const flyIdRef = useRef(0);
-
-  // 카드 위치에서 장바구니 아이콘으로 점을 날린다 (담긴 걸 눈으로 확인시켜 준다)
-  function flyToCart(from: DOMRect) {
-    const id = ++flyIdRef.current;
-    setFlyDots((prev) => [...prev, { id, x: from.left + from.width / 2, y: from.top + from.height / 2 }]);
-    setWhCartPulse(true);
-    window.setTimeout(() => setFlyDots((prev) => prev.filter((d) => d.id !== id)), 620);
-    window.setTimeout(() => setWhCartPulse(false), 420);
-  }
-  const [whRack, setWhRack] = useState("");
-  const [whSlot, setWhSlot] = useState("");
-  const [whPurpose, setWhPurpose] = useState("");
-  const [whDueDate, setWhDueDate] = useState("");
-  const [whReturnItems, setWhReturnItems] = useState<any[]>([]);
-  const [whReturnLoading, setWhReturnLoading] = useState(false);
-  const [whReturnSel, setWhReturnSel] = useState<Record<string, number>>({});
   useVersionWorkGuard(
     "borrow-system-work",
-    submitting || returnSubmitting || !!resultInfo.isSyncing || cart.length > 0 || reqCart.length > 0 || sidCart.length > 0 || whCart.length > 0
-      || Object.values(selectedReturn).some((qty) => qty > 0) || Object.values(whReturnSel).some((qty) => qty > 0),
+    submitting || returnSubmitting || !!resultInfo.isSyncing || cart.length > 0 || reqCart.length > 0 || sidCart.length > 0
+      || Object.values(selectedReturn).some((qty) => qty > 0),
     entry === "return" ? "반납 신청 중" : "대여 신청 중",
   );
-  const [whName, setWhName] = useState(effectiveIdentity?.name || "");
-  const [whEmpId, setWhEmpId] = useState(initialIdentity?.employeeId || "");
 
   /* ---------- 초기 로드: 버전 ---------- */
   useEffect(() => {
@@ -386,7 +359,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   // 이 효과는 아래 "직접 진입 시 데이터 선로드" 효과보다 먼저 선언돼 있어야 한다.
   // GAS 호출은 앱 전체에서 최대 GAS_MAX_CONCURRENT_개까지만 동시에 나가는 전역 큐를
   // 공유하는데(withGasConcurrencyLimit), 물품 카탈로그(getObjectItems)나 창고재고
-  // (getWarehouseInventory+getItemSets) 로딩이 이 큐 자리를 먼저 차지해버리면 훨씬
+  // (getWarehouseInventory) 로딩이 이 큐 자리를 먼저 차지해버리면 훨씬
   // 가볍고 캐시로 빨리 끝나야 할 좌석맵 요청이 그 뒤에서 한참을 대기하게 된다 —
   // "좌석 배치도를 불러오지 못한다"고 느껴지는 원인이 실은 이 대기시간이었다.
   // 순서를 바꿔 좌석맵이 먼저 큐에 들어가게 한다.
@@ -574,53 +547,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
         }
       }
     }
-    if (initialKind === "warehouse") {
-      loadWarehouse();
-      if (initialIdentity) {
-        const saved = loadWarehouseCart(initialIdentity.name, initialIdentity.employeeId);
-        if (saved.length) setWhCart(saved);
-      }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  /* ---------- 창고 재고/미반납 로드 ---------- */
-  const loadWarehouse = useCallback(async (force = false) => {
-    if (!force && whLoaded) return;
-    setWhLoading(true);
-    try {
-      if (connected && scriptUrl) {
-        const [items, sets] = await Promise.all([
-          fetchWarehouseInventory(scriptUrl),
-          fetchItemSets(scriptUrl).catch(() => []), // 세트 조회 실패해도 대여 자체는 진행 가능해야 하므로 조용히 무시
-        ]);
-        setWhItems(items.filter((it) => !it.archived));
-        setItemSets(sets);
-      } else {
-        setWhItems([
-          { rowIndex: 2, location: "A-01", name: "랙 선반용 합판", photo: "", stock: 12, spec: "", note: "", manager: "고성민" },
-          { rowIndex: 3, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
-        ]);
-        setItemSets([{ name: "예시 세트", items: [{ location: "A-01", name: "랙 선반용 합판", qty: 2 }] }]);
-      }
-      setWhLoaded(true);
-      setItemSetsLoaded(true);
-    } catch (e: any) {
-      setWhLoaded(true); // 실패해도 무한 스피너 방지 (재시도 버튼으로 다시 시도)
-      showToast(`공구 및 부품류를 불러오지 못했습니다: ${e.message}`, "error");
-    }
-    finally { setWhLoading(false); }
-  }, [connected, scriptUrl, whLoaded, showToast]);
-
-  const loadWhReturn = useCallback(async () => {
-    setWhReturnLoading(true);
-    setWhReturnSel({});
-    try {
-      if (connected && scriptUrl) setWhReturnItems(await fetchWarehouseBorrowedItems(scriptUrl, ""));
-      else setWhReturnItems([{ location: "A-01", name: "랙 선반용 합판", quantity: 2, itemLabel: "[A-01] 랙 선반용 합판 x 2", borrowDate: "2026-07-01", borrowerName: "고성민" }]);
-    } catch (e: any) { showToast(`창고 대여 내역을 불러오지 못했습니다: ${e.message}`, "error"); }
-    finally { setWhReturnLoading(false); }
-  }, [connected, scriptUrl, showToast]);
 
   /* ---------- 물품 목록 로드 ---------- */
   const loadItems = useCallback(async () => {
@@ -1181,51 +1109,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
     setSubmitting(true);
     
-    // 영수증에 표시할 물품 리스트 구성
-    const receiptItems: { name: string; qty: number; location?: string; itemId?: string; variantName?: string }[] = [];
-    if (submitType === "general") {
-      cart.forEach((c) => {
-        const obj = submitInventory.find((o) => o.id === c.id);
-        receiptItems.push({ name: c.name, qty: c.quantity, location: hideLocation ? undefined : obj?.rootSlot, itemId: c.id, variantName: c.variantName });
-      });
-    } else {
-      sidCart.forEach((entry) => {
-        const items = (entry.scenario?.items || []).filter((it: any) => !excludedItemIds.has(it.id));
-        items.forEach((it: any) => {
-          const obj = submitInventory.find((o) => o.id === it.id);
-          const allocations = it.variants?.length
-            ? Object.entries(it.variantAlloc || {}).filter(([, q]) => (Number(q) || 0) > 0)
-            : [];
-          if (allocations.length) {
-            allocations.forEach(([variantId, qty]) => receiptItems.push({
-              name: `[시나리오 ${entry.sid}] ${it.name}`,
-              qty: Number(qty) || 0,
-              location: hideLocation ? undefined : (obj?.rootSlot || it.rootSlot),
-              itemId: it.id,
-              variantName: (it.variants || []).find((v: any) => String(v.id) === variantId)?.name || "종류 지정",
-            }));
-          } else {
-            receiptItems.push({
-              name: `[시나리오 ${entry.sid}] ${it.name}`,
-              qty: it.quantity || 1,
-              location: hideLocation ? undefined : (obj?.rootSlot || it.rootSlot),
-              itemId: it.id,
-            });
-          }
-        });
-      });
-      reqCart.filter((c) => !excludedItemIds.has(c.id)).forEach((c) => {
-        const obj = submitInventory.find((o) => o.id === c.id);
-        receiptItems.push({
-          name: `[추가] ${c.name}`,
-          qty: c.quantity,
-          location: hideLocation ? undefined : obj?.rootSlot,
-          itemId: c.id,
-          variantName: c.variantName,
-        });
-      });
-    }
-
     // 일단 즉시 "접수 완료 및 동기화 중" 화면 표시 (사용자가 대기할 필요가 없도록 비동기 처리)
     setResultInfo({
       ok: true,
@@ -1236,12 +1119,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           ? `재고가 없어 ${excludedNames.join(", ")}은(는) 제외하고 신청했습니다. `
           : "") +
         "서버에 대여 내역을 기록하고 있습니다. 잠시만 기다려주세요.",
-      receipt: {
-        borrower: name,
-        date: nowStr,
-        action: submitType === "general" ? "일반 대여 신청" : "시나리오 대여 신청",
-        items: receiptItems,
-      },
     });
     setMode("result");
     setAutoBusy(false);
@@ -1280,27 +1157,27 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             setResultInfo((prev) => ({ ...prev, ok: false, isSyncing: false, title: "새 버전이 있어요", sub: "새로고침 후 다시 신청해주세요." }));
             return;
           }
-          // 서버가 뺀 물품은 영수증에서도 지운다 — 빌리지 않은 것이 내역에 남으면 안 된다.
-          // (화면이 못 보는 물품이 있어서, 여기까지 와야 최종 목록이 확정된다)
-          const skippedIds = new Set((res.skipped || []).map((x) => String(x.id)));
-          const padId = (v?: string) => String(v || "").padStart(6, "0");
+          let borrowQr: { image: string; url: string; expiresAt: number } | undefined;
+          if (res.success && res.lookupPath && /^\d{4}$/.test(res.employeeId || "")) {
+            const url = `${window.location.protocol}//${window.location.hostname}:3002${res.lookupPath}?employeeId=${encodeURIComponent(res.employeeId!)}`;
+            try {
+              const image = await QRCode.toDataURL(url, { width: 360, margin: 2 });
+              borrowQr = { image, url, expiresAt: Date.now() + 30_000 };
+            } catch (qrError) {
+              console.error("[대여 위치 QR 생성 실패]", qrError);
+            }
+          }
           setResultInfo((prev) => ({
             ...prev,
-            receipt: prev.receipt
-              ? {
-                  ...prev.receipt,
-                  items: skippedIds.size
-                    ? prev.receipt.items.filter((it) => !skippedIds.has(padId(it.itemId)))
-                    : prev.receipt.items,
-                }
-              : prev.receipt,
             ok: res.success,
             isSyncing: false,
             title: res.success ? "대여 신청 완료!" : "대여 기록 실패",
+            borrowQr,
+            pickupTimeoutMinutes: res.pickupTimeoutMinutes ?? (unattendedEnabled ? 240 : 20),
             // 서버가 실제로 뺀 물품을 앞세워 알려준다 — 화면에서 미리 걸러낸 것과 다를 수 있다.
             sub: (res.skipped?.length
               ? `재고가 없어 ${res.skipped.map((x) => x.name).join(", ")}은(는) 제외했습니다. `
-              : "") + res.message
+              : "") + res.message + (res.success && !borrowQr ? " 위치 확인 QR을 만들지 못했습니다. 관리자에게 문의해주세요." : "")
           }));
           if (res.success) {
             // 성공이 확인된 뒤에만 장바구니를 비운다.
@@ -1368,6 +1245,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const normalizeSearch = (s: string) => s.normalize("NFC").replace(/\s+/g, "").toLowerCase();
 
   function itemMatchesQuery(it: UnreturnedItem, query: string): boolean {
+    if (hideLocation) return smartMatch([it.itemLabel], query);
     const slotPad = padSlot(String(it.location ?? ""));
     return smartMatch([it.itemLabel, it.location, slotPad], query);
   }
@@ -1418,17 +1296,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       .sort((a, b) => a.name.localeCompare(b.name, "ko"));
   }, [unreturned]);
 
-  const uniqueWhBorrowers = useMemo(() => {
-    const namesMap: Record<string, number> = {};
-    whReturnItems.forEach((item) => {
-      const bName = (item.borrowerName || "(이름 없음)").trim();
-      namesMap[bName] = (namesMap[bName] || 0) + (Math.max(1, parseInt(String(item.quantity), 10) || 1));
-    });
-    return Object.entries(namesMap)
-      .map(([name, totalQty]) => ({ name, totalQty }))
-      .sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  }, [whReturnItems]);
-
   const returnTree = useMemo(() => {
     const query = returnSearch.trim();
     const sorted = unreturned.slice().sort((a, b) => (a.borrowDate || "") < (b.borrowDate || "") ? -1 : (a.borrowDate || "") > (b.borrowDate || "") ? 1 : 0);
@@ -1463,7 +1330,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (!keys.length) return;
     const requests: ReturnRequest[] = keys.map((k) => {
       const [sheetType, rowIndex] = k.split(":");
-      return { sheetType: sheetType as "scenario" | "general", rowIndex: parseInt(rowIndex, 10), quantity: selectedReturn[k] };
+      return { sheetType: sheetType as "scenario" | "general", rowIndex: parseInt(rowIndex, 10), quantity: selectedReturn[k], source: "self" };
     });
     setReturnSubmitting(true);
 
@@ -1528,384 +1395,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     })();
   }
 
-  /* ══════════════════════ 공구 및 부품류 대여/반납 ══════════════════════ */
-
-
-  async function handleWarehouseBorrow(actionType: "대여" | "소모" = "대여") {
-    const user = whName.trim();
-    if (!user) { showToast("성함을 입력해주세요.", "warn"); return; }
-    if (!isKoreanName(user)) { showToast("이름은 한글만 입력할 수 있습니다.", "warn"); return; }
-    if (whCart.length === 0) { showToast(`${actionType}할 공구 및 부품류를 담아주세요.`, "warn"); return; }
-    // 재고 검증
-    for (const c of whCart) {
-      const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
-      const stock = orig ? warehouseStockNum(orig.stock) : NaN;
-      if (!isNaN(stock) && c.quantity > stock) { showToast(`['${c.name}'] 신청 수량(${c.quantity})이 재고(${stock})를 초과합니다.`, "warn"); return; }
-    }
-
-    // 물품별 실제 처리 방식 결정: "소모성 물품"으로 지정된 항목은 어떤 버튼을 눌렀든 항상 소모로 처리한다.
-    const effectiveType = (c: WarehouseCartItem): "대여" | "소모" => {
-      const orig = whItems.find((o) => o.rowIndex === c.rowIndex);
-      return orig?.isConsumable ? "소모" : actionType;
-    };
-    const borrowCount = whCart.filter((c) => effectiveType(c) === "대여").reduce((n, c) => n + c.quantity, 0);
-    const consumeCount = whCart.filter((c) => effectiveType(c) === "소모").reduce((n, c) => n + c.quantity, 0);
-    const isMixed = borrowCount > 0 && consumeCount > 0;
-
-    setSubmitting(true);
-    const total = whCart.reduce((n, c) => n + c.quantity, 0);
-    const cartSnapshot = [...whCart];
-
-    // 즉시 로컬 장바구니 비우기 및 결과 영수증 페이지로 이동 (Optimistic UI)
-    clearWarehouseCart(user, whEmpId.trim());
-    setWhCart([]);
-
-    const progressTitle = isMixed ? "공구 및 부품류 처리 진행 중..." : actionType === "소모" ? "공구 및 부품류 소모 진행 중..." : "공구 및 부품류 대여 진행 중...";
-    const progressSub = isMixed
-      ? `대여 ${borrowCount}개, 소모 ${consumeCount}개를 서버에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
-      : actionType === "소모"
-        ? `${total}개 물품의 소모를 서버에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`
-        : `${total}개 물품의 대여를 서버에 기록 중입니다. 잠시만 기다리시거나 화면을 닫으셔도 정상 완료됩니다.`;
-
-    setResultInfo({
-      ok: true,
-      isSyncing: true,
-      title: progressTitle,
-      sub: progressSub,
-      receipt: {
-        borrower: user,
-        date: nowString(),
-        due: actionType === "대여" && whDueDate ? whDueDate : undefined,
-        action: actionType,
-        items: cartSnapshot.map((c) => ({ name: c.name, qty: c.quantity, location: c.location, note: effectiveType(c) === "소모" && actionType === "대여" ? "소모성 물품 — 자동 소모 처리" : undefined })),
-      },
-    });
-    setMode("result");
-    setSubmitting(false);
-
-    // 백그라운드 병렬 처리 실행
-    (async () => {
-      try {
-        if (connected && scriptUrl) {
-          // 대여도 한 번의 요청으로 묶어 보낸다 (동시 요청 시 동시 처리 충돌 발생).
-          const bulkBorrowRes = await postWarehouseRentBulk(
-            scriptUrl,
-            cartSnapshot.map((c) => {
-              const type = effectiveType(c);
-              const dueTag = type === "대여" && whDueDate ? ` [반납예정:${whDueDate}]` : "";
-              const baseNote = whPurpose || (type === "소모" ? "소모 처리" : "대여 신청");
-              return { type, location: c.location, name: c.name, qty: c.quantity, user, employeeId: employeeId.trim(), note: baseNote + dueTag };
-            })
-          );
-          if (!bulkBorrowRes.success) throw new Error(bulkBorrowRes.error || "일부 물품의 기록에 실패했습니다.");
-          onInventoryChanged?.(); // 재고가 줄었으니 "물품 관리" 화면 데이터도 즉시 갱신
-
-          setResultInfo((prev: any) => ({
-            ...prev,
-            isSyncing: false,
-            title: isMixed ? "공구 및 부품류 처리 완료!" : actionType === "소모" ? "공구 및 부품류 소모 완료!" : "공구 및 부품류 대여 완료!",
-            sub: isMixed
-              ? `대여 ${borrowCount}개, 소모 ${consumeCount}개를 처리했습니다.`
-              : actionType === "소모"
-                ? `${total}개 물품을 소모 처리했습니다.`
-                : `${total}개 물품을 대여 처리했습니다.`,
-          }));
-          
-          // 리프레시
-          loadWarehouse(true);
-          loadWhReturn();
-        } else {
-          // 데모 모드
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          setResultInfo((prev: any) => ({
-            ...prev,
-            isSyncing: false,
-          }));
-        }
-      } catch (e: any) {
-        setResultInfo((prev: any) => ({
-          ...prev,
-          ok: false,
-          isSyncing: false,
-          title: "창고 연동 실패",
-          sub: e.message || "서버에 내역을 전송하는 중 오류가 발생했습니다. 네트워크를 확인해주세요."
-        }));
-      }
-    })();
-  }
-
-  async function handleWarehouseReturn() {
-    try {
-      await handleWarehouseReturnInner();
-    } catch (e: any) {
-      // 예외가 나면 지금까지는 아무 반응 없이 조용히 죽었다. 원인이 보이게 한다.
-      console.error("[반납 처리 실패]", e);
-      showToast(`반납 처리 중 오류: ${e?.message || e}`, "error");
-      setReturnSubmitting(false);
-    }
-  }
-
-  async function handleWarehouseReturnInner() {
-    const keys = Object.keys(whReturnSel);
-    if (!keys.length) { showToast("반납할 물품을 선택해주세요.", "warn"); return; }
-
-    const returnSnapshot = keys.map((k) => {
-      const idx = parseInt(k, 10);
-      const item = whReturnItems[idx];
-      return { item, qty: whReturnSel[k] };
-    }).filter(x => x.item !== undefined);
-    if (!returnSnapshot.length) { showToast("선택한 항목을 찾지 못했습니다. 목록을 새로고침해주세요.", "warn"); return; }
-
-    // 반납자 성함을 따로 입력하지 않았으면, 선택한 항목의 대여자에서 가져온다.
-    // (목록이 대여자별로 묶여 있으므로 대부분 자동으로 채워진다)
-    const borrowersInSel = Array.from(new Set(
-      returnSnapshot.map((c) => String(c.item.borrowerName || "").trim()).filter((n) => n && n !== "(이름 없음)")
-    ));
-    const returnerName = whName.trim() || (borrowersInSel.length === 1 ? borrowersInSel[0] : "");
-    if (!returnerName) {
-      showToast(
-        borrowersInSel.length > 1
-          ? "여러 대여자의 물품을 함께 선택하셨습니다. 반납자 성함을 입력해주세요."
-          : "반납자 성함을 입력해주세요.",
-        "warn"
-      );
-      return;
-    }
-    setReturnSubmitting(true);
-
-    const total = returnSnapshot.reduce((n, c) => n + c.qty, 0);
-
-    // 즉시 반납 진행 중 UI 표시
-    setResultInfo({
-      ok: true,
-      isSyncing: true,
-      title: "공구 및 부품류 반납 진행 중...",
-      sub: `${total}개 물품의 반납을 기록하고 있습니다. 화면을 닫으셔도 서버에 안전하게 완료됩니다.`,
-      receipt: {
-        borrower: returnerName,
-        date: nowString(),
-        action: "창고 반납",
-        items: returnSnapshot.map((c) => ({ name: c.item.name, qty: c.qty, location: c.item.location })),
-      }
-    });
-    setMode("result");
-    setReturnSubmitting(false);
-
-    // 백그라운드 병렬 전송
-    (async () => {
-      try {
-        if (connected && scriptUrl) {
-          // 한 번의 요청으로 전부 처리한다 (동시 요청 시 동시 처리 충돌이 발생한다).
-          // 반납 로그의 user는 '원래 대여자'로 남겨야 서버 집계에서 정확히 상계된다.
-          const bulkRes = await postWarehouseRentBulk(
-            scriptUrl,
-            returnSnapshot.map((c) => ({
-              type: "반납" as const,
-              location: c.item.location,
-              name: c.item.name,
-              qty: c.qty,
-              user: c.item.borrowerName || returnerName,
-              employeeId: c.item.employeeId || "",
-              note: `반납 접수 (반납자: ${returnerName})`,
-            }))
-          );
-          if (!bulkRes.success) throw new Error(bulkRes.error || "일부 물품의 반납 기록에 실패했습니다.");
-          onInventoryChanged?.(); // 재고가 늘었으니 "물품 관리" 화면 데이터도 즉시 갱신
-          
-          setResultInfo((prev: any) => ({
-            ...prev,
-            isSyncing: false,
-            title: "공구 및 부품류 반납 완료!",
-            sub: `${total}개 물품을 반납 처리했습니다.`,
-          }));
-          
-          // 리스트 초기화 및 새로고침
-          setWhReturnSel({});
-          loadWarehouse(true);
-          loadWhReturn();
-        } else {
-          // 데모 모드
-          await new Promise((resolve) => setTimeout(resolve, 800));
-          setResultInfo((prev: any) => ({
-            ...prev,
-            isSyncing: false,
-            title: "공구 및 부품류 반납 완료!",
-            sub: `${total}개 물품을 반납 처리했습니다. (로컬 데모)`,
-          }));
-          setWhReturnSel({});
-        }
-      } catch (e: any) {
-        setResultInfo((prev: any) => ({
-          ...prev,
-          ok: false,
-          isSyncing: false,
-          title: "창고 반납 오류",
-          sub: e.message || "서버 전송 중 오류가 발생했습니다."
-        }));
-      }
-    })();
-  }
-
-  const whCatMapRacks = useMemo(() => {
-    const map: Record<string, Set<string>> = {};
-    whItems.forEach((it) => {
-      const { rack, slot } = parseRackSlot(it.location);
-      if (!rack) return;
-      if (!map[rack]) map[rack] = new Set<string>();
-      if (slot) map[rack].add(slot);
-    });
-    return map;
-  }, [whItems]);
-  const whRacks = useMemo(() => Object.keys(whCatMapRacks).sort(), [whCatMapRacks]);
-  const whSlots = whRack && whCatMapRacks[whRack] ? Array.from<string>(whCatMapRacks[whRack]).sort() : [];
-  const whFiltered = useMemo(() => {
-    const q = whSearch.trim();
-    return whItems.filter((it) => {
-      const { rack, slot } = parseRackSlot(it.location);
-      if (whRack && rack !== whRack) return false;
-      if (whSlot && slot !== whSlot) return false;
-      if (!q) return true;
-      return smartMatch([it.name, it.location, it.keywords], q);
-    }).sort((a, b) => compareRackSlot(a.location, b.location));
-  }, [whItems, whSearch, whRack, whSlot]);
-  const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
-
-  // 화면별로 다른 장바구니를 하나의 UI로 다룬다 (창고 / 일반 대여 / SID 추가물품)
-  const cartKind: "wh" | "gen" | "req" | null =
-    mode === "wborrow" ? "wh" : mode === "b3g" ? "gen" : mode === "b4s" ? "req" : null;
-  const activeCart: any[] = cartKind === "wh" ? whCart : cartKind === "gen" ? cart : cartKind === "req" ? reqCart : [];
-  const activeCartCount = cartKind === "wh"
-    ? whCartCount
-    : activeCart.reduce((sum: number, c: any) => sum + (Number(c.quantity) || 1), 0);
-
-  function changeActiveQty(idx: number, delta: number) {
-    if (cartKind === "wh") { chgWhCart(idx, delta); return; }
-    const setter = cartKind === "gen" ? setCart : setReqCart;
-    setter((prev: CartItem[]) => prev.map((c, i) => (i === idx ? { ...c, quantity: Math.max(1, (c.quantity || 1) + delta) } : c)));
-  }
-  function removeActiveItem(idx: number) {
-    if (cartKind === "wh") { setWhCart(whCart.filter((_, i) => i !== idx)); return; }
-    const setter = cartKind === "gen" ? setCart : setReqCart;
-    setter((prev: CartItem[]) => prev.filter((_, i) => i !== idx));
-  }
-
-
-  function addWhCart(it: WarehouseItem) {
-    const stock = warehouseStockNum(it.stock);
-    if (!isNaN(stock) && stock < 1) { showToast("재고가 부족합니다. (재고: 0)", "warn"); return; }
-    setWhCart((prev) => {
-      const idx = prev.findIndex((c) => c.rowIndex === it.rowIndex);
-      if (idx === -1) return [...prev, { rowIndex: it.rowIndex, location: it.location, name: it.name, quantity: 1 }];
-      if (!isNaN(stock) && prev[idx].quantity >= stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
-      return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
-    });
-  }
-  // 목록에 없는 물품을 직접 이름으로 담는다 (rowIndex: -1 = 커스텀 항목)
-  function addCustomWhCart(name: string, location: string) {
-    const nm = name.trim();
-    if (!nm) { showToast("물품명을 입력해주세요.", "warn"); return; }
-    setWhCart((prev) => {
-      // 같은 이름의 커스텀 항목이 이미 있으면 수량 +1
-      const idx = prev.findIndex((c) => c.rowIndex === -1 && c.name === nm && c.location === location.trim());
-      if (idx !== -1) return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
-      return [...prev, { rowIndex: -1, location: location.trim(), name: nm, quantity: 1 }];
-    });
-    showToast(`'${nm}' 담았습니다.`, "ok");
-  }
-
-  // 세트를 한 번에 장바구니에 담기 — 위치(location) 기준으로 실제 재고 항목을 찾아 매칭한다.
-  // 랙별 물품 수 (필터 칩에 표시)
-  const whRackCounts = useMemo(() => {
-    const m: Record<string, number> = {};
-    whItems.forEach((it) => {
-      const r = parseRackSlot(it.location).rack;
-      if (!r) return;
-      m[r] = (m[r] || 0) + 1;
-    });
-    return m;
-  }, [whItems]);
-
-  function addSetToCart(set: ItemSet) {
-    // 이름 비교용 정규화: 앞뒤 공백 제거 + 연속 공백 하나로 + 대소문자 무시
-    const norm = (v: string | null | undefined) => String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-    // 더 느슨한 비교용: 공백을 전부 없애고 괄호/하이픈 등 기호도 제거
-    // ("LAN 선" ↔ "LAN선", "M3 x 30" ↔ "M3x30", "LAN 선(카테5)" ↔ "LAN선 카테5")
-    const tight = (v: string | null | undefined) =>
-      String(v ?? "").toLowerCase().replace(/[\s()[\]{}_\-.,/]/g, "");
-    const normLoc = (v: string | null | undefined) => String(v ?? "").trim().toUpperCase();
-
-    let addedCount = 0;
-    const notFound: string[] = [];
-    const shortages: string[] = [];
-    // 한 세트 안에서 서로 다른 물품이 같은 재고 행에 잘못 매칭돼 합쳐지는 것을 막는다.
-    const usedRows = new Set<number>();
-
-    // 계산은 setState 밖에서 끝낸다 (updater 안에서 외부 변수를 건드리면
-    // StrictMode의 이중 호출로 카운트가 두 배가 된다).
-    const next = [...whCart];
-
-    set.items.forEach((si) => {
-      const wantName = norm(si.name);
-      const wantLoc = normLoc(si.location);
-
-      // 1순위: 위치 + 이름 모두 일치
-      let match = whItems.find(
-        (w) => !usedRows.has(w.rowIndex) && normLoc(w.location) === wantLoc && norm(w.name) === wantName
-      );
-      // 2순위: 이름만 일치 (위치를 옮겼거나 DB의 위치 표기가 다른 경우)
-      if (!match) {
-        match = whItems.find((w) => !usedRows.has(w.rowIndex) && norm(w.name) === wantName);
-      }
-      // 3순위: 공백·기호를 무시하고 완전 일치 ("LAN 선" ↔ "LAN선")
-      const wantTight = tight(si.name);
-      if (!match && wantTight) {
-        match = whItems.find((w) => !usedRows.has(w.rowIndex) && tight(w.name) === wantTight);
-      }
-      // 4순위: 공백·기호를 무시한 포함 관계 ("LAN선" ↔ "LAN선 카테5")
-      if (!match && wantTight.length >= 2) {
-        match = whItems.find(
-          (w) => !usedRows.has(w.rowIndex) && (tight(w.name).includes(wantTight) || wantTight.includes(tight(w.name)))
-        );
-      }
-      // 위치만 같은 아무 물품을 집어오는 폴백은 쓰지 않는다 — 엉뚱한 물품이 담긴다.
-
-      if (!match) { notFound.push(si.name || si.location); return; }
-      usedRows.add(match.rowIndex);
-
-      const stock = warehouseStockNum(match.stock);
-      const idx = next.findIndex((c) => c.rowIndex === match!.rowIndex);
-      const already = idx !== -1 ? next[idx].quantity : 0;
-      const want = si.qty || 1;
-      const room = isNaN(stock) ? want : Math.max(0, stock - already);
-      const toAdd = Math.min(want, room);
-
-      if (toAdd <= 0) { shortages.push(match.name); return; }
-      if (toAdd < want) shortages.push(match.name);
-
-      if (idx !== -1) next[idx] = { ...next[idx], quantity: next[idx].quantity + toAdd };
-      else next.push({ rowIndex: match.rowIndex, location: match.location, name: match.name, quantity: toAdd });
-      addedCount += toAdd;
-    });
-
-    setWhCart(next);
-    setSetAddResult({ setName: set.name, added: addedCount, notFound, shortages });
-
-    if (addedCount > 0 && !notFound.length && !shortages.length) {
-      showToast(`'${set.name}' 세트 ${addedCount}개를 담았습니다.`, "ok");
-    }
-  }
-
-  function chgWhCart(idx: number, d: number) {
-    setWhCart((prev) => {
-      const item = prev[idx]; if (!item) return prev;
-      const orig = whItems.find((o) => o.rowIndex === item.rowIndex);
-      const stock = orig ? warehouseStockNum(orig.stock) : NaN; const next = item.quantity + d;
-      if (d > 0 && !isNaN(stock) && next > stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
-      if (next < 1) return prev.filter((_, i) => i !== idx);
-      return prev.map((c, i) => (i === idx ? { ...c, quantity: next } : c));
-    });
-  }
-
   /* ══════════════════════ 초기화 & 결과 ══════════════════════ */
 
   function resetAll() {
@@ -1915,13 +1404,10 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
     setItemsLoaded(false); setObjectItems([]);
-    setWhCart([]); setWhSearch(""); setWhCustomLoc(""); setWhRack(""); setWhSlot(""); setWhPurpose(""); setWhDueDate(""); setWhReturnSel({});
     setSelFloor(""); setSelUnit("");
     setMode(rootMode);
     if (rootMode === "return") loadUnreturned();
     if (rootMode === "b1") loadItems();
-    if (rootMode === "wbname") { loadWarehouse(true); }
-    if (rootMode === "wreturn") loadWhReturn();
   }
 
   /* ══════════════════════ 헤더/네비 ══════════════════════ */
@@ -1932,12 +1418,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     b1: tcFlow ? (tcTab === "mine" ? "테이블보 반납" : "테이블보 대여") : "시나리오 대여 신청",
     tc: tcTab === "mine" ? "테이블보 반납" : "테이블보 대여", b2: "시나리오 대여 신청", b3g: "시나리오 대여 신청",
     b4g: "시나리오 대여 신청", b3s: "시나리오 대여 신청", b4s: "시나리오 대여 신청",
-    return: "시나리오 반납 처리", wborrow: "공구 및 부품류 대여", wreturn: "공구 및 부품류 반납", result: "",
+    return: "시나리오 반납 처리", result: "",
   };
 
   function goPrev() {
     if (mode === rootMode) {
-      if (rootMode === "wbname" && onBackToWarehouseBrowse) { onBackToWarehouseBrowse(); return; }
       onBack(); return;
     }
     if (mode === "tc") {
@@ -1953,28 +1438,22 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     else if (mode === "b4g") setMode("b3g");
     else if (mode === "b4s") setMode("b3s");
     else if (mode === "return") setMode("pickReturnKind");
-    else if (mode === "wborrow2") setMode("wborrow");
-    else if (mode === "wborrow") setMode("wbname");
-    else if (mode === "wbname" || mode === "wreturn") setMode(entry === "return" ? "pickReturnKind" : "pickBorrowKind");
     else setMode(rootMode);
   }
 
   // 시나리오 대여의 단계 화면을 없앴으므로 그 흐름에는 진행 표시줄이 의미가 없다.
   // 공구 대여는 아직 단계가 남아 있어 그대로 둔다.
-  const progressIdx = mode === "wbname" ? 2 : mode === "wborrow" ? 3 : mode === "wborrow2" ? 4 : 0;
 
   /* ── URL 해시로 대여 단계를 세분화 (#/borrow/<단계>) — 새로고침·공유·뒤로가기 지원 ── */
   // 시나리오 대여의 단계 화면들은 지웠다. 주소에 그 단계가 남아 있어도 되살리지 않는다 —
   // 되살리면 그릴 것이 없어 빈 화면이 된다(새로고침했을 때 실제로 그랬다).
   const MODE_SLUGS: Record<string, string> = {
     pickBorrowKind: "kind", pickReturnKind: "kind",
-    wborrow: "warehouse", wreturn: "warehouse-return",
     return: "return", result: "done", mode: "kind",
   };
   const SLUG_TO_MODE: Record<string, Mode> = {
     kind: entry === "return" ? "pickReturnKind" : "pickBorrowKind",
-    warehouse: "wbname",
-    "warehouse-return": "wreturn", return: "return", done: "result",
+    return: "return", done: "result",
   };
   /* 지워진 화면에 닿으면 그릴 것이 없어 빈 화면이 된다. 주소를 직접 열었거나
    * 새로고침한 경우다. 폐기 안내 화면을 남겨두면 사용자가 이 경로를 다시 쓰는
@@ -2004,7 +1483,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   const MODE_ORDER: Record<string, number> = {
     pickBorrowKind: 0, pickReturnKind: 0, mode: 0,
     b1: 1, b2: 2, b3g: 3, b3s: 3, b4g: 4, b4s: 4,
-    wborrow: 1, wreturn: 1, return: 1, result: 5,
+    tc: 1, return: 1, result: 5,
   };
   const prevOrderRef = useRef(MODE_ORDER[mode] ?? 0);
   const slideDirRef = useRef<"forward" | "back">("forward");
@@ -2053,19 +1532,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     <div className="bsp-root" style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "inherit" }}>
       <style>{`
         @keyframes bsp-spin { to { transform: rotate(360deg); } }
-
-        /* 담을 때 카드에서 장바구니로 날아가는 점 */
-        @keyframes wb-fly {
-          0%   { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
-          70%  { opacity: 1; }
-          100% { transform: translate(-50%, -50%) scale(0.35); opacity: 0; }
-        }
-        @keyframes wb-pop {
-          0%   { transform: scale(1); }
-          45%  { transform: scale(1.22); }
-          100% { transform: scale(1); }
-        }
-        .wb-cart-pop { animation: wb-pop 0.4s ease-out; }
 
         /* PC(넓은 화면)에서는 전체적으로 살짝 크게 — 모바일 폭(480px 이하)에는 영향 없음 */
         @media (min-width: 900px) {
@@ -2194,97 +1660,24 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           48px일 때 모바일에서 "다음" 버튼이 장바구니에 가려졌다. */}
       <div style={{ maxWidth: "620px", margin: "0 auto", padding: "24px 16px 120px" }}>
 
-        {/* 진행바 (대여 신청 흐름) */}
-        {progressIdx > 0 && !tcFlow ? (
-          <div style={{ marginBottom: "24px" }}>
-            <div style={{ width: "100%", height: "6px", background: C.border, borderRadius: "10px", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${((progressIdx - 1) / 3) * 100}%`, background: `linear-gradient(90deg, ${C.accent}, #94a3b8)`, borderRadius: "10px", transition: "width 0.3s" }} />
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontSize: "11px", color: C.label, fontWeight: 600 }}>
-              <span>정보 입력</span><span>유형 선택</span><span>물품 선택</span><span>제출</span>
+        {/* 물품 열람을 거쳐 온 신청은 중간 화면이 전부 지나가는 길일 뿐이다.
+            그 화면들이 잠깐씩 비치면 무엇을 하는 화면인지 헷갈리므로 이걸로 덮는다.
+            막아야 할 것이 나오면 덮개가 걷히고 원래 화면이 나온다.
+            덮개는 단계 전환 상자(key={mode}) 밖에 둔다 — 안에 두면 자동 진행이 b1→b2→b4로
+            넘어갈 때마다 덮개가 다시 그려지며 오른쪽에서 미끄러져 들어오기를 반복했다. */}
+        {autoBusy && mode !== "result" ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "14px", padding: "80px 0", textAlign: "center" }}>
+            <Spinner size={30} C={C} />
+            <div style={{ fontSize: "15px", fontWeight: 800, color: C.text }}>대여를 신청하는 중입니다</div>
+            <div style={{ fontSize: "12.5px", color: C.label, lineHeight: 1.6 }}>
+              담아둔 물품으로 바로 신청합니다. 잠시만 기다려주세요.
             </div>
           </div>
         ) : null}
 
-        {/* 대여자 상태 바: 이름 입력 이후 대여 과정 내내 상단에 고정되어 따라다닌다.
-            (내가 누구로 신청 중인지 / 어느 유닛인지 / 지금 몇 개를 빌리고 있는지를 항상 확인할 수 있게) */}
-        {progressIdx > 0 && activeTypeInfo ? (() => {
-          const heldQty = (activeTypeInfo.items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0);
-          // 지금 장바구니에 담는 중인 수량 (SID 필수물품 + SID 추가물품 + 일반 + 창고)
-          const sidQty = sidCart.reduce(
-            (sum, e: any) => sum + ((e.scenario?.items || []).reduce((s2: number, it: any) => s2 + (Number(it.quantity) || 1), 0)),
-            0
-          );
-          const addingQty =
-            sidQty
-            + reqCart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0)
-            + cart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0)
-            + whCart.reduce((sum, c: any) => sum + (Number(c.quantity) || 1), 0);
-          const displayName = (affiliation === "other" ? otherName.trim() : borrowerName.trim()) || "회원";
-          const seatText = [selFloor, selUnit].filter(Boolean).join(" · ");
-          const limitReached = !seatExempt && activeTypeInfo.count >= activeTypeInfo.max;
-          return (
-            <div
-              style={{
-                position: "sticky",
-                top: headerH,
-                zIndex: 19,
-                marginBottom: "16px",
-                padding: "10px 14px",
-                borderRadius: "12px",
-                background: C.accentSoft,
-                border: `1px solid ${limitReached ? C.error : "transparent"}`,
-                backdropFilter: "blur(8px)",
-                WebkitBackdropFilter: "blur(8px)",
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ fontSize: "13.5px", fontWeight: 800, color: C.text, flexShrink: 0 }}>
-                {displayName}님
-              </span>
-
-              {seatText ? (
-                <span style={{ fontSize: "11.5px", fontWeight: 800, color: C.accentText, background: C.card, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}>
-                  📍 {seatText}
-                </span>
-              ) : null}
-
-              {seatExempt ? (
-                <span style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.card, borderRadius: "999px", padding: "3px 10px", flexShrink: 0 }}>
-                  ∞ 예외 유닛
-                </span>
-              ) : null}
-
-              {/* 개인 페널티가 걸려 있으면 한도가 낮아진 이유를 함께 보여준다 */}
-              {!seatExempt && activeTypeInfo.penalty ? (
-                <span
-                  style={{ fontSize: "11px", fontWeight: 800, color: "#fff", background: C.error, borderRadius: "999px", padding: "3px 10px" }}
-                >
-                  ⚠ 페널티 {activeTypeInfo.penalty.max}종류 제한
-                  {activeTypeInfo.penalty.reason ? ` · ${activeTypeInfo.penalty.reason}` : ""}
-                  {activeTypeInfo.penalty.until ? ` · ${activeTypeInfo.penalty.until}까지` : ""}
-                </span>
-              ) : null}
-
-              <span style={{ flex: 1 }} />
-
-              <span style={{ fontSize: "12px", fontWeight: 800, color: limitReached ? C.error : C.accentText, whiteSpace: "nowrap" }}>
-                {seatExempt
-                  ? `대여 중 ${activeTypeInfo.count}종류 · ${heldQty}개`
-                  : `대여 중 ${activeTypeInfo.count}/${activeTypeInfo.max}종류 · ${heldQty}개`}
-                {addingQty > 0 ? (
-                  <span style={{ color: C.success, marginLeft: "6px" }}>(+담는 중 {addingQty}개)</span>
-                ) : null}
-              </span>
-            </div>
-          );
-        })() : null}
-
         {/* ───────── 대여 종류 선택 (시나리오 / 창고) ───────── */}
-        <div key={mode} className={slideDir === "forward" ? "step-forward" : "step-back"}>
+        {/* 자동 진행 중에는 지나가는 단계라 전환 효과를 주지 않는다. 결과 화면에서 한 번만 들어온다. */}
+        <div key={mode} className={autoBusy && mode !== "result" ? undefined : slideDir === "forward" ? "step-forward" : "step-back"}>
         {mode === "pickBorrowKind" || mode === "pickReturnKind" ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             <div style={{ fontSize: "13px", color: C.label, marginBottom: "4px" }}>
@@ -2292,7 +1685,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             </div>
             {[
               { kind: "scenario", icon: <Fingerprint size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품", sub: "SID 기반 대여 및 일반 대여" },
-              ...(mode === "pickReturnKind" ? [{ kind: "warehouse", icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 및 부품류", sub: "창고 재고를 랙·슬롯 기준으로 반납" }] : []),
               // 테이블보 대여는 새 열람 화면의 장바구니 안에서 완료한다. 이 옛 화면에는
               // 반납 진입점만 남겨, 오래된 대여 목록으로 다시 들어가지 않게 한다.
               ...(mode === "pickReturnKind" ? [{ kind: "tablecloth", icon: <Layers size={22} />, color: C.warn, bg: C.warnSoft, title: "테이블보 반납하기", sub: "내가 빌린 테이블보를 직접 반납합니다" }] : []),
@@ -2305,11 +1697,9 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                     // 시나리오 물품을 고르는 화면은 물품을 담는 쪽으로 옮겨 갔다. 여기서
                     // 옛 단계로 넘기면 "이 화면은 더 이상 쓰이지 않습니다"에 닿는다.
                     else if (m.kind === "scenario") { (onGoPickItems || onBack)(); }
-                    else { setMode("wbname"); loadWarehouse(); }
                   } else {
                     if (m.kind === "tablecloth") { setTcFlow(true); setTcTab("mine"); setTcDetailId(null); setMode("b1"); }
                     else if (m.kind === "scenario") { setMode("return"); loadUnreturned(); }
-                    else { setMode("wreturn"); loadWhReturn(); }
                   }
                 }}
                 style={{ display: "flex", alignItems: "center", gap: "16px", padding: "22px 18px", border: `1px solid ${C.border}`, borderRadius: "16px", background: C.card, cursor: "pointer", transition: "all 0.2s" }}
@@ -2341,18 +1731,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           />
         ) : null}
 
-        {/* 물품 열람을 거쳐 온 신청은 중간 화면이 전부 지나가는 길일 뿐이다.
-            그 화면들이 잠깐씩 비치면 무엇을 하는 화면인지 헷갈리므로 이걸로 덮는다.
-            막아야 할 것이 나오면 덮개가 걷히고 원래 화면이 나온다. */}
-        {autoBusy && mode !== "result" ? (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "14px", padding: "80px 0", textAlign: "center" }}>
-            <Spinner size={30} C={C} />
-            <div style={{ fontSize: "15px", fontWeight: 800, color: C.text }}>대여를 신청하는 중입니다</div>
-            <div style={{ fontSize: "12.5px", color: C.label, lineHeight: 1.6 }}>
-              담아둔 물품으로 바로 신청합니다. 잠시만 기다려주세요.
-            </div>
-          </div>
-        ) : null}
 
         {/* 시나리오 대여의 단계 화면들(신청인·유형 선택·물품 선택·제출)이 여기 있었다.
             대여를 물품 열람에서 시작하도록 바꾸면서 갈 일이 없어졌다 — 신원은 로그인에서,
@@ -2594,365 +1972,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           </div>
         ) : null}
 
-        {/* ───────── 공구 및 부품류 대여 ───────── */}
-        {/* ══════════ 공구 및 부품류 1단계: 대여자 성함 ══════════ */}
-        {mode === "wbname" ? (
-          <div>
-            <label style={labelStyle}>대여자 성함</label>
-            <div style={{ position: "relative", marginBottom: "8px" }}>
-              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input
-                value={whName}
-                onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))}
-                onKeyDown={(e) => { if (e.key === "Enter" && whName.trim()) setMode("wborrow"); }}
-                placeholder="성함을 입력해주세요"
-                autoFocus
-                style={{ ...inputStyle, paddingLeft: "40px" }}
-              />
-            </div>
-            <div style={{ fontSize: "11.5px", color: C.label, lineHeight: 1.6, marginBottom: "18px" }}>
-              대여 기록과 반납 알림에 사용됩니다.
-            </div>
-            <div style={{ display: "flex", gap: "10px" }}>
-              <button onClick={goPrev} style={secondaryBtn}>이전</button>
-              <button
-                onClick={() => { if (!whName.trim()) { showToast("성함을 입력해주세요.", "warn"); return; } setMode("wborrow"); }}
-                disabled={!whName.trim()}
-                style={{ ...primaryBtn, opacity: whName.trim() ? 1 : 0.5 }}
-              >
-                다음 단계 <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {/* ══════════ 공구 및 부품류 2단계: 물건 담기 ══════════ */}
-        {mode === "wborrow" ? (
-          <div>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-              <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-                <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "10px 12px 10px 36px", fontSize: "13.5px" }} />
-              </div>
-            </div>
-
-            {/* 세트로 담기 */}
-            {itemSetsLoaded && itemSets.length > 0 ? (
-              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "10px" }}>
-                {itemSets.map((set) => (
-                  <button key={set.name} onClick={(e) => { flyToCart(e.currentTarget.getBoundingClientRect()); addSetToCart(set); }}
-                    style={{ display: "flex", alignItems: "center", gap: "5px", padding: "6px 12px", borderRadius: "999px", border: `1px dashed ${C.accent}`, background: C.card, color: C.accentText, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>
-                    <PackageOpen size={13} /> {set.name} <span style={{ fontWeight: 500, opacity: 0.7 }}>{set.items.length}종</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {setAddResult && (setAddResult.notFound.length > 0 || setAddResult.shortages.length > 0) ? (
-              <div style={{ marginBottom: "10px", padding: "10px 12px", borderRadius: "10px", background: C.warnSoft, border: `1px solid ${C.warn}55` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-                  <span style={{ fontSize: "12px", fontWeight: 800, color: C.warn, flex: 1 }}>'{setAddResult.setName}' — {setAddResult.added}개 담김</span>
-                  <button onClick={() => setSetAddResult(null)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer", padding: 0 }}><X size={14} /></button>
-                </div>
-                {setAddResult.notFound.length > 0 ? <div style={{ fontSize: "11.5px", color: C.text }}><b>창고 목록에 없음:</b> {setAddResult.notFound.join(", ")}</div> : null}
-                {setAddResult.shortages.length > 0 ? <div style={{ fontSize: "11.5px", color: C.text }}><b>재고 부족:</b> {setAddResult.shortages.join(", ")}</div> : null}
-              </div>
-            ) : null}
-
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "8px", fontSize: "11.5px", color: C.label }}>
-              <span>{whFiltered.length} / {whItems.length}개 물품</span>
-              <span>카드를 누를 때마다 1개씩 담깁니다</span>
-            </div>
-
-            {whLoading && !whLoaded ? (
-              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}><Spinner /> 공구 및 부품류를 불러오는 중...</div>
-            ) : !whLoaded || whItems.length === 0 ? (
-              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px", display: "flex", flexDirection: "column", alignItems: "center", gap: "10px" }}>
-                <div>공구 및 부품류 목록을 불러오지 못했습니다.</div>
-                <button onClick={() => loadWarehouse(true)} style={{ padding: "8px 16px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "12px", fontWeight: 700 }}>다시 불러오기</button>
-              </div>
-            ) : whFiltered.length === 0 ? (
-              <div style={{ padding: "24px", textAlign: "center", color: C.label, fontSize: "13px" }}>검색 결과가 없습니다.</div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(112px, 1fr))", gap: "6px", maxHeight: "min(52vh, 500px)", overflowY: "auto", paddingRight: "2px" }}>
-                {whFiltered.map((it) => {
-                  const inCart = whCart.some((c) => c.rowIndex === it.rowIndex);
-                  const cartQty = whCart.find((c) => c.rowIndex === it.rowIndex)?.quantity || 0;
-                  const stockN = warehouseStockNum(it.stock);
-                  const soldOut = !isNaN(stockN) && stockN <= 0;
-                  const { rack, slot } = parseRackSlot(it.location);
-                  return (
-                    <div key={it.rowIndex}
-                      onClick={(e) => { if (soldOut) return; flyToCart(e.currentTarget.getBoundingClientRect()); addWhCart(it); }}
-                      style={{ border: `${inCart ? 2 : 1}px solid ${inCart ? C.accent : C.border}`, borderRadius: "12px", background: C.card, padding: "6px", cursor: soldOut ? "not-allowed" : "pointer", opacity: soldOut ? 0.5 : 1, display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <div onClick={(e) => { if (it.photo) { e.stopPropagation(); setImageModalUrl(getGoogleDriveImageUrl(it.photo)); } }}
-                        style={{ height: "44px", borderRadius: "6px", overflow: "hidden", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {it.photo ? <img src={getThumbImageUrl(it.photo)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} /> : <Package size={18} style={{ color: C.label, opacity: 0.5 }} />}
-                      </div>
-                      <div title={it.name} style={{ fontSize: "12px", fontWeight: 700, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
-                        <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>{hideLocation ? "🔒" : (it.location ? `${rack}-${slot}` : "-")}</span>
-                        <span style={{ fontWeight: 700, color: isNaN(stockN) ? C.label : (soldOut ? C.error : C.success) }}>{isNaN(stockN) ? "N/A" : soldOut ? "재고 없음" : `재고 ${stockN}`}</span>
-                      </div>
-                      {inCart ? (
-                        <div style={{ display: "flex", gap: "4px" }}>
-                          <div style={{ flex: 1, height: "22px", borderRadius: "6px", background: C.accentSoft, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 800, color: C.accentText }}>
-                            담김 {cartQty}개
-                          </div>
-                          {/* 취소는 카드 클릭과 겹치지 않도록 이 버튼으로만 */}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setWhCart(whCart.filter((c) => c.rowIndex !== it.rowIndex)); }}
-                            title="담은 물품 빼기"
-                            style={{ flexShrink: 0, width: "26px", height: "22px", borderRadius: "6px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
-                          >
-                            <X size={11} />
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ height: "22px", borderRadius: "6px", border: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "11px", fontWeight: 700, color: soldOut ? C.label : C.accentText }}>
-                          {soldOut ? "재고 없음" : "담기"}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: "10px", marginTop: "16px", alignItems: "center" }}>
-              <button onClick={goPrev} style={secondaryBtn}>이전</button>
-              <button
-                onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setMode("wborrow2"); }}
-                disabled={!whCart.length}
-                style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
-              >
-                다음 단계 <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {/* ══════════ 공구 및 부품류 — 2단계: 확인 및 신청 ══════════ */}
-        {mode === "wborrow2" ? (
-          <div>
-            <div style={{ marginBottom: "16px", border: `1px solid ${C.border}`, borderRadius: "12px", background: C.card, padding: "12px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-                <span style={{ fontSize: "13px", fontWeight: 800, color: C.text }}>담은 물품</span>
-                <span style={{ fontSize: "11px", fontWeight: 700, background: C.accent, color: "#fff", borderRadius: "14px", padding: "2px 10px" }}>
-                  {whCart.length}종 · {whCartCount}개
-                </span>
-              </div>
-              {whCart.length === 0 ? (
-                <div style={{ padding: "16px 0", textAlign: "center", fontSize: "12.5px", color: C.label, borderTop: `1px solid ${C.border}` }}>
-                  담은 물품이 없습니다. 이전 화면에서 골라주세요.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px", borderTop: `1px solid ${C.border}`, paddingTop: "10px" }}>
-                  {whCart.map((c, idx) => (
-                    <div key={c.rowIndex} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: "13px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</div>
-                        <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || "위치 없음"}</div>
-                      </div>
-                      <button onClick={() => chgWhCart(idx, -1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>−</button>
-                      <span style={{ minWidth: "20px", textAlign: "center", fontSize: "13px", fontWeight: 800 }}>{c.quantity}</span>
-                      <button onClick={() => chgWhCart(idx, 1)} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "13px", lineHeight: 1, flexShrink: 0 }}>+</button>
-                      <button onClick={() => setWhCart(whCart.filter((_, i) => i !== idx))} style={{ width: 26, height: 26, borderRadius: "7px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={12} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginBottom: "16px", fontSize: "12px", color: C.label }}>
-              대여자: <b style={{ color: C.text }}>{whName || "(미입력)"}</b>
-              <button onClick={() => setMode("wbname")} style={{ marginLeft: "8px", background: "transparent", border: "none", color: C.accentText, cursor: "pointer", fontSize: "11.5px", fontWeight: 700 }}>변경</button>
-            </div>
-
-            <div>
-              <label style={labelStyle}>목적 / 메모 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(선택)</span></label>
-              <textarea value={whPurpose} onChange={(e) => setWhPurpose(e.target.value)} placeholder="대여 목적 또는 소모 사유를 적어주세요" style={{ ...inputStyle, minHeight: "72px", resize: "none" }} />
-            </div>
-            <div style={{ marginTop: "12px" }}>
-              <label style={labelStyle}>반납 예정일 <span style={{ fontWeight: 400, color: C.label, fontSize: "12px" }}>(대여 시 선택 · 연체 관리에 사용)</span></label>
-              <input type="date" value={whDueDate} onChange={(e) => setWhDueDate(e.target.value)} style={{ ...inputStyle }} />
-              {whDueDate ? <div style={{ fontSize: "11px", color: C.accentText, marginTop: "5px", fontWeight: 600 }}>이 예정일이 지나면 대여 대장에서 연체로 표시됩니다.</div> : null}
-            </div>
-            <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
-              <button onClick={goPrev} style={secondaryBtn}>이전</button>
-              <button onClick={() => handleWarehouseBorrow("소모")} disabled={submitting} style={{ flex: 1, padding: "14px", borderRadius: "12px", border: "none", cursor: "pointer", background: C.warn, color: "#fff", fontSize: "15px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <Spinner size={16} light /> : <Flame size={16} />} 소모
-              </button>
-              <button onClick={() => handleWarehouseBorrow("대여")} disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.7 : 1 }}>
-                {submitting ? <><Spinner size={16} light /> 처리 중...</> : <><HandHelping size={16} /> 대여</>}
-              </button>
-            </div>
-            <div style={{ fontSize: "11px", color: C.label, marginTop: "8px", lineHeight: 1.5 }}>
-              <b>소모</b>는 재고에서 차감되며 <b>반납 대상이 아닙니다</b> (아예 사용/소진). 반납이 필요하면 <b>대여</b>를 선택하세요.
-            </div>
-          </div>
-        ) : null}
-
-
-        {/* ───────── 공구 및 부품류 반납 ───────── */}
-        {mode === "wreturn" ? (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
-              <div style={{ flex: 1, padding: "12px 14px", background: C.accentSoft, borderRadius: "12px", borderLeft: `4px solid ${C.accent}`, fontSize: "12px", lineHeight: 1.6 }}>
-                현재 대여 중인 공구 및 부품류 전체 목록입니다. 반납할 물품을 선택하고, 아래에 반납자 성함을 입력해주세요.
-              </div>
-              <button
-                onClick={() => !whReturnLoading && loadWhReturn()}
-                disabled={whReturnLoading}
-                title="새로고침"
-                style={{ display: "flex", alignItems: "center", gap: "5px", padding: "8px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.label, fontSize: "12px", fontWeight: 700, cursor: whReturnLoading ? "default" : "pointer", opacity: whReturnLoading ? 0.6 : 1, flexShrink: 0, alignSelf: "flex-start" }}
-              >
-                <style>{`@keyframes spinSyncBtn { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .sync-icon-spin { animation: spinSyncBtn 0.9s linear infinite; }`}</style>
-                <RotateCcw size={13} className={whReturnLoading ? "sync-icon-spin" : undefined} /> 새로고침
-              </button>
-            </div>
-            <label style={labelStyle}>반납자 성함</label>
-            <div style={{ position: "relative", marginBottom: "12px" }}>
-              <User size={16} style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input value={whName} onChange={(e) => setWhName(e.target.value.replace(/[^\uAC00-\uD7A3\u3131-\u318E\s]/g, ""))} placeholder="반납자 성함 (반납 기록에 남습니다)" style={{ ...inputStyle, paddingLeft: "40px" }} />
-            </div>
-            <div style={{ position: "relative", marginBottom: "12px" }}>
-              <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-              <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명 · 대여자 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-            </div>
-
-            {whReturnLoading ? (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "48px 0", color: C.label }}><Spinner size={30} /> 대여 내역을 불러오는 중...</div>
-            ) : whReturnItems.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "40px 0", color: C.label, fontSize: "14px" }}>현재 대여 중인 공구 및 부품류가 없습니다.</div>
-            ) : (
-              <>
-                {(() => {
-                  const q = whSearch.trim().toLowerCase();
-                  const visible = whReturnItems
-                    .map((item, idx) => ({ item, idx }))
-                    .filter(({ item }) => {
-                      if (!q) return true;
-                      return String(item.name || "").toLowerCase().includes(q)
-                        || String(item.borrowerName || "").toLowerCase().includes(q)
-                        || String(item.location || "").toLowerCase().includes(q);
-                    });
-                  // 대여자별 그룹화 (시나리오 반납 화면과 동일한 UX)
-                  const groupMap: Record<string, { item: any; idx: number }[]> = {};
-                  const order: string[] = [];
-                  visible.forEach((e) => {
-                    const b = String(e.item.borrowerName || "(대여자 미상)");
-                    if (!groupMap[b]) { groupMap[b] = []; order.push(b); }
-                    groupMap[b].push(e);
-                  });
-                  return order.map((borrower) => {
-                    const entries = groupMap[borrower];
-                    const gKey = `wh|${borrower}`;
-                    // 기본 접힘, 검색 중에는 자동 펼침. 직접 토글한 상태가 우선.
-                    const isExp = expanded[gKey] ?? (q.length > 0);
-                    const checkedCount = entries.filter(({ idx }) => whReturnSel[String(idx)] !== undefined).length;
-                    const isAll = checkedCount === entries.length && entries.length > 0;
-                    const isSome = checkedCount > 0 && !isAll;
-                    const avatar = getAvatarColor(borrower);
-                    const totalQty = entries.reduce((s, { item }) => s + (parseInt(String(item.quantity), 10) || 1), 0);
-                    const toggleGroupSel = () => {
-                      setWhReturnSel((p) => {
-                        const n = { ...p };
-                        entries.forEach(({ item, idx }) => {
-                          const key = String(idx);
-                          const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
-                          if (isAll) delete n[key]; else n[key] = n[key] ?? maxQty;
-                        });
-                        return n;
-                      });
-                    };
-                    return (
-                      <div key={gKey} style={{ marginBottom: "12px" }}>
-                        <div
-                          onClick={() => setExpanded((prev) => ({ ...prev, [gKey]: !isExp }))}
-                          style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", background: C.card, borderRadius: "14px", border: `1.5px solid ${isAll ? C.accent : C.border}`, boxShadow: "0 2px 12px rgba(0,0,0,0.02)", cursor: "pointer", userSelect: "none" }}
-                        >
-                          <div
-                            onClick={(e) => { e.stopPropagation(); toggleGroupSel(); }}
-                            style={{ width: 22, height: 22, borderRadius: "6px", border: `2px solid ${isAll || isSome ? C.accent : C.label}`, background: isAll ? C.accent : isSome ? C.accentSoft : C.card, boxShadow: isAll || isSome ? "none" : "inset 0 1px 2px rgba(0,0,0,0.06)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
-                          >
-                            {isAll ? <Check size={14} strokeWidth={3.5} style={{ color: "#ffffff" }} /> : null}
-                            {isSome ? <div style={{ width: 10, height: 10, background: C.accent, borderRadius: "3px" }} /> : null}
-                          </div>
-                          <div style={{ width: 32, height: 32, borderRadius: "50%", background: avatar.bg, color: avatar.text, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: "12px", flexShrink: 0 }}>
-                            {borrower.slice(0, 1)}
-                          </div>
-                          <span style={{ fontWeight: 800, fontSize: "14px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{borrower}</span>
-                          <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>{totalQty}개</span>
-                          {checkedCount > 0 ? (
-                            <span style={{ fontSize: "10px", fontWeight: 700, color: C.success, background: C.successSoft, borderRadius: "8px", padding: "1px 6px", flexShrink: 0 }}>{checkedCount}건 선택됨</span>
-                          ) : null}
-                          <ChevronRight size={16} style={{ color: C.label, flexShrink: 0, transform: isExp ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s ease" }} />
-                        </div>
-                        {isExp ? (
-                          <div style={{ paddingLeft: "12px", borderLeft: `1px dashed ${C.border}`, marginLeft: "16px", marginTop: "6px" }}>
-                            {entries.map(({ item, idx }) => {
-                  const key = String(idx);
-                  const maxQty = Math.max(1, parseInt(String(item.quantity), 10) || 1);
-                  const sel = whReturnSel[key];
-                  const checked = sel !== undefined;
-                  const { rack, slot } = parseRackSlot(item.location);
-                  return (
-                    <div key={key} onClick={() => setWhReturnSel((p) => { const n = { ...p }; if (checked) delete n[key]; else n[key] = maxQty; return n; })}
-                      style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "13px", border: `1px solid ${checked ? C.accent : C.border}`, background: checked ? C.accentSoft : "transparent", borderRadius: "12px", marginBottom: "8px", cursor: "pointer" }}>
-                      <input type="checkbox" readOnly checked={checked} style={{ width: 20, height: 20, accentColor: C.accent, marginTop: "2px", flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "13px" }}>{item.itemLabel || item.name}</div>
-                        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
-                          {item.borrowerName ? `대여자: ${item.borrowerName} · ` : ""}대여일: {item.borrowDate || "-"}
-                        </div>
-                        <div style={{ marginTop: "4px" }}>
-                          {item.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "2px 8px", fontFamily: "monospace" }}><MapPin size={11} />{rack}랙 {slot}</span> : null}
-                        </div>
-                        {maxQty > 1 ? (
-                          <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-                            <span style={{ fontSize: "11px", color: C.label, fontWeight: 700 }}>반납 수량</span>
-                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.max(1, (p[key] ?? maxQty) - 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={12} /></button>
-                            <span style={{ fontWeight: 700, minWidth: "18px", textAlign: "center", fontSize: "13px" }}>{sel ?? maxQty}</span>
-                            <button onClick={() => setWhReturnSel((p) => ({ ...p, [key]: Math.min(maxQty, (p[key] ?? maxQty) + 1) }))} style={{ width: 26, height: 26, borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={12} /></button>
-                            <span style={{ fontSize: "11px", color: C.label }}>/ 총 {maxQty}개</span>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  });
-                })()}
-                {Object.keys(whReturnSel).length === 0 ? (
-                  <div style={{ marginTop: "12px", fontSize: "12px", color: C.label, textAlign: "center" }}>
-                    반납할 물품을 선택하면 버튼이 활성화됩니다. (대여자 카드를 눌러 펼친 뒤 물품을 선택하세요)
-                  </div>
-                ) : returnSubmitting ? (
-                  <div style={{ marginTop: "12px", fontSize: "12px", color: C.warn, textAlign: "center" }}>
-                    이전 요청이 처리 중입니다. 계속 이 상태면 페이지를 새로고침해주세요.
-                  </div>
-                ) : null}
-                <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                  <button onClick={goPrev} style={secondaryBtn}>이전</button>
-                  <button onClick={handleWarehouseReturn} disabled={Object.keys(whReturnSel).length === 0 || returnSubmitting} style={{ ...primaryBtn, opacity: Object.keys(whReturnSel).length === 0 || returnSubmitting ? 0.5 : 1 }}>
-                    {returnSubmitting ? <><Spinner size={16} light /> 처리 중...</> : `반납 처리하기${Object.keys(whReturnSel).length ? ` (${Object.keys(whReturnSel).length}건)` : ""}`}
-                  </button>
-                </div>
-              </>
-            )}
-            {whReturnItems.length === 0 ? (
-              <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
-                <button onClick={goPrev} style={secondaryBtn}>이전</button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
         {/* ───────── 결과 화면 ───────── */}
         {mode === "result" ? (
           <div style={{ textAlign: "center", padding: "48px 20px" }}>
@@ -2976,40 +1995,37 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             <div style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px" }}>{resultInfo.title}</div>
             <div style={{ fontSize: "13px", color: C.label, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{resultInfo.sub}</div>
 
-            {resultInfo.ok && resultInfo.receipt ? (
-              <div style={{ maxWidth: "360px", margin: "24px auto 0", textAlign: "left", border: `1px solid ${C.border}`, borderRadius: "14px", background: C.card, overflow: "hidden" }}>
-                <div style={{ padding: "12px 16px", borderBottom: `1px dashed ${C.border}`, background: C.cardSub, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "13px", fontWeight: 800 }}>📋 {resultInfo.receipt.action} 내역</span>
-                  <span style={{ fontSize: "11px", color: C.label }}>{resultInfo.receipt.date}</span>
-                </div>
-                <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: "6px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-                    <span style={{ color: C.label }}>대여자</span><span style={{ fontWeight: 700 }}>{resultInfo.receipt.borrower}</span>
+            {resultInfo.ok && !resultInfo.isSyncing && resultInfo.borrowQr ? (
+              <div style={{ margin: "24px auto 0", maxWidth: 380, display: "grid", justifyItems: "center", gap: 10 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: C.text }}>QR을 스캔해 물품 위치를 확인하세요</div>
+                <div style={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border: "1px solid #fed7aa",
+                  background: "#fff7ed",
+                  color: "#7c2d12",
+                  textAlign: "left",
+                  boxSizing: "border-box",
+                }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 999, display: "grid", placeItems: "center", flex: "0 0 auto", background: "#ffedd5", color: "#c2410c" }}>
+                    <Clock3 size={16} />
                   </div>
-                  {resultInfo.receipt.due ? (
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-                      <span style={{ color: C.label }}>반납 예정일</span><span style={{ fontWeight: 700, color: C.accentText }}>{resultInfo.receipt.due}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 3 }}>수령 제한 시간</div>
+                    <div style={{ fontSize: 14, lineHeight: 1.55, fontWeight: 700 }}>
+                      신청 후 {resultInfo.pickupTimeoutMinutes ?? 20}분 안에 물품을 수령해주세요.
                     </div>
-                  ) : null}
-                </div>
-                <div style={{ padding: "0 16px 12px" }}>
-                  {resultInfo.receipt.items.map((it, i) => (
-                    <div key={i} style={{ padding: "7px 0", borderTop: `1px solid ${C.border}` }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px" }}>
-                        <span style={{ flex: 1, fontWeight: 600, wordBreak: "break-word" }}>{it.name}{it.location ? <span style={{ color: C.label, fontWeight: 400 }}> · {it.location}</span> : null}</span>
-                        <span style={{ fontWeight: 800, marginLeft: "8px" }}>{it.qty}개</span>
-                      </div>
-                      {it.variantName ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: "5px", marginTop: "4px", paddingLeft: "8px", fontSize: "11px", color: C.accentText, fontWeight: 700 }}>
-                          <span aria-hidden="true">ㄴ</span>
-                          <span>선택 종류</span>
-                          <VariantChip C={C} text={it.variantName} />
-                        </div>
-                      ) : null}
-                      {it.note ? <div style={{ fontSize: "10.5px", color: C.warn, marginTop: "2px", fontWeight: 700 }}>🔥 {it.note}</div> : null}
+                    <div style={{ marginTop: 3, fontSize: 12, lineHeight: 1.5, color: "#9a3412" }}>
+                      시간 내 대여 확인이 없으면 신청이 자동 취소됩니다.
                     </div>
-                  ))}
+                  </div>
                 </div>
+                <img src={resultInfo.borrowQr.image} alt="대여 물품 위치 확인 사이트 QR" style={{ width: "min(320px,75vw)", background: "#fff", padding: 10, borderRadius: 16, border: `1px solid ${C.border}` }} />
+                <div aria-live="polite" style={{ color: C.label, fontSize: 13, fontWeight: 800 }}>{borrowQrSeconds}초 후 처음 화면으로 돌아갑니다</div>
               </div>
             ) : null}
 
@@ -3024,132 +2040,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       </div>
 
       {/* 이미지 확대 모달 */}
-      {/* ══════════ 장바구니: 우측 하단 아이콘 + 시트 + 날아가는 점 ══════════ */}
-      {cartKind ? (
-        <>
-          {/* 날아가는 점 */}
-          {flyDots.map((d) => (
-            <div
-              key={d.id}
-              style={{
-                position: "fixed", left: d.x, top: d.y, zIndex: 2400, pointerEvents: "none",
-                width: 16, height: 16, borderRadius: "999px", background: C.accent,
-                transform: "translate(-50%, -50%)",
-                animation: "wb-fly 0.6s cubic-bezier(0.4, 0, 0.6, 1) forwards",
-                transition: "left 0.6s cubic-bezier(0.4,0,0.6,1), top 0.6s cubic-bezier(0.4,0,0.6,1)",
-              }}
-              ref={(el) => {
-                if (!el) return;
-                // 다음 프레임에 목적지(장바구니 버튼)로 좌표를 옮겨 이동 애니메이션을 만든다
-                requestAnimationFrame(() => {
-                  const cart = document.getElementById("wb-cart-fab");
-                  if (!cart) return;
-                  const r = cart.getBoundingClientRect();
-                  el.style.left = `${r.left + r.width / 2}px`;
-                  el.style.top = `${r.top + r.height / 2}px`;
-                });
-              }}
-            />
-          ))}
-
-          {/* 장바구니 버튼 */}
-          <button
-            id="wb-cart-fab"
-            onClick={() => setWhCartOpen(true)}
-            className={whCartPulse ? "wb-cart-pop" : ""}
-            style={{
-              // 아이콘만 있으면 무슨 버튼인지 한눈에 안 들어와서 글자를 같이 둔다.
-              position: "fixed", right: "22px", bottom: "22px", zIndex: 2300,
-              padding: "15px 22px", borderRadius: "999px", border: "none", cursor: "pointer",
-              background: activeCartCount > 0 ? C.accent : C.card,
-              color: activeCartCount > 0 ? "#fff" : C.text,
-              display: "flex", alignItems: "center", gap: "10px",
-              fontSize: "15px", fontWeight: 800,
-              boxShadow: activeCartCount > 0 ? "0 10px 28px rgba(37,99,235,0.5)" : "0 6px 18px rgba(0,0,0,0.28)",
-              outline: activeCartCount > 0 ? "none" : `1.5px solid ${C.border}`,
-            }}
-            aria-label="장바구니 열기"
-          >
-            <ShoppingCart size={20} /> 장바구니
-            <span style={{
-              minWidth: 26, borderRadius: "999px", padding: "2px 10px", textAlign: "center",
-              background: activeCartCount > 0 ? "#fff" : C.cardSub,
-              color: activeCartCount > 0 ? C.accent : C.label,
-              fontSize: "13px", fontWeight: 800,
-            }}>
-              {activeCartCount}
-            </span>
-          </button>
-
-          {/* 장바구니 시트 */}
-          {whCartOpen ? (
-            <div onClick={() => setWhCartOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 2500, background: "rgba(15,23,42,0.45)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-              <div onClick={(e) => e.stopPropagation()} style={{ width: "min(560px, 100%)", maxHeight: "82vh", overflowY: "auto", background: C.card, borderRadius: "18px 18px 0 0", border: `1px solid ${C.border}`, padding: "18px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
-                  <ShoppingCart size={18} style={{ color: C.accentText }} />
-                  <span style={{ fontSize: "15px", fontWeight: 800, color: C.text, flex: 1 }}>
-                    장바구니 <span style={{ color: C.accentText }}>{cartTypeCount(activeCart)}종 · {activeCartCount}개</span>
-                  </span>
-                  <button onClick={() => setWhCartOpen(false)} style={{ background: "transparent", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
-                </div>
-
-                {activeCart.length === 0 ? (
-                  <div style={{ padding: "28px 0", textAlign: "center", fontSize: "13px", color: C.label }}>
-                    아직 담은 물품이 없습니다.
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
-                    {activeCart.map((c: any, idx: number) => (
-                      <div key={c.rowIndex ?? cartLineKey(c) ?? idx} style={{ display: "flex", alignItems: "center", gap: "8px", paddingBottom: "10px", borderBottom: `1px solid ${C.border}` }}>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          {/* 종류가 나뉜 물품은 이름만 보면 어느 줄이 무엇인지 구분되지 않는다 */}
-                          <div style={{ fontSize: "13.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cartLineLabel(c, C)}</div>
-                          <div style={{ fontSize: "11px", color: C.label, fontFamily: "monospace" }}>{c.location || c.id || ""}</div>
-                        </div>
-                        <button onClick={() => changeActiveQty(idx, -1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>−</button>
-                        <span style={{ minWidth: "22px", textAlign: "center", fontSize: "13.5px", fontWeight: 800 }}>{c.quantity}</span>
-                        <button onClick={() => changeActiveQty(idx, 1)} style={{ width: 28, height: 28, borderRadius: "8px", border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", fontSize: "14px", lineHeight: 1, flexShrink: 0 }}>+</button>
-                        <button onClick={() => removeActiveItem(idx)} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.errorSoft, color: C.error, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={13} /></button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 목록에 없는 물품 직접 담기 (창고 물품에서만 지원) */}
-                {cartKind === "wh" ? (
-                <div style={{ border: `1px dashed ${C.border}`, borderRadius: "12px", padding: "12px", background: C.cardSub, marginBottom: "14px" }}>
-                  <div style={{ fontSize: "12px", fontWeight: 700, color: C.label, marginBottom: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
-                    <Plus size={13} /> 목록에 없는 물품 직접 대여
-                  </div>
-                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                    <input value={whCustomName} onChange={(e) => setWhCustomName(e.target.value)} placeholder="물품명" style={{ ...inputStyle, flex: "2 1 140px", padding: "9px 11px", fontSize: "13px" }} />
-                    <input value={whCustomLoc} onChange={(e) => setWhCustomLoc(e.target.value)} placeholder="위치 (선택)" style={{ ...inputStyle, flex: "1 1 90px", padding: "9px 11px", fontSize: "13px" }} />
-                    <button onClick={() => { addCustomWhCart(whCustomName, whCustomLoc); setWhCustomName(""); setWhCustomLoc(""); }} disabled={!whCustomName.trim()}
-                      style={{ padding: "9px 16px", borderRadius: "10px", border: "none", background: whCustomName.trim() ? C.accent : C.border, color: "#fff", fontSize: "13px", fontWeight: 700, cursor: whCustomName.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>
-                      담기
-                    </button>
-                  </div>
-                </div>
-                ) : null}
-
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <button onClick={() => setWhCartOpen(false)} style={{ ...(activeCart.length ? secondaryBtn : primaryBtn), flex: 1 }}>계속 담기</button>
-                  {cartKind === "wh" ? (
-                    <button
-                      onClick={() => { if (!whCart.length) { showToast("물품을 하나 이상 담아주세요.", "warn"); return; } setWhCartOpen(false); setMode("wborrow2"); }}
-                      disabled={!whCart.length}
-                      style={{ ...primaryBtn, opacity: whCart.length ? 1 : 0.5 }}
-                    >
-                      다음 단계 <ChevronRight size={16} />
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-
       {/* SID 필요 물품 · 종류별 수량 배정 (사진을 보고 고른다) */}
       {(() => {
         if (!sidVariantPick) return null;
@@ -3807,6 +2697,7 @@ function ItemPicker({
   // request/개인 물품은 담는 순간 한 번 짚어준다. 제출 직전 경고만으로는 이미 다 담은
   // 뒤라 되돌리기 번거롭다. 처음 담을 때만 뜨고, 수량을 더할 때는 뜨지 않는다.
   const [noticeItem, setNoticeItem] = useState<any | null>(null);
+  const noticeRemaining = useNoticeCountdown(noticeItem?.requestFor !== undefined ? String(noticeItem.id) : null);
   // 실측 치수가 등록된 물품만 "실제 크기 보기"가 뜬다. 렌더링은 이 브라우저가 한다.
   const [sizeItem, setSizeItem] = useState<any | null>(null);
 
@@ -3910,7 +2801,6 @@ function ItemPicker({
                 <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
                 <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
-                  {!hideLocation ? <LocBadge slot={it.rootSlot} C={C} /> : null}
                   <StockBadges stock={stock} rented={rented} C={C} />
                   {/* 실측 치수가 있는 물품만 — 담기 전에 크기를 가늠할 수 있게 한다 */}
                   {hasDims(it) || (it.variants || []).some((v: any) => hasDims(v)) ? (
@@ -3972,7 +2862,7 @@ function ItemPicker({
 
       {noticeItem ? (
         <div
-          onClick={() => setNoticeItem(null)}
+          onClick={() => { if (noticeRemaining === 0) setNoticeItem(null); }}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100, padding: "16px" }}
         >
           <div
@@ -4002,22 +2892,27 @@ function ItemPicker({
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button
-                onClick={() => setNoticeItem(null)}
-                style={{ flex: 1, padding: "12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: "none", color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}
+                type="button"
+                disabled={noticeRemaining > 0}
+                onClick={() => { if (noticeRemaining === 0) setNoticeItem(null); }}
+                style={{ flex: 1, padding: "12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: "none", color: C.label, cursor: noticeRemaining > 0 ? "default" : "pointer", fontSize: "13px", fontWeight: 700, opacity: noticeRemaining > 0 ? 0.55 : 1 }}
               >
                 취소
               </button>
               <button
+                type="button"
+                disabled={noticeRemaining > 0}
                 onClick={() => {
+                  if (noticeRemaining > 0) return;
                   const it = noticeItem;
                   setNoticeItem(null);
                   if (it.variants?.length) { setVariantPick(it); return; }
                   const over = addLine(it, {}, Number(it.stock || 0));
                   if (over) showToast(`재고(${it.stock}개)를 초과할 수 없습니다.`, "warn");
                 }}
-                style={{ flex: 2, padding: "12px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 800 }}
+                style={{ flex: 2, padding: "12px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: noticeRemaining > 0 ? "default" : "pointer", fontSize: "13px", fontWeight: 800, opacity: noticeRemaining > 0 ? 0.55 : 1 }}
               >
-                확인했습니다 · 담기
+                {noticeRemaining > 0 ? `확인해주세요 (${noticeRemaining}초)` : "확인했습니다 · 담기"}
               </button>
             </div>
           </div>

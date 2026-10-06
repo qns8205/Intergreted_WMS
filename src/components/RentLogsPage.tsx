@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { parseDateString } from "../utils/date";
 import { smartMatch } from "../utils/search";
+import ScrollToTopButton from "./ScrollToTopButton";
 
 interface RentLogsPageProps {
   rentLogs: RentLog[];
@@ -393,7 +394,7 @@ export default function RentLogsPage({
   // Filter logs for table rendering
   const filteredLogs = useMemo(() => {
     const filtered = rentLogs.filter((log) => {
-      const matchesQuery = !filterQuery || smartMatch([log.name, log.user, log.location, log.note], filterQuery);
+      const matchesQuery = !filterQuery || smartMatch([log.name, log.user, log.employeeId, log.location, log.note], filterQuery);
 
       const matchesType = filterType === "전체" || log.type === filterType;
 
@@ -424,15 +425,21 @@ export default function RentLogsPage({
 
   return (
     <div
+      className="rlp-root"
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        background: "var(--canvas-bg, #020617)",
+        background: isLightMode ? "#f8fafc" : "#0b0f19",
         height: "100%",
         overflow: "hidden",
       }}
     >
+      <style>{`
+        @media (min-width: 900px) {
+          .rlp-root { zoom: 1.15; }
+        }
+      `}</style>
       {/* Header */}
       <div
         style={{
@@ -446,29 +453,35 @@ export default function RentLogsPage({
           gap: "12px",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button
-            onClick={onClose}
-            style={{
-              background: "transparent",
-              border: "none",
-              color: TEXT_DIM,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 13,
-            }}
-          >
-            <ArrowLeft size={16} />
-            {isGuestMode ? "로그인 화면으로" : "돌아가기"}
-          </button>
-          <div style={{ width: 1, height: 16, background: PANEL_BORDER }} />
-          <h1 style={{ fontSize: 16, fontWeight: 800, color: TEXT_MAIN, display: "flex", alignItems: "center", gap: 6 }}>
-            <ArrowRightLeft size={18} style={{ color: ACCENT }} />
-            {isGuestMode ? "📦 외부인 대여 및 반납 간편 신청대장" : "📦 물품 대여 및 반납 대장 관리"}
-          </h1>
-        </div>
+        {/* 임베드(탭) 모드에서는 상단 탭이 이미 있으므로 돌아가기/타이틀을 숨긴다.
+            외부인(게스트) 모드는 독립 화면이라 로그인 화면으로 돌아갈 수단이 필요해 유지한다. */}
+        {isGuestMode ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={onClose}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: TEXT_DIM,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 13,
+              }}
+            >
+              <ArrowLeft size={16} />
+              로그인 화면으로
+            </button>
+            <div style={{ width: 1, height: 16, background: PANEL_BORDER }} />
+            <h1 style={{ fontSize: 16, fontWeight: 800, color: TEXT_MAIN, display: "flex", alignItems: "center", gap: 6 }}>
+              <ArrowRightLeft size={18} style={{ color: ACCENT }} />
+              📦 외부인 대여 및 반납 간편 신청대장
+            </h1>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <button
           onClick={() => setShowAddForm((prev) => !prev)}
@@ -624,7 +637,7 @@ export default function RentLogsPage({
                     <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
                     <input
                       type="text"
-                      placeholder={selectedItem ? `${selectedItem.name} (${selectedItem.location})` : "자재명/보관소 검색..."}
+                      placeholder={selectedItem ? `${selectedItem.name} (${selectedItem.location})` : "COS 물품명/보관소 검색..."}
                       value={searchQuery}
                       onChange={(e) => {
                         setSearchQuery(e.target.value);
@@ -710,7 +723,7 @@ export default function RentLogsPage({
                       {filteredInventoryItems.length === 0 ? (
                         searchQuery.trim() === "" ? (
                           <div style={{ padding: "10px", fontSize: "12px", color: TEXT_DIM, textAlign: "center" }}>
-                            검색된 자재가 없습니다.
+                            검색된 COS 물품이 없습니다.
                           </div>
                         ) : null
                       ) : (
@@ -1011,7 +1024,8 @@ export default function RentLogsPage({
                             {log.qty}개
                           </td>
                           <td style={{ padding: "11px 14px", color: TEXT_MAIN }}>
-                            {log.user}
+                            <span style={{ display: "block", fontWeight: 700 }}>{log.user}</span>
+                            {log.employeeId ? <small style={{ display: "block", marginTop: 2, color: TEXT_DIM, fontFamily: "monospace", fontSize: 10 }}>사번 {log.employeeId}</small> : null}
                           </td>
                           <td style={{ padding: "11px 14px", color: TEXT_DIM, maxWidth: "240px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={log.note}>
                             {dueDate ? (
@@ -1141,9 +1155,9 @@ export default function RentLogsPage({
             <div style={{ padding: "10px 14px", borderTop: `1px solid ${PANEL_BORDER}`, display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--input-bg, #020617)", fontSize: 11, color: TEXT_DIM }}>
               <div>전체 로그: {rentLogs.length}건 / 필터 결과: {filteredLogs.length}건</div>
               <div>
-                {isGuestMode 
-                  ? "대여 및 반납 신청은 구글 스프레드시트에 즉시 저장되며, 실시간 재고에 자동 연동됩니다." 
-                  : <>대여 로그는 구글 스프레드시트의 <strong>RentLog</strong> 시트에 실시간 동기화됩니다.</>}
+                {isGuestMode
+                  ? "대여 및 반납 신청은 서버에 즉시 저장되며, 실시간 재고에 자동 연동됩니다."
+                  : "대여 로그는 서버에 실시간 동기화됩니다."}
               </div>
             </div>
           </div>
@@ -1157,6 +1171,7 @@ export default function RentLogsPage({
           to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
+      <ScrollToTopButton />
     </div>
   );
 }

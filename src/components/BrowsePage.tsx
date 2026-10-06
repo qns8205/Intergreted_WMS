@@ -2,16 +2,17 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import {
   ArrowLeft, Search, User, IdCard, Boxes, Fingerprint, ChevronRight,
   Plus, Minus, X, ShoppingCart, Warehouse, MapPin, Trash2, HandHelping,
-  Building2, MoreHorizontal, RotateCcw, Check, Layers, SlidersHorizontal } from "lucide-react";
+  Building2, MoreHorizontal, RotateCcw, Check, Layers, SlidersHorizontal, Info, Sparkles } from "lucide-react";
 import ImageZoomModal from "./ImageZoomModal";
-import { SizeViewerModal, hasDims } from "./SizeViewer";
+import ItemBorrowersModal, { BorrowersTarget } from "./ItemBorrowersModal";
+import { BoxCanvas, SizeViewerModal, dimsLabel, hasDims, SHAPE_LABEL } from "./SizeViewer";
 import {
-  ObjectItem, WarehouseItem, BrowseCartItem, WarehouseCartItem,
-  padSlot, isKoreanName, parseRackSlot, warehouseStockNum, compareRackSlot,
-  fetchObjectItems, fetchWarehouseInventory, checkConfigDsRegistered,
+  ObjectItem, BrowseCartItem,
+  padSlot, isKoreanName,
+  fetchObjectItems, checkConfigDsRegistered,
   fetchMyBorrowedItems, fetchWarehouseBorrowedItems,
   saveIdentity, loadIdentity,
-  saveBrowseCart, loadBrowseCart, saveWarehouseCart, loadWarehouseCart,
+  saveBrowseCart, loadBrowseCart,
   DEMO_OBJECT_ITEMS,
   fetchScenarioDefinition, ScenarioDefinition,
   fetchTableclothItems, TableclothItem, fetchTableclothCategories, TableclothCategory,
@@ -22,13 +23,19 @@ import {
 } from "../utils/borrowApi";
 import { locationKey, withMyFloorFirst } from "../utils/tableclothLocation";
 import { getGoogleDriveImageUrl, getThumbImageUrl } from "../utils/drive";
-import { smartMatch } from "../utils/search";
 import HazardConfirmModal, { collectHazardItems, HazardItem } from "./HazardConfirmModal";
+import BorrowerSeatSuggestions from "./BorrowerSeatSuggestions";
+import UnattendedToolBorrowForm from "./UnattendedToolBorrowForm";
+import UnattendedToolReturnForm from "./UnattendedToolReturnForm";
+import { BorrowedTool, fetchMyTools } from "../utils/warehouseManualApi";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
+import { searchScenarioAi, ScenarioAiResult, filterScenarioAiResults } from "../utils/scenarioAiSearch";
+import { scenarioRegularScore, scenarioAiResultActive } from "../utils/scenarioRegularSearch";
 
 type Affiliation = "cfgw" | "configds" | "other";
-type Step = "identity" | "menu" | "scenarioKind" | "scenario" | "warehouse" | "tablecloth" | "mylookup" | "sid";
-type Kind = "scenario" | "warehouse" | "tablecloth";
+// 무인 모드에서는 목록 선택 대신 직접 입력·촬영으로 공구를 신청한다.
+type Step = "identity" | "menu" | "scenarioKind" | "scenario" | "tablecloth" | "warehouse" | "toolReturn" | "mylookup" | "sid";
+type Kind = "scenario" | "tablecloth";
 
 interface BrowsePageProps {
   key?: string;
@@ -46,15 +53,21 @@ interface BrowsePageProps {
     sid?: string;
     /** SID 필요 물품 외에 사용자가 따로 담은 물품. */
     additionalItems?: BrowseCartItem[];
+    /** 관리자 직접 대여는 저장된 사용자 장바구니 대신 현재 선택을 직접 전달한다. */
+    items?: BrowseCartItem[];
   }) => void;
   /** 테이블보 반납으로 넘어간다 — 천은 담당자 없이 본인이 직접 돌려놓는다. */
   onGoTableclothReturn?: () => void;
   initialStep?: Step | "sidBorrow" | null;
   /** 로그인한 대여자. 있으면 신원 입력 단계를 건너뛴다 — 이미 받은 값을 또 묻지 않는다. */
   session?: { name: string; employeeId: string; affiliation: Affiliation; floor: string; unit: string } | null;
+  onSeatChange?: (seat: { floor: string; unit: string }) => void;
   /** "browse" = 대여(기본), "mylookup" = 내 대여조회 전용 */
   purpose?: "browse" | "mylookup";
   isAdmin?: boolean;
+  adminDirectBorrow?: boolean;
+  adminCart?: BrowseCartItem[];
+  onAdminBack?: (items: BrowseCartItem[]) => void;
   /** 무인 모드 중에는 관리자가 아니면 모든 보관 위치를 숨긴다 — 대여 신청 후 발급되는
    *  QR을 통해서만 위치를 볼 수 있게 하기 위함. */
   unattendedEnabled?: boolean;
@@ -70,30 +83,22 @@ interface BrowsePageProps {
 const listCache: {
   key: string;
   sci: ObjectItem[];
-  wh: WarehouseItem[];
   tc: TableclothItem[];
   tcCats: TableclothCategory[];
   tcOut: Record<string, TableclothBorrower[]>;
-} = { key: "", sci: [], wh: [], tc: [], tcCats: [], tcOut: {} };
+} = { key: "", sci: [], tc: [], tcCats: [], tcOut: {} };
 
 function cacheFor(scriptUrl: string) {
   if (listCache.key !== scriptUrl) {
     listCache.key = scriptUrl;
-    listCache.sci = []; listCache.wh = []; listCache.tc = []; listCache.tcCats = []; listCache.tcOut = {};
+    listCache.sci = []; listCache.tc = []; listCache.tcCats = []; listCache.tcOut = {};
   }
   return listCache;
 }
 
-const DEMO_WAREHOUSE: WarehouseItem[] = [
-  { rowIndex: 2, location: "F-02", name: "가구발", photo: "", stock: "N/A", spec: "", note: "", manager: "고성민" },
-  { rowIndex: 3, location: "A-01", name: "랙 선반용 합판", photo: "", stock: 12, spec: "", note: "", manager: "고성민" },
-  { rowIndex: 4, location: "B-01", name: "프로스펙스 손목 보호대", photo: "", stock: 4, spec: "", note: "", manager: "오피스" },
-  { rowIndex: 5, location: "E-03", name: "전자 수평계", photo: "", stock: 2, spec: "", note: "", manager: "윤대성" },
-];
-
 export default function BrowsePage({
   scriptUrl, connected, isLightMode, onBack, showToast, onGoBorrow, onGoTableclothReturn, initialStep = null, purpose = "browse", session = null,
-  isAdmin = false, unattendedEnabled = false,
+  isAdmin = false, unattendedEnabled = false, adminDirectBorrow = false, adminCart, onAdminBack, onSeatChange,
 }: BrowsePageProps) {
   // 원격 WMS 데이터를 읽는 로컬 검증 모드에서는 서버 변경 요청을 전부 막는다.
   // 버튼을 미리 비활성화해, 눌렀다가 '대여 신청 오류' 결과 화면으로 가는 일도 없게 한다.
@@ -120,8 +125,9 @@ export default function BrowsePage({
   };
 
   const [step, setStep] = useState<Step>(() => {
-    // 내 대여 조회는 항상 신원 입력부터 시작한다 (주소에 남은 이전 단계를 따르지 않는다)
-    if (purpose === "mylookup") return "identity";
+    if (adminDirectBorrow) return "scenario";
+    // 내 대여 조회: 로그인해 있으면 그 사번으로 바로 조회하고, 아니면 신원 입력부터 받는다.
+    if (purpose === "mylookup") return session ? "mylookup" : "identity";
     // 주소가 #/browse/sid 로 들어온 경우도 SID 단계로 시작한다
     const slug = (typeof window !== "undefined" ? window.location.hash.split("/")[2] : "") || "";
     if (slug === "sid") return "sid";
@@ -160,18 +166,17 @@ export default function BrowsePage({
       window.removeEventListener("resize", measure);
     };
   }, [step]);
-  const [whItems, setWhItems] = useState<WarehouseItem[]>(seed.wh);
-  const [whLoaded, setWhLoaded] = useState(seed.wh.length > 0);
   const [sciLoading, setSciLoading] = useState(false);
   // 일반 물품은 수백 건의 사진·정렬 정보를 한꺼번에 그린다. 바로 화면을 바꾸면 첫 프레임이
   // 멎은 것처럼 보이므로, 짧은 준비 화면을 먼저 보여준 뒤 목록을 연다.
   const [openingScenario, setOpeningScenario] = useState(false);
   const openingScenarioTimer = useRef<number | null>(null);
-  const [whLoading, setWhLoading] = useState(false);
   const [sciErr, setSciErr] = useState("");
-  const [whErr, setWhErr] = useState("");
 
   const [sciCart, setSciCart] = useState<BrowseCartItem[]>([]);
+  useEffect(() => {
+    if (adminDirectBorrow && adminCart) setSciCart(adminCart);
+  }, [adminDirectBorrow, adminCart]);
   const [sidAdditionalItems, setSidAdditionalItems] = useState<BrowseCartItem[]>([]);
   const [sidAddingExtra, setSidAddingExtra] = useState(false);
   const sidAddingExtraRef = useRef(false);
@@ -193,7 +198,7 @@ export default function BrowsePage({
   }
   // 실측 치수가 등록된 물품만 "실제 크기 보기"가 뜬다. 렌더링은 이 브라우저가 한다.
   const [sizeItem, setSizeItem] = useState<any | null>(null);
-  const [whCart, setWhCart] = useState<WarehouseCartItem[]>([]);
+  const [detailItem, setDetailItem] = useState<any | null>(null);
   // 테이블보는 이름이 번호뿐이라 사진과 분류로 고른다. 수량은 항상 1장씩 담는다.
   const [tcItems, setTcItems] = useState<TableclothItem[]>(seed.tc);
   const [tcCats, setTcCats] = useState<TableclothCategory[]>(seed.tcCats);
@@ -298,21 +303,34 @@ export default function BrowsePage({
   const [cartOpen, setCartOpen] = useState<Kind | null>(null);
 
   const [sciSearch, setSciSearch] = useState("");
+  const [sciSearchMode, setSciSearchMode] = useState<"normal" | "ai">("normal");
+  const [sciAi, setSciAi] = useState<{ query: string; busy: boolean; result?: ScenarioAiResult; error?: string } | null>(null);
+  const sciAiController = useRef<AbortController | null>(null);
+  const sciAiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function stopScenarioAi() {
+    sciAiController.current?.abort(); sciAiController.current = null;
+    if (sciAiTimer.current) clearTimeout(sciAiTimer.current);
+    sciAiTimer.current = null;
+  }
+  function clearScenarioAi() { stopScenarioAi(); setSciAi(null); setSciSearchMode("normal"); }
+  useEffect(() => () => stopScenarioAi(), []);
   const [sciCat, setSciCat] = useState("");
   const [sciSub, setSciSub] = useState("");
-  const [sciRequestFilter, setSciRequestFilter] = useState<"all" | "request" | "normal">(() => {
+  const [sciRequestFilter, setSciRequestFilter] = useState<"all" | "normal">(() => {
     try {
       const saved = sessionStorage.getItem("wms_scenario_request_filter");
-      return saved === "request" || saved === "normal" ? saved : "all";
+      // 예전 'request만 표시' 값은 단일 포함 체크의 기본값으로 전환한다.
+      return saved === "normal" ? "normal" : "all";
     } catch { return "all"; }
   });
   const [sciFiltersOpen, setSciFiltersOpen] = useState(false);
   const [sciSort, setSciSort] = useState<"id_desc" | "id_asc" | "location_desc" | "location_asc" | "name_asc">("id_desc");
-  const [whSearch, setWhSearch] = useState("");
-  const [whRack, setWhRack] = useState("");
-  const [whSlot, setWhSlot] = useState("");
+  // 무인 모드에선 위치순 정렬도 막는다 — 정렬 순서만으로 같은 칸 물품이 드러난다.
+  const effectiveSciSort = hideLocation && sciSort.startsWith("location") ? "id_desc" : sciSort;
 
   const [modalUrl, setModalUrl] = useState("");
+  const [borrowersTarget, setBorrowersTarget] = useState<BorrowersTarget | null>(null);
+  const closeBorrowers = useCallback(() => setBorrowersTarget(null), []);
   const [myLoading, setMyLoading] = useState(false);
   const [myResult, setMyResult] = useState<{ scenario: any[]; general: any[]; warehouse: any[] } | null>(null);
 
@@ -322,6 +340,59 @@ export default function BrowsePage({
 
   const identName = affiliation === "other" ? otherName.trim() : name.trim();
   const identEmp = affiliation === "cfgw" ? empId.trim() : "";
+  useEffect(() => { clearScenarioAi(); }, [sciSearch, sciCat, sciSub, sciRequestFilter, identEmp, scriptUrl]);
+  useEffect(() => {
+    if (step !== "scenario") {
+      stopScenarioAi();
+      setSciAi(prev => prev?.busy ? (prev.result ? { ...prev, busy: false } : null) : prev);
+    }
+  }, [step]);
+  async function runScenarioAi() {
+    const query = sciSearch.trim();
+    if (!query || sciAi?.busy || !connected) return;
+    stopScenarioAi();
+    setSciSearchMode("ai");
+    const controller = new AbortController(); sciAiController.current = controller;
+    sciAiTimer.current = setTimeout(() => controller.abort(), 6000);
+    setSciAi(prev => ({ ...(prev?.query === query ? prev : {}), query, busy: true, error: undefined }));
+    try {
+      const result = await searchScenarioAi(identEmp, query, { category: sciCat, subcategory: sciSub, request: sciRequestFilter }, controller.signal);
+      if (sciAiController.current === controller) setSciAi({ query, busy: false, result });
+    } catch (error: any) {
+      if (sciAiController.current === controller) setSciAi({ query, busy: false, error: error.name === "AbortError" ? "AI 응답이 늦어 검색을 중단했습니다. 일반 검색은 계속 사용할 수 있습니다." : error instanceof TypeError ? "AI 검색에 연결하지 못했습니다. 일반 검색으로 찾아주세요." : error.message });
+    } finally {
+      if (sciAiController.current === controller && sciAiTimer.current) { clearTimeout(sciAiTimer.current); sciAiTimer.current = null; }
+    }
+  }
+  const [myTools, setMyTools] = useState<BorrowedTool[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsError, setToolsError] = useState("");
+  const toolsChecked = useRef("");
+  const toolsLookupId = useRef(0);
+  const canUseTools = !!unattendedEnabled && !adminDirectBorrow && purpose === "browse";
+  const refreshMyTools = useCallback(async () => {
+    if (!canUseTools || !/^\d{4}$/.test(identEmp)) return;
+    const id = ++toolsLookupId.current;
+    setToolsLoading(true); setToolsError("");
+    try { const list = await fetchMyTools(identEmp); if (id === toolsLookupId.current) setMyTools(list); }
+    catch (e: any) { if (id === toolsLookupId.current) setToolsError(e.message); }
+    finally { if (id === toolsLookupId.current) setToolsLoading(false); }
+  }, [canUseTools, identEmp]);
+  // 사번 확인 직후 한 번만 반납 화면을 우선한다. 분야를 다시 고르거나 추가 대여 중에는 강제로 이동하지 않는다.
+  useEffect(() => {
+    if (!canUseTools || step === "identity" || !/^\d{4}$/.test(identEmp) || toolsChecked.current === identEmp) return;
+    const id = ++toolsLookupId.current;
+    let alive = true;
+    setMyTools([]); setToolsLoading(true); setToolsError("");
+    fetchMyTools(identEmp).then(list => {
+      if (!alive || id !== toolsLookupId.current) return;
+      toolsChecked.current = identEmp;
+      setMyTools(list);
+      if (list.length) setStep(current => current === "menu" ? "toolReturn" : current);
+    }).catch(e => { if (alive && id === toolsLookupId.current) { toolsChecked.current = identEmp; setToolsError(e.message); } })
+      .finally(() => { if (alive && id === toolsLookupId.current) setToolsLoading(false); });
+    return () => { alive = false; };
+  }, [canUseTools, identEmp, step === "identity"]);
 
   // 지난번에 넣은 값을 그대로 되살린다. 확인 단계(계속하기)는 그대로 거치므로,
   // 다른 사람이 쓰던 자리에서 열었더라도 이름을 고쳐 넣으면 된다.
@@ -336,8 +407,7 @@ export default function BrowsePage({
       setSelUnit(session.unit || "");
       // 신원 입력 단계를 건너뛰므로 장바구니도 여기서 불러온다 — 원래는 그 단계에서 했다.
       const eid = session.affiliation === "cfgw" ? session.employeeId : "";
-      setSciCart(loadBrowseCart(session.name, eid));
-      setWhCart(loadWarehouseCart(session.name, eid));
+      if (!adminDirectBorrow) setSciCart(loadBrowseCart(session.name, eid));
       return;
     }
     const saved = loadIdentity();
@@ -365,13 +435,9 @@ export default function BrowsePage({
   }, [step]);
 
   useEffect(() => {
-    if (step === "identity" || !identName) return;
+    if (adminDirectBorrow || step === "identity" || !identName) return;
     saveBrowseCart(identName, identEmp, sciCart);
-  }, [sciCart, identName, identEmp, step]);
-  useEffect(() => {
-    if (step === "identity" || !identName) return;
-    saveWarehouseCart(identName, identEmp, whCart);
-  }, [whCart, identName, identEmp, step]);
+  }, [sciCart, identName, identEmp, step, adminDirectBorrow]);
 
   const loadScenario = useCallback(async () => {
     // 그릴 것이 이미 있으면 화면을 비우지 않는다 — 뒤에서 조용히 갈아끼운다.
@@ -386,20 +452,6 @@ export default function BrowsePage({
       showToast(`시나리오 물품을 불러오지 못했습니다: ${e.message}`, "error");
     }
     finally { setSciLoaded(true); setSciLoading(false); }
-  }, [connected, scriptUrl, showToast]);
-
-  const loadWarehouse = useCallback(async () => {
-    if (!listCache.wh.length) setWhLoading(true);
-    try {
-      const next = connected && scriptUrl ? (await fetchWarehouseInventory(scriptUrl)).filter((it) => !it.archived) : DEMO_WAREHOUSE;
-      cacheFor(scriptUrl).wh = next;
-      setWhItems(next);
-      setWhErr("");
-    } catch (e: any) {
-      setWhErr(e?.message || "불러오기에 실패했습니다.");
-      showToast(`공구 및 부품류를 불러오지 못했습니다: ${e.message}`, "error");
-    }
-    finally { setWhLoaded(true); setWhLoading(false); }
   }, [connected, scriptUrl, showToast]);
 
   const loadTablecloth = useCallback(async () => {
@@ -428,7 +480,7 @@ export default function BrowsePage({
 
   // 어느 화면까지 새로 받아왔는지. 화면을 바꿀 때마다 딱 한 번만 갱신하기 위한 표시다.
   const refreshedStepRef = useRef<string>("");
-  // step이 scenario/warehouse가 되면 (아직 미로드·비로딩일 때) 자동 로드.
+  // step이 scenario/tablecloth가 되면 (아직 미로드·비로딩일 때) 자동 로드.
   // 클릭 핸들러에서 직접 호출하지 않고 effect로 처리하여 클로저/중복호출 문제를 원천 차단.
   useEffect(() => {
     // SID 열람에서도 물품 위치·사진을 붙이려면 시나리오 물품 목록이 필요하다
@@ -438,13 +490,12 @@ export default function BrowsePage({
     if (refreshedStepRef.current !== step) {
       refreshedStepRef.current = step;
       if (step === "scenario" || step === "sid") loadScenario();
-      if (step === "warehouse") loadWarehouse();
       if (step === "tablecloth") loadTablecloth();
     }
     // 분야를 고르는 동안 미리 받아둔다. 예전에는 고른 뒤에야 받기 시작해서, 600종이
     // 도착할 때까지 몇 초간 화면이 멎은 것처럼 보였다.
     if ((step === "menu" || step === "scenarioKind") && !sciLoaded && !sciLoading) loadScenario();
-  }, [step, sciLoaded, sciLoading, whLoaded, whLoading, tcLoaded, tcLoading, loadScenario, loadWarehouse, loadTablecloth]);
+  }, [step, sciLoaded, sciLoading, tcLoaded, tcLoading, loadScenario, loadTablecloth]);
 
   const sciCatMap = useMemo(() => {
     const map: Record<string, Set<string>> = {};
@@ -459,56 +510,36 @@ export default function BrowsePage({
   const sciSubs = sciCat && sciCatMap[sciCat] ? Array.from<string>(sciCatMap[sciCat]).sort() : [];
 
   const sciFiltered = useMemo(() => {
+    if (scenarioAiResultActive(sciSearchMode, sciAi?.query, sciSearch, !!sciAi?.result)) return filterScenarioAiResults(sciItems, sciAi!.result!.items.map(i => i.id), { category: sciCat, subcategory: sciSub, request: sciRequestFilter });
     const q = sciSearch.trim();
+    const scores = new Map<string, number>();
     const filtered = sciItems.filter((it) => {
       if (sciCat && it.category !== sciCat) return false;
       if (sciSub && it.subcategory !== sciSub) return false;
-      if (sciRequestFilter === "request" && it.requestFor === undefined) return false;
       if (sciRequestFilter === "normal" && it.requestFor !== undefined) return false;
       if (!q) return true;
-      const slotPad = padSlot(it.rootSlot);
-      return smartMatch([it.name, it.id, it.category, it.subcategory, slotPad, it.rootSlot, it.requestFor, it.personalOwner], q);
+      const score = scenarioRegularScore(it, q, hideLocation);
+      if (score === null) return false;
+      scores.set(it.id, score); return true;
     });
     const byId = (a: ObjectItem, b: ObjectItem) => padSlot(a.id).localeCompare(padSlot(b.id));
     const byLocation = (a: ObjectItem, b: ObjectItem) => padSlot(a.rootSlot).localeCompare(padSlot(b.rootSlot));
-    switch (sciSort) {
-      case "id_asc": return filtered.sort(byId);
-      case "id_desc": return filtered.sort((a, b) => byId(b, a));
-      case "location_asc": return filtered.sort(byLocation);
-      case "location_desc": return filtered.sort((a, b) => byLocation(b, a));
-      case "name_asc": return filtered.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
-      default: return filtered;
-    }
-  }, [sciItems, sciSearch, sciCat, sciSub, sciRequestFilter, sciSort]);
-
-  const whRackMap = useMemo(() => {
-    const map: Record<string, Set<string>> = {};
-    whItems.forEach((it) => {
-      const { rack, slot } = parseRackSlot(it.location);
-      if (!rack) return;
-      if (!map[rack]) map[rack] = new Set<string>();
-      if (slot) map[rack].add(slot);
-    });
-    return map;
-  }, [whItems]);
-  const whRacks = useMemo(() => Object.keys(whRackMap).sort(), [whRackMap]);
-  const whSlots = whRack && whRackMap[whRack] ? Array.from<string>(whRackMap[whRack]).sort() : [];
-
-  const whFiltered = useMemo(() => {
-    const q = whSearch.trim();
-    return whItems.filter((it) => {
-      const { rack, slot } = parseRackSlot(it.location);
-      if (whRack && rack !== whRack) return false;
-      if (whSlot && slot !== whSlot) return false;
-      if (!q) return true;
-      return smartMatch([it.name, it.location, it.keywords], q);
-    }).sort((a, b) => compareRackSlot(a.location, b.location));
-  }, [whItems, whSearch, whRack, whSlot]);
+    const tieBreak = (a: ObjectItem, b: ObjectItem) => {
+      switch (effectiveSciSort) {
+        case "id_asc": return byId(a, b);
+        case "id_desc": return byId(b, a);
+        case "location_asc": return byLocation(a, b);
+        case "location_desc": return byLocation(b, a);
+        case "name_asc": return (a.name || "").localeCompare(b.name || "", "ko");
+        default: return 0;
+      }
+    };
+    return filtered.sort((a, b) => (q ? (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0) : 0) || tieBreak(a, b));
+  }, [sciItems, sciSearch, sciCat, sciSub, sciRequestFilter, effectiveSciSort, hideLocation, sciAi, sciSearchMode]);
 
   const sciCartCount = sciCart.reduce((n, c) => n + c.quantity, 0);
-  const whCartCount = whCart.reduce((n, c) => n + c.quantity, 0);
   const tcCartCount = tcCart.length;
-  useVersionWorkGuard("borrower-browse", sciCartCount + whCartCount + tcCartCount > 0 || tcSubmitting, "대여 신청 작성 중");
+  useVersionWorkGuard("borrower-browse", sciCartCount + tcCartCount > 0 || tcSubmitting, "대여 신청 작성 중");
 
   async function submitTableclothBorrow() {
     if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
@@ -541,7 +572,6 @@ export default function BrowsePage({
   /** 장바구니에서 그 줄 하나만 뺀다. 시나리오 물품은 같은 물품이라도 종류가 다르면 다른 줄이다. */
   function removeCartLine(kind: Kind, line: any) {
     if (kind === "tablecloth") { setTcCart((prev) => prev.filter((c) => c.id !== line.id)); return; }
-    if (kind === "warehouse") { setWhCart((prev) => prev.filter((c) => c !== line)); return; }
     setSciCart((prev) => prev.filter((c) => cartKey(c) !== cartKey(line)));
   }
 
@@ -549,10 +579,6 @@ export default function BrowsePage({
    *  테이블보만 담을 때 함께 들고 온다(목록을 다시 훑지 않아도 되게). */
   function cartLineImage(kind: Kind, line: any): string {
     if (kind === "tablecloth") return line.image || "";
-    if (kind === "warehouse") {
-      const it = whItems.find((w) => w.rowIndex === line.rowIndex || w.name === line.name);
-      return (it as any)?.photo || "";
-    }
     const it = sciItems.find((o) => padSlot(String(o.id)) === padSlot(String(line.id)));
     // 종류를 고른 줄은 그 종류의 사진이 있으면 그것을 먼저 쓴다 — 무엇을 담았는지가 더 분명하다.
     const variant = line.variantId ? (it?.variants || []).find((v: any) => v.id === line.variantId) : null;
@@ -745,27 +771,6 @@ export default function BrowsePage({
       return prev.map((c, i) => (i === idx ? { ...c, quantity: next } : c));
     });
   }
-  function addWh(it: WarehouseItem) {
-    const stock = warehouseStockNum(it.stock);
-    if (!isNaN(stock) && stock < 1) { showToast("재고가 부족하여 담을 수 없습니다. (현재 재고: 0)", "warn"); return; }
-    setWhCart((prev) => {
-      const idx = prev.findIndex((c) => c.rowIndex === it.rowIndex);
-      if (idx === -1) return [...prev, { rowIndex: it.rowIndex, location: it.location, name: it.name, quantity: 1 }];
-      if (!isNaN(stock) && prev[idx].quantity >= stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
-      return prev.map((c, i) => (i === idx ? { ...c, quantity: c.quantity + 1 } : c));
-    });
-  }
-  function chgWh(idx: number, d: number) {
-    setWhCart((prev) => {
-      const item = prev[idx]; if (!item) return prev;
-      const orig = whItems.find((o) => o.rowIndex === item.rowIndex);
-      const stock = orig ? warehouseStockNum(orig.stock) : NaN; const next = item.quantity + d;
-      if (d > 0 && !isNaN(stock) && next > stock) { showToast(`재고가 부족합니다. (최대 ${stock}개)`, "warn"); return prev; }
-      if (next < 1) return prev.filter((_, i) => i !== idx);
-      return prev.map((c, i) => (i === idx ? { ...c, quantity: next } : c));
-    });
-  }
-
   async function submitIdentity() {
     if (affiliation === "other") {
       if (!otherName.trim()) { showToast("성함을 입력해주세요.", "warn"); return; }
@@ -797,12 +802,20 @@ export default function BrowsePage({
     const eid = affiliation === "cfgw" ? empId.trim() : "";
     // 소속을 가리지 않고 저장한다 — 예전에는 cfgw만 저장해서, ConfigDS·기타 소속은
     // 올 때마다 이름을 다시 적어야 했다.
-    saveIdentity({ name: nm, employeeId: eid, affiliation, floor: selFloor, unit: selUnit });
-    setSciCart(loadBrowseCart(nm, eid));
-    setWhCart(loadWarehouseCart(nm, eid));
+    if (!adminDirectBorrow) {
+      saveIdentity({ name: nm, employeeId: eid, affiliation, floor: selFloor, unit: selUnit });
+      setSciCart(loadBrowseCart(nm, eid));
+    }
     if (purpose === "mylookup") { setMyResult(null); setStep("mylookup"); runMyLookup(); }
     else setStep("menu");
   }
+
+  // 로그인해서 내 대여 조회로 들어오면 신원 칸이 채워지는 대로 한 번 조회한다.
+  useEffect(() => {
+    if (purpose !== "mylookup" || !session || step !== "mylookup") return;
+    if (myResult || myLoading || !identName) return;
+    runMyLookup();
+  }, [purpose, session, step, identName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── SID 열람: 시나리오 ID로 필요 물품 조회 ── */
   const [sidInput, setSidInput] = useState("");
@@ -893,16 +906,21 @@ export default function BrowsePage({
   }
 
   function topBack() {
+    if (adminDirectBorrow) {
+      if (onAdminBack) onAdminBack(sciCart);
+      else onBack();
+      return;
+    }
     if (step === "identity") return onBack();
     if (step === "menu") return session ? onBack() : setStep("identity");
     // 시나리오 계열은 한 단계 위가 "대여 방식 고르기"다.
-    if (step === "scenarioKind") return setStep("menu");
+    if (step === "scenarioKind") return adminDirectBorrow ? onBack() : setStep("menu");
     if (step === "scenario") {
       if (sidAddingExtra) { setSidAddingExtra(false); return setStep("sid"); }
-      return setStep("scenarioKind");
+      return adminDirectBorrow ? onBack() : setStep("scenarioKind");
     }
     if (step === "sid" && initialStep !== "sid") return setStep("scenarioKind");
-    if (step === "mylookup" && purpose === "mylookup") return setStep("identity");
+    if (step === "mylookup" && purpose === "mylookup") return session ? onBack() : setStep("identity");
     // SID 열람으로 바로 들어온 경우엔 메뉴가 아니라 이전 화면으로 나간다
     if (step === "sid" && initialStep === "sid") return onBack();
     setStep("menu");
@@ -910,8 +928,9 @@ export default function BrowsePage({
 
   const headerTitle = step === "scenarioKind" ? "시나리오 물품 대여"
     : step === "scenario" ? (sidAddingExtra ? "추가 물품 담기" : "시나리오 물품 대여")
-    : step === "warehouse" ? "공구 및 부품류 대여"
     : step === "tablecloth" ? "테이블보 대여"
+    : step === "warehouse" ? "공구 대여"
+    : step === "toolReturn" ? "공구 반납"
     : step === "mylookup" ? "내 대여 조회"
     : step === "sid" ? "SID 열람" : "열람 조회";
 
@@ -920,7 +939,7 @@ export default function BrowsePage({
   stepRef.current = step;
 
   // 슬라이딩 방향 추적 (렌더 중 동기 계산)
-  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenarioKind: 2, scenario: 3, warehouse: 2, tablecloth: 2, mylookup: 2, sid: 3 };
+  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenarioKind: 2, scenario: 3, tablecloth: 2, warehouse: 2, toolReturn: 2, mylookup: 2, sid: 3 };
   const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
   const slideDirRef = useRef<"forward" | "back">("forward");
   const curStepOrder = STEP_ORDER[step] ?? 0;
@@ -933,6 +952,7 @@ export default function BrowsePage({
   const browseBase = purpose === "mylookup" ? "mylookup" : "browse";
 
   useEffect(() => {
+    if (adminDirectBorrow) return;
     if (suppressBrowseHash.current) { suppressBrowseHash.current = false; return; }
     const target = `#/${browseBase}/${step}`;
     if (window.location.hash !== target) {
@@ -942,12 +962,13 @@ export default function BrowsePage({
   }, [step]);
 
   useEffect(() => {
+    if (adminDirectBorrow) return;
     const onPop = () => {
       const parts = window.location.hash.split("/");
       const base = parts[1] || "";
       const slug = parts[2] || "";
       if (base !== "browse" && base !== "mylookup") { onBack(); return; }
-      const valid: Step[] = ["identity", "menu", "scenario", "mylookup", "sid"];
+      const valid: Step[] = ["identity", "menu", "scenarioKind", "scenario", "tablecloth", "warehouse", "toolReturn", "mylookup", "sid"];
       if (valid.includes(slug as Step) && slug !== stepRef.current) {
         suppressBrowseHash.current = true;
         setStep(slug as Step);
@@ -1027,11 +1048,12 @@ export default function BrowsePage({
         .bsp-least-list::-webkit-scrollbar-track { background: transparent; }
       `}</style>
 
-      <div ref={stickyHeaderRef} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
+      <div ref={stickyHeaderRef} style={{ display: "flex", flexWrap: step === "toolReturn" ? "wrap" : undefined, alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button onClick={topBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           <ArrowLeft size={15} /> {step === "identity" ? "메인으로" : "이전"}
         </button>
         <h1 style={{ fontSize: "17px", fontWeight: 800, margin: 0, flex: 1 }}>{headerTitle}</h1>
+        {step === "toolReturn" && canUseTools && <button onClick={() => setStep("warehouse")} style={{ padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.accent, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>공구 추가 대여하기</button>}
         {step !== "identity" ? (
           <span style={{ fontSize: "12px", color: C.label, fontWeight: 600 }}>
             {identName}{identEmp ? ` · ${identEmp}` : ` · ${affiliation === "configds" ? "ConfigDS" : "기타"}`}
@@ -1046,15 +1068,15 @@ export default function BrowsePage({
           한 덩어리로 묶어 머리 바로 아래에 붙인다. */}
       <div ref={stickyStatusRef} style={{ position: "sticky", top: stickyHeaderHeight, zIndex: 19 }}>
 
-      {hideLocation && step !== "identity" ? (
+      {hideLocation && step !== "identity" && step !== "warehouse" && step !== "toolReturn" ? (
         <div style={{ padding: "9px 20px", background: C.warnSoft, color: C.warn, fontSize: "12px", fontWeight: 700, textAlign: "center" }}>
-          🔒 무인 모드 중에는 보관 위치가 표시되지 않습니다. 위치는 대여 신청 후 발급되는 QR로만 확인할 수 있습니다.
+          🔒 무인 모드 중에는 시나리오 물품의 보관 위치가 표시되지 않습니다. 신청 후 무인 PC에서 사번으로 로그인하면 대여 확인 목록에 위치가 나옵니다.
         </div>
       ) : null}
 
       {/* 지금 몇 종을 빌리고 있는지. 한도에 가까워지면 색이 바뀐다 —
           담을 만큼 담은 뒤 신청 단계에서 막히는 일을 줄이려는 것이다. */}
-      {purpose === "browse" && (active || activeLoading) ? (() => {
+      {purpose === "browse" && step !== "warehouse" && step !== "toolReturn" && (active || activeLoading) ? (() => {
         const count = active?.count ?? 0;
         const max = active?.max ?? 0;
         const exempt = !!active?.exempt;
@@ -1096,11 +1118,11 @@ export default function BrowsePage({
         );
       })() : null}
 
-      {(step === "scenario" || step === "warehouse" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
+      {(step === "scenario" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
         // SID 대여도 시나리오 장바구니에 담는다 — 일반 대여와 같은 장바구니다.
-        const kind: Kind = step === "warehouse" ? "warehouse" : step === "tablecloth" ? "tablecloth" : "scenario";
-        const n = kind === "scenario" ? sciCartCount : kind === "warehouse" ? whCartCount : tcCartCount;
-        const lines: any[] = kind === "scenario" ? sciCart : kind === "warehouse" ? whCart : tcCart;
+        const kind: Kind = step === "tablecloth" ? "tablecloth" : "scenario";
+        const n = kind === "scenario" ? sciCartCount : tcCartCount;
+        const lines: any[] = kind === "scenario" ? sciCart : tcCart;
         return (
           <div
             style={{
@@ -1185,7 +1207,6 @@ export default function BrowsePage({
                 if (n === 0) return;
                 if (!window.confirm("담은 물품을 전부 비울까요?")) return;
                 if (kind === "scenario") { setSciCart([]); setSidBorrowId(""); }
-                else if (kind === "warehouse") setWhCart([]);
                 else setTcCart([]);
               }}
               disabled={n === 0}
@@ -1205,15 +1226,32 @@ export default function BrowsePage({
       </div>
 
       <div style={{
-        maxWidth: step === "scenario" || step === "warehouse" || step === "tablecloth" ? "1560px" : "620px",
+        maxWidth: step === "scenario" || step === "tablecloth" ? "1560px" : step === "toolReturn" || step === "warehouse" ? "900px" : "620px",
         margin: "0 auto",
         // 물품 목록에서는 장바구니 바 바로 아래부터 필터 배경이 시작되어야 한다.
         // 공통 24px 상단 패딩이 남아 있으면 두 고정 영역 사이가 벌어진 것처럼 보인다.
-        padding: step === "scenario" || step === "warehouse" || step === "tablecloth"
+        padding: step === "scenario" || step === "tablecloth"
           ? "0 16px 120px"
           : "24px 16px 120px",
       }}>
 
+        {!adminDirectBorrow && purpose === "browse" && session && (step === "menu" || step === "scenarioKind") ? (
+          <BorrowerSeatSuggestions scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode}
+            employeeId={identEmp} floors={seatMap} seatsLoaded={seatMapLoaded}
+            selectedFloor={selFloor} selectedUnit={selUnit}
+            onSelect={(floor, unit) => {
+              setSelFloor(floor); setSelUnit(unit);
+              saveIdentity({ ...session, floor, unit });
+              onSeatChange?.({ floor, unit });
+            }} />
+        ) : null}
+
+        <UnattendedToolBorrowForm active={step === "warehouse" && !adminDirectBorrow && purpose === "browse"}
+          enabled={!!unattendedEnabled} employeeId={identEmp} name={identName} floors={seatMap}
+          floorsLoaded={seatMapLoaded} isLightMode={isLightMode} onSubmitted={() => void refreshMyTools()} />
+        <UnattendedToolReturnForm active={step === "toolReturn" && !adminDirectBorrow && purpose === "browse"}
+          enabled={!!unattendedEnabled} employeeId={identEmp} items={myTools} isLightMode={isLightMode} onRefresh={() => void refreshMyTools()} />
+        {(step === "warehouse" || step === "toolReturn") && !unattendedEnabled && <p role="alert" style={{ color: C.error }}>무인 모드가 종료되었습니다. 현재 작성 내용은 유지되지만 직접 신청·반납할 수 없습니다.</p>}
         <div key={step} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {step === "identity" ? (
           <div>
@@ -1256,8 +1294,15 @@ export default function BrowsePage({
               </>
             ) : <div style={{ height: "8px" }} />}
 
+            {purpose === "browse" && affiliation === "cfgw" ? (
+              <BorrowerSeatSuggestions scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode}
+                employeeId={empId} floors={seatMap} seatsLoaded={seatMapLoaded}
+                selectedFloor={selFloor} selectedUnit={selUnit}
+                onSelect={(floor, unit) => { setSelFloor(floor); setSelUnit(unit); }} />
+            ) : null}
+
             {/* 좌석 위치. 시나리오 물품은 층과 유닛이 모두 필요하고, 테이블보는 층만 쓴다.
-                공구 및 부품류는 쓰지 않지만, 분야를 고르기 전이라 여기서 한 번에 받는다.
+                COS 물품은 쓰지 않지만, 분야를 고르기 전이라 여기서 한 번에 받는다.
                 배치도를 못 불러와도 진행은 막지 않는다 — 층·유닛 없이 신청할 수 있다. */}
             <div style={{ marginBottom: "20px" }}>
               <label style={labelStyle}>좌석 위치 <span style={{ color: "#ef4444" }}>*</span></label>
@@ -1301,16 +1346,21 @@ export default function BrowsePage({
 
         {/* 물품 목록이 아직 안 왔으면 고르는 칸을 내보내지 않는다. 눌러도 반응이 없는 화면을
             보여주느니, 준비될 때까지 기다렸다가 한 번에 보여주는 편이 낫다. */}
-        {step === "menu" && !sciLoaded ? (
+        {canUseTools && (step === "menu" || step === "toolReturn") && toolsLoading && <p style={{ color: C.label, textAlign: "center" }}>공구 대여 내역 확인 중…</p>}
+        {canUseTools && (step === "menu" || step === "toolReturn") && toolsError && <div role="alert" style={{ color: C.error, padding: 12 }}>{toolsError} <button onClick={() => void refreshMyTools()}>다시 확인</button></div>}
+
+        {step === "menu" && !sciLoaded && !unattendedEnabled ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}>
             <Spinner size={30} />
             <div style={{ fontSize: "13px" }}>물품 목록을 준비하고 있습니다...</div>
           </div>
         ) : null}
 
-        {step === "menu" && sciLoaded ? (
+        {step === "menu" && !toolsLoading && (sciLoaded || unattendedEnabled) ? (
           <div className="bp-grid-in" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {[
+              ...(canUseTools && myTools.length ? [{ key: "toolReturn" as const, icon: <RotateCcw size={22} />, color: C.success, bg: C.successSoft, title: "공구 반납", sub: `대여 중인 공구 ${myTools.length}종을 선택하고 사진을 찍어 반납합니다` }] : []),
+              ...(unattendedEnabled && !adminDirectBorrow && purpose === "browse" ? [{ key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 대여", sub: "사용할 층과 물품 이름을 입력하고 사진을 찍어 신청합니다" }] : []),
               { key: "scenarioKind" as const, icon: <Boxes size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 대여", sub: "SID 대여와 일반 대여 중 하나를 고른 뒤 물품을 담습니다" },
               { key: "tablecloth" as const, icon: <Layers size={22} />, color: C.warn, bg: C.warnSoft, title: "테이블보 대여", sub: "무늬와 보관 층으로 천을 찾아 장바구니에 담습니다" },
               // 테이블보만 반납이 여기에 있다 — 담당자를 거치지 않고 본인이 직접 돌려놓기 때문에,
@@ -1376,23 +1426,27 @@ export default function BrowsePage({
 
         {step === "scenario" ? (
           <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }} stickyTop={stickyHeaderHeight + stickyStatusHeight}
+            notice={sciAi ? <div role="status" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginBottom: 14, borderRadius: 10, background: sciAi.error ? C.warnSoft : C.accentSoft, color: C.text, fontSize: 13, lineHeight: 1.6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <strong>{sciAi.busy ? "AI로 관련 물품을 찾고 있습니다…" : sciAi.error ? "일반 검색을 계속 사용할 수 있습니다" : `${sciAi.result?.mode === "ai" ? "AI" : "이름·유사어"} 검색 결과 · 관련도순`}</strong>
+                <div style={{ fontSize: 12 }}>{sciAi.error || (sciAi.busy ? "기존 장바구니와 입력 내용은 유지됩니다." : `${sciAi.result?.message} 현재 선택한 필터가 적용됩니다.`)}</div>
+              </div>
+              <button type="button" onClick={clearScenarioAi} style={{ border: 0, background: "transparent", color: C.accent, cursor: "pointer", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>{sciAi.busy ? "검색 취소" : "일반 검색으로"}</button>
+            </div> : sciSearch.trim() ? <div role="status" style={{ fontSize: 12, color: C.label, marginBottom: 14, lineHeight: 1.6 }}>일반 검색 · 이름·ID{hideLocation ? "" : "·위치"} 일치순 · AI 검색은 버튼을 누를 때만 사용합니다.</div> : null}
             filterRow={
               <>
                 <button type="button" onClick={() => setSciFiltersOpen((v) => !v)} style={{ ...inputStyle, width: "auto", padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 800, color: C.accentText, borderColor: sciFiltersOpen || sciCat || sciSub || sciSort !== "id_desc" ? C.accent : C.border, background: sciFiltersOpen || sciCat || sciSub || sciSort !== "id_desc" ? C.accentSoft : C.card, whiteSpace: "nowrap" }}>
                   <SlidersHorizontal size={15} /> 필터{sciFiltersOpen ? " 접기" : ""}
                 </button>
-                <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
+                <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0, display: "flex", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.card }}>
                   <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={sciSearch} onChange={(e) => setSciSearch(e.target.value)} placeholder="ID · 물품명 · 위치로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
+                  <input aria-label="시나리오 물품 검색" maxLength={150} value={sciSearch} onChange={(e) => { clearScenarioAi(); setSciSearch(e.target.value); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); clearScenarioAi(); } }} placeholder={hideLocation ? "ID · 물품명으로 검색..." : "ID · 물품명 · 위치로 검색..."} style={{ ...inputStyle, border: 0, borderRadius: 0, flex: 1, minWidth: 0, padding: "11px 12px 11px 36px", fontSize: "14px" }} />
+                  <button type="button" onClick={() => void runScenarioAi()} disabled={!sciSearch.trim() || !!sciAi?.busy || !connected || (!identEmp && !isAdmin)} title="선택사항: 이름이 다르거나 비슷한 물품을 찾을 때 사용하세요" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px", border: 0, borderLeft: `1px solid ${C.border}`, background: C.card, color: C.accent, fontSize: 13, fontWeight: 800, whiteSpace: "nowrap", cursor: "pointer", opacity: !sciSearch.trim() || sciAi?.busy || !connected || (!identEmp && !isAdmin) ? .5 : 1 }}><Sparkles size={15} /> {sciAi?.busy ? "검색 중…" : "AI 검색"}</button>
                 </div>
                 <div aria-label="물품 구분" style={{ display: "flex", alignItems: "center", gap: "10px", minHeight: "42px", padding: "0 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, whiteSpace: "nowrap" }}>
                   <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", color: sciRequestFilter !== "normal" ? C.accentText : C.label, fontSize: "12.5px", fontWeight: 800 }}>
-                    <input type="checkbox" checked={sciRequestFilter !== "normal"} onChange={(e) => { if (e.target.checked) setSciRequestFilter("all"); else if (sciRequestFilter === "all") setSciRequestFilter("normal"); }} style={{ width: 15, height: 15, margin: 0, accentColor: C.accent }} />
-                    Request 물품
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", color: sciRequestFilter !== "request" ? C.accentText : C.label, fontSize: "12.5px", fontWeight: 800 }}>
-                    <input type="checkbox" checked={sciRequestFilter !== "request"} onChange={(e) => { if (e.target.checked) setSciRequestFilter("all"); else if (sciRequestFilter === "all") setSciRequestFilter("request"); }} style={{ width: 15, height: 15, margin: 0, accentColor: C.accent }} />
-                    Request 제외
+                    <input type="checkbox" checked={sciRequestFilter === "all"} onChange={(e) => setSciRequestFilter(e.target.checked ? "all" : "normal")} style={{ width: 15, height: 15, margin: 0, accentColor: C.accent }} />
+                    Request 물품 포함
                   </label>
                 </div>
               </>
@@ -1406,7 +1460,7 @@ export default function BrowsePage({
                 <SidebarSection title="정렬" C={C}>
                   {([
                     ["id_desc", "ID 내림차순"], ["id_asc", "ID 오름차순"], ["location_desc", "위치 내림차순"], ["location_asc", "위치 오름차순"], ["name_asc", "이름순"],
-                  ] as const).map(([value, text]) => <label key={value} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px 7px", cursor: "pointer", color: sciSort === value ? C.accentText : C.text, fontSize: "12px", fontWeight: sciSort === value ? 800 : 600 }}><input type="radio" name="scenario-sort" value={value} checked={sciSort === value} onChange={() => setSciSort(value)} style={{ margin: 0, accentColor: C.accent }} />{text}</label>)}
+                  ] as const).filter(([value]) => !(hideLocation && value.startsWith("location"))).map(([value, text]) => <label key={value} style={{ display: "flex", alignItems: "center", gap: "7px", padding: "5px 7px", cursor: "pointer", color: effectiveSciSort === value ? C.accentText : C.text, fontSize: "12px", fontWeight: effectiveSciSort === value ? 800 : 600 }}><input type="radio" name="scenario-sort" value={value} checked={effectiveSciSort === value} onChange={() => setSciSort(value)} style={{ margin: 0, accentColor: C.accent }} />{text}</label>)}
                 </SidebarSection>
                 <SidebarSection title="카테고리" C={C} last>
                   <SidebarLink active={!sciCat} onClick={() => { setSciCat(""); setSciSub(""); }} C={C}>전체</SidebarLink>
@@ -1432,7 +1486,6 @@ export default function BrowsePage({
                 <GridCard key={it.id} C={C} inCart={!!inCart} out={out} image={it.image} onImage={() => it.image && setModalUrl(getGoogleDriveImageUrl(it.image))}
                   title={it.name} idText={`ID: ${it.id}`}
                   badges={<>
-                    {it.rootSlot && !hideLocation ? <Chip C={C} icon={<MapPin size={11} />} text={padSlot(it.rootSlot)} tone="warn" /> : null}
                     {it.category ? <Chip C={C} text={it.category} tone="accent" /> : null}
                     {/* 특정 업체 request용 / 개인 물품인지는 담기 전에 알아야 한다 —
                         대여 신청 화면에는 이미 뜨는데 열람에는 없어서 여기서만 모르고 담게 됐다.
@@ -1459,61 +1512,9 @@ export default function BrowsePage({
                   onSize={hasDims(it) || (it.variants || []).some((v) => hasDims(v)) ? () => setSizeItem(it) : undefined}
                   qty={inCart?.quantity}
                   onAdd={() => addSci(it)}
+                  onBorrowers={() => setBorrowersTarget({ id: it.id, name: it.name, category: "scenario" })}
                   onMinus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), -1)}
                   onPlus={() => (it.variants?.length ? setVariantPick(it) : chgSci(sciCart.findIndex((c) => c.id === it.id), 1))}
-                />
-              );
-            })}
-          </ItemGrid>
-        ) : null}
-
-        {step === "warehouse" ? (
-          <ItemGrid C={C} Spinner={Spinner} loaded={whLoaded} loading={whLoading} count={whFiltered.length} total={whItems.length} error={whErr} onRetry={() => { setWhErr(""); loadWarehouse(); }} stickyTop={stickyHeaderHeight + stickyStatusHeight}
-            filterRow={
-              <>
-                <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0 }}>
-                  <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input value={whSearch} onChange={(e) => setWhSearch(e.target.value)} placeholder="물품명으로 검색..." style={{ ...inputStyle, paddingLeft: "36px", padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-                </div>
-                <select value={whRack} onChange={(e) => { setWhRack(e.target.value); setWhSlot(""); }} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 130px", minWidth: 0 }}>
-                  <option value="">전체 랙</option>{whRacks.map((r) => <option key={r} value={r}>{r}랙</option>)}
-                </select>
-                <select value={whSlot} onChange={(e) => setWhSlot(e.target.value)} style={{ ...inputStyle, padding: "11px 12px", fontSize: "13px", flex: "1 1 130px", minWidth: 0 }}>
-                  <option value="">전체 슬롯</option>{whSlots.map((s) => <option key={s} value={s}>{s}번</option>)}
-                </select>
-                <button
-                  onClick={() => { setWhErr(""); loadWarehouse(); }}
-                  disabled={whLoading}
-                  title="목록 새로고침"
-                  style={{
-                    ...inputStyle, flex: "0 0 auto", padding: "11px 14px", cursor: whLoading ? "wait" : "pointer",
-                    display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 700,
-                    color: C.accentText, opacity: whLoading ? 0.6 : 1,
-                  }}
-                >
-                  <RotateCcw size={14} style={whLoading ? { animation: "bsp-spin 0.9s linear infinite" } : undefined} />
-                  새로고침
-                </button>
-              </>
-            }
-          >
-            {whFiltered.map((it) => {
-              const inCart = whCart.find((c) => c.rowIndex === it.rowIndex);
-              const stockN = warehouseStockNum(it.stock);
-              const out = !isNaN(stockN) && stockN < 1;
-              const { rack, slot } = parseRackSlot(it.location);
-              return (
-                <GridCard key={it.rowIndex} C={C} inCart={!!inCart} out={out} image={it.photo} onImage={() => it.photo && setModalUrl(getGoogleDriveImageUrl(it.photo))}
-                  title={it.name} idText={hideLocation ? "" : (it.location || "")}
-                  badges={<>
-                    {it.location && !hideLocation ? <Chip C={C} icon={<MapPin size={11} />} text={`${rack}랙 ${slot}`} tone="warn" /> : null}
-                    {it.manager ? <Chip C={C} text={it.manager} tone="accent" /> : null}
-                  </>}
-                  stock={isNaN(stockN) ? "N/A" : stockN} rented={null}
-                  qty={inCart?.quantity}
-                  onAdd={() => addWh(it)}
-                  onMinus={() => chgWh(whCart.findIndex((c) => c.rowIndex === it.rowIndex), -1)}
-                  onPlus={() => chgWh(whCart.findIndex((c) => c.rowIndex === it.rowIndex), 1)}
                 />
               );
             })}
@@ -1603,7 +1604,7 @@ export default function BrowsePage({
                         <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
                           <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>
-                            {hideLocation ? "🔒 QR로만 확인 가능" : `📍 ${obj?.rootSlot || (sciLoading ? "조회 중..." : (it.rootSlot || "위치 없음"))}`}
+                            {hideLocation ? "🔒 무인 PC에서 확인" : `📍 ${obj?.rootSlot || (sciLoading ? "조회 중..." : (it.rootSlot || "위치 없음"))}`}
                           </span>
                           <span style={{ fontWeight: 800, color: C.accentText }}>x{it.quantity || 1}</span>
                         </div>
@@ -1708,18 +1709,25 @@ export default function BrowsePage({
               return (
                 <div
                   key={it.id}
-                  onClick={() => { if (!soldOut || picked) toggleTc(it); }}
+                  onClick={() => {
+                    if (soldOut && !picked) setBorrowersTarget({ id: String(it.id), name: it.name, category: "tablecloth" });
+                    else toggleTc(it);
+                  }}
                   style={{
                     background: C.card, borderRadius: "14px", overflow: "hidden",
                     border: `1.5px solid ${picked ? C.accent : C.border}`,
-                    cursor: soldOut && !picked ? "not-allowed" : "pointer",
+                    cursor: "pointer",
                     opacity: soldOut && !picked ? 0.5 : 1,
                     display: "flex", flexDirection: "column",
                   }}
                 >
                   <div
-                    onClick={(e) => { e.stopPropagation(); if (it.image) setModalUrl(getGoogleDriveImageUrl(it.image)); }}
-                    style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: it.image ? "zoom-in" : "default" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (soldOut) setBorrowersTarget({ id: String(it.id), name: it.name, category: "tablecloth" });
+                      else if (it.image) setModalUrl(getGoogleDriveImageUrl(it.image));
+                    }}
+                    style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: soldOut ? "pointer" : it.image ? "zoom-in" : "default" }}
                   >
                     {it.image
                       ? <img src={getThumbImageUrl(it.image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
@@ -1729,7 +1737,7 @@ export default function BrowsePage({
                     <div style={{ fontSize: "13.5px", fontWeight: 800, color: C.text }}>{it.name}</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
                       {it.category ? <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.accentSoft, color: C.accentText }}>{tcCatLabel(it.category)}</span> : null}
-                      {it.location && !hideLocation ? <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.cardSub, color: C.label }}>{it.location}</span> : null}
+                      {it.location ? <span style={{ fontSize: "10px", fontWeight: 700, padding: "2px 7px", borderRadius: "6px", background: C.cardSub, color: C.label }}>{it.location}</span> : null}
                     </div>
                     {soldOut && (tcOut[String(it.id)] || []).length ? (
                       <div style={{ fontSize: "10.5px", lineHeight: 1.5, color: C.error, background: C.errorSoft, borderRadius: "7px", padding: "5px 7px" }}>
@@ -1746,10 +1754,10 @@ export default function BrowsePage({
                         {soldOut ? "전부 대여 중" : `남은 수량 ${left}`}
                       </span>
                       <span style={{ flex: 1 }} />
-                      <span style={{ fontSize: "12px", fontWeight: 800, color: picked ? C.accentText : C.label }}>
-                        {picked ? "담김 ✓" : soldOut ? "" : "담기 +"}
-                      </span>
+                      {soldOut ? <button type="button" onClick={(event) => { event.stopPropagation(); setBorrowersTarget({ id: String(it.id), name: it.name, category: "tablecloth" }); }} style={{ border: `1px solid ${C.border}`, borderRadius: "7px", padding: "5px 7px", background: C.cardSub, color: C.text, fontSize: "11px", fontWeight: 700, cursor: "pointer" }}>대여자 확인</button>
+                        : <span style={{ fontSize: "12px", fontWeight: 800, color: picked ? C.accentText : C.label }}>{picked ? "담김 ✓" : "담기 +"}</span>}
                     </div>
+                    {soldOut ? <div style={{ fontSize: "11px", lineHeight: 1.5, color: C.label }}>눌러서 현재 대여자를 확인하세요</div> : null}
                   </div>
                 </div>
               );
@@ -1775,7 +1783,7 @@ export default function BrowsePage({
                       <>
                         <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품 (SID 대여)</div>
                         {myResult.scenario.map((item: any, i: number) => (
-                          <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} loc={hideLocation ? "🔒 QR로만 확인 가능" : padSlot(item.location)} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />
+                          <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
                         ))}
                       </>
                     ) : null}
@@ -1783,17 +1791,16 @@ export default function BrowsePage({
                       <>
                         <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "16px 0 8px" }}>일반 대여</div>
                         {myResult.general.map((item: any, i: number) => (
-                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} loc={hideLocation ? "🔒 QR로만 확인 가능" : padSlot(item.location)} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />
+                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
                         ))}
                       </>
                     ) : null}
                     {myResult.warehouse.length ? (
                       <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>공구 및 부품류</div>
-                        {myResult.warehouse.map((item: any, i: number) => {
-                          const { rack, slot } = parseRackSlot(item.location);
-                          return <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} loc={hideLocation ? "🔒 QR로만 확인 가능" : (item.location ? `${rack}랙 ${slot}` : "")} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} />;
-                        })}
+                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>COS 물품</div>
+                        {myResult.warehouse.map((item: any, i: number) => (
+                          <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
+                        ))}
                       </>
                     ) : null}
                   </>
@@ -1822,9 +1829,9 @@ export default function BrowsePage({
       {/* 다음 단계로 넘어가는 단추. 예전에는 장바구니 창을 열어야만 보였다 —
           담고 나서 무엇을 눌러야 할지 몰라 창을 여닫는 일이 잦았다.
           화면 오른쪽 아래에 띄워 늘 보이게 한다. 담은 게 없으면 나타나지 않는다. */}
-      {(step === "scenario" || step === "warehouse" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
-        const kind: Kind = step === "warehouse" ? "warehouse" : step === "tablecloth" ? "tablecloth" : "scenario";
-        const n = kind === "scenario" ? sciCartCount : kind === "warehouse" ? whCartCount : tcCartCount;
+      {(step === "scenario" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
+        const kind: Kind = step === "tablecloth" ? "tablecloth" : "scenario";
+        const n = kind === "scenario" ? sciCartCount : tcCartCount;
         if (n === 0) return null;
         return (
           <div style={{ position: "fixed", right: "20px", bottom: "20px", zIndex: 45, display: "flex", alignItems: "center", gap: "10px" }}>
@@ -1837,7 +1844,7 @@ export default function BrowsePage({
             onClick={() => {
               if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
               if (kind === "tablecloth") { setTcConfirmOpen(true); return; }
-              onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : undefined });
+              onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : undefined, items: sciCart });
             }}
             disabled={remoteReadonly}
             style={{
@@ -1849,7 +1856,7 @@ export default function BrowsePage({
             }}
           >
             <HandHelping size={18} />
-            {remoteReadonly ? "읽기 전용 테스트" : kind === "warehouse" ? "대여 / 소모하기" : "대여 신청하기"}
+            {remoteReadonly ? "읽기 전용 테스트" : "대여 신청하기"}
             <span style={{
               minWidth: 24, background: "#fff", color: C.accent, borderRadius: "999px",
               padding: "2px 9px", fontSize: "13px", fontWeight: 800, textAlign: "center",
@@ -1865,16 +1872,11 @@ export default function BrowsePage({
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}` }}>
               <ShoppingCart size={18} style={{ color: C.accentText }} />
               <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>
-                {cartOpen === "scenario" ? "시나리오" : cartOpen === "warehouse" ? "창고" : "테이블보"} 장바구니 ({cartOpen === "scenario" ? sciCartCount : cartOpen === "warehouse" ? whCartCount : tcCartCount}{cartOpen === "tablecloth" ? "장" : "개"})
+                {cartOpen === "scenario" ? "시나리오" : "테이블보"} 장바구니 ({cartOpen === "scenario" ? sciCartCount : tcCartCount}{cartOpen === "tablecloth" ? "장" : "개"})
               </h2>
               <button onClick={() => setCartOpen(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
-              {cartOpen === "warehouse" ? (
-                <div style={{ marginBottom: "12px", padding: "10px 12px", background: C.warnSoft, borderRadius: "10px", fontSize: "12px", color: C.text, lineHeight: 1.5 }}>
-                  다음 화면에서 <b>대여</b> 또는 <b>소모</b>를 선택할 수 있습니다. 소모는 재고에서 차감되며 반납 대상이 아닙니다.
-                </div>
-              ) : null}
               {cartOpen === "tablecloth" ? (
                 tcCart.length === 0 ? <EmptyCart C={C} /> : (
                   <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -1885,7 +1887,7 @@ export default function BrowsePage({
                         </span>
                         <span style={{ flex: 1, minWidth: 0 }}>
                           <span style={{ display: "block", fontSize: "13px", fontWeight: 800, color: C.text }}>{c.name}</span>
-                          {c.location && !hideLocation ? <span style={{ display: "block", fontSize: "11px", color: C.label }}>{c.location}</span> : null}
+                          {c.location ? <span style={{ display: "block", fontSize: "11px", color: C.label }}>{c.location}</span> : null}
                         </span>
                         <button
                           onClick={() => setTcCart((prev) => prev.filter((x) => x.id !== c.id))}
@@ -1912,16 +1914,12 @@ export default function BrowsePage({
                     onRemove={() => setSciCart(sciCart.filter((_, i) => i !== idx))}
                   />
                 ))
-              ) : cartOpen === "warehouse" ? (
-                whCart.length === 0 ? <EmptyCart C={C} /> : whCart.map((item, idx) => (
-                  <CartRow key={item.rowIndex} C={C} name={item.name} sub={hideLocation ? "🔒 QR로만 확인 가능" : item.location} qty={item.quantity} onMinus={() => chgWh(idx, -1)} onPlus={() => chgWh(idx, 1)} onRemove={() => setWhCart(whCart.filter((_, i) => i !== idx))} />
-                ))
               ) : null}
             </div>
             <div style={{ padding: "16px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: "10px" }}>
               {(() => {
-                const lines: any[] = cartOpen === "scenario" ? sciCart : cartOpen === "warehouse" ? whCart : tcCart;
-                const clear = () => (cartOpen === "scenario" ? setSciCart([]) : cartOpen === "warehouse" ? setWhCart([]) : setTcCart([]));
+                const lines: any[] = cartOpen === "scenario" ? sciCart : tcCart;
+                const clear = () => (cartOpen === "scenario" ? setSciCart([]) : setTcCart([]));
                 const empty = lines.length === 0;
                 return (
                   <>
@@ -1930,12 +1928,12 @@ export default function BrowsePage({
                       onClick={() => {
                         if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
                         if (cartOpen === "tablecloth") { setCartOpen(null); setTcConfirmOpen(true); return; }
-                        onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind: cartOpen, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId });
+                        onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind: cartOpen, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : undefined, items: sciCart });
                       }}
                       disabled={empty || remoteReadonly}
                       style={{ ...primaryBtn, opacity: empty || remoteReadonly ? 0.5 : 1 }}
                     >
-                      <HandHelping size={15} /> {remoteReadonly ? "읽기 전용 테스트" : cartOpen === "warehouse" ? "대여 / 소모하기" : "대여 신청하기"}
+                      <HandHelping size={15} /> {remoteReadonly ? "읽기 전용 테스트" : "대여 신청하기"}
                     </button>
                   </>
                 );
@@ -1967,7 +1965,7 @@ export default function BrowsePage({
                     </div>
                     <div style={{ padding: "9px 10px" }}>
                       <div style={{ color: C.text, fontSize: "13px", fontWeight: 800 }}>{item.name}</div>
-                      {item.location && !hideLocation ? <div style={{ color: C.label, fontSize: "11px", marginTop: 3 }}>{item.location}</div> : null}
+                      {item.location ? <div style={{ color: C.label, fontSize: "11px", marginTop: 3 }}>{item.location}</div> : null}
                     </div>
                   </div>
                 ))}
@@ -2094,17 +2092,19 @@ export default function BrowsePage({
                 return (
                   <button
                     key={v.id}
-                    disabled={out}
-                    onClick={() => { addSciLine(variantPick, { variantId: v.id, variantName: v.name }, v.stock); advanceVariantQueue(); }}
+                    onClick={() => {
+                      if (out) { setBorrowersTarget({ id: variantPick.id, name: `${variantPick.name} · ${v.name}`, category: "scenario", variantId: v.id }); return; }
+                      addSciLine(variantPick, { variantId: v.id, variantName: v.name }, v.stock); advanceVariantQueue();
+                    }}
                     style={{
                       display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px",
                       borderRadius: "11px", border: `1.5px solid ${C.border}`, background: C.cardSub,
-                      color: out ? C.label : C.text, cursor: out ? "not-allowed" : "pointer",
+                      color: out ? C.label : C.text, cursor: "pointer",
                       fontSize: "13px", fontWeight: 700, textAlign: "left", opacity: out ? 0.55 : 1,
                     }}
                   >
                     <span
-                      onClick={(e) => { if (v.image) { e.stopPropagation(); setModalUrl(getGoogleDriveImageUrl(v.image)); } }}
+                      onClick={(e) => { if (!out && v.image) { e.stopPropagation(); setModalUrl(getGoogleDriveImageUrl(v.image)); } }}
                       style={{ width: "48px", height: "48px", flexShrink: 0, borderRadius: "9px", overflow: "hidden", background: C.card, display: "flex", alignItems: "center", justifyContent: "center", cursor: v.image ? "zoom-in" : "default" }}
                     >
                       {v.image
@@ -2116,6 +2116,7 @@ export default function BrowsePage({
                       <span style={{ display: "block", fontSize: "11.5px", color: C.label, fontWeight: 600, marginTop: "2px" }}>
                         {out ? "재고 없음" : `재고 ${v.stock}개`}
                       </span>
+                      {out ? <span style={{ display: "block", fontSize: "11px", lineHeight: 1.5, color: C.label, fontWeight: 500, marginTop: "3px" }}>눌러서 현재 대여자를 확인하세요</span> : null}
                     </span>
                   </button>
                 );
@@ -2134,8 +2135,11 @@ export default function BrowsePage({
 
       <SizeViewerModal open={!!sizeItem} onClose={() => setSizeItem(null)} item={sizeItem} variants={sizeItem?.variants} C={C} />
 
+      <ReadonlyObjectDetailsModal item={detailItem} onClose={() => setDetailItem(null)} onImage={(url) => setModalUrl(getGoogleDriveImageUrl(url))} C={C} />
+
 
       <ImageZoomModal url={modalUrl} onClose={() => setModalUrl("")} />
+      {borrowersTarget ? <ItemBorrowersModal key={`${borrowersTarget.category}:${borrowersTarget.id}:${borrowersTarget.variantId ?? ""}`} target={borrowersTarget} scriptUrl={connected ? scriptUrl : ""} C={C} onClose={closeBorrowers} /> : null}
 
     </div>
   );
@@ -2167,7 +2171,7 @@ function SidebarLink({ active, onClick, C, children, nested = false }: { active:
   );
 }
 
-function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, sidebar, children, error, onRetry, stickyTop }: any) {
+function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, sidebar, children, error, onRetry, stickyTop, notice }: any) {
   const [showManual, setShowManual] = React.useState(false);
   React.useEffect(() => {
     // 로딩도 아니고 로드도 안 된 어정쩡한 상태가 6초 이상 지속되면 수동 버튼 노출 (무한로딩 안전장치)
@@ -2182,6 +2186,7 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, sideba
       {/* boxShadow로 배경을 위쪽으로 연장해, 헤더와 검색행 사이로 카드가 비쳐 보이던 틈을 덮는다 */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap", position: "sticky", top: stickyTop ?? 0, zIndex: 16, background: C.bg, padding: "8px 0", boxShadow: `0 -16px 0 0 ${C.bg}` }}>{filterRow}</div>
       <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>{loaded && !error ? `${count} / ${total}개 물품` : ""}</div>
+      {notice}
       {loading ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 물품을 불러오는 중입니다...</div>
       ) : error ? (
@@ -2211,16 +2216,16 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, sideba
   );
 }
 
-function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus, onSize }: any) {
+function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus, onSize, onBorrowers }: any) {
   return (
-    <div style={{
+    <div onClick={out ? onBorrowers : undefined} style={{
       border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column",
       boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1,
       // 수백 개 카드 중 화면 밖의 카드는 실제로 스크롤될 때만 레이아웃·페인트한다.
       // 첫 진입 후 오버레이가 사라질 때의 짧은 멈춤을 없애는 핵심 최적화다.
-      contentVisibility: "auto", containIntrinsicSize: "0 360px",
+      contentVisibility: "auto", containIntrinsicSize: "0 360px", cursor: out ? "pointer" : undefined,
     }}>
-      <div onClick={onImage} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
+      <div onClick={(event) => { event.stopPropagation(); if (out) onBorrowers?.(); else onImage?.(); }} style={{ height: "150px", background: C.cardSub, display: "flex", alignItems: "center", justifyContent: "center", cursor: out ? "pointer" : image ? "zoom-in" : "default", borderBottom: `1px solid ${C.border}` }}>
         {image ? <img className="bp-img-in" src={getThumbImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={40} style={{ color: C.border }} />}
       </div>
       <div style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -2242,16 +2247,17 @@ function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock
         </div>
         <div style={{ marginTop: "auto", paddingTop: "8px" }}>
           {qty !== undefined ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center", background: C.accentSoft, borderRadius: "10px", padding: "6px" }}>
+            <div onClick={(event) => event.stopPropagation()} style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center", background: C.accentSoft, borderRadius: "10px", padding: "6px" }}>
               <button onClick={onMinus} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={13} /></button>
               <span style={{ fontWeight: 800, minWidth: "22px", textAlign: "center", color: C.accentText }}>{qty}</span>
               <button onClick={onPlus} style={{ width: 28, height: 28, borderRadius: "8px", border: "none", background: C.card, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={13} /></button>
             </div>
           ) : (
-            <button disabled={out} onClick={onAdd} style={{ width: "100%", padding: "9px", borderRadius: "10px", border: "none", background: out ? C.border : C.accent, color: "#fff", cursor: out ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-              <ShoppingCart size={14} /> {out ? "재고 없음" : "장바구니 담기"}
+            <button type="button" onClick={(event) => { event.stopPropagation(); if (out) onBorrowers?.(); else onAdd(); }} style={{ width: "100%", padding: "9px", borderRadius: "10px", border: out ? `1px solid ${C.border}` : "none", background: out ? C.cardSub : C.accent, color: out ? C.text : "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
+              {out ? <User size={14} /> : <ShoppingCart size={14} />} {out ? "현재 대여자 확인" : "장바구니 담기"}
             </button>
           )}
+          {out ? <div style={{ marginTop: "6px", fontSize: "11px", lineHeight: 1.5, color: C.label, textAlign: "center" }}>눌러서 현재 대여자를 확인하세요</div> : null}
         </div>
       </div>
     </div>
@@ -2294,7 +2300,84 @@ function EmptyCart({ C }: { C: any }) {
   return <div style={{ textAlign: "center", color: C.label, fontSize: "13px", padding: "48px 0" }}><ShoppingCart size={32} style={{ color: C.border, marginBottom: "8px" }} /><div>장바구니가 비어 있습니다.</div></div>;
 }
 
-function MyRow({ C, icon, tone, label, sub, loc, image, onImage }: any) {
+function ReadonlyObjectDetailsModal({ item, onClose, onImage, C }: { item: any; onClose: () => void; onImage: (url: string) => void; C: any }) {
+  useEffect(() => {
+    if (!item) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [item, onClose]);
+
+  if (!item) return null;
+  const details = item.details || {};
+  const measured = hasDims(details);
+  const shape = (details.shape || "box") as keyof typeof SHAPE_LABEL;
+  const propertyLabels: Record<string, string> = {
+    Soft: "Soft · 부드러움", Hard: "Hard · 단단함",
+    Deformable: "Deformable · 변형 가능", Fragile: "Fragile · 파손 주의",
+  };
+  const value = (v: any) => String(v ?? "").trim() || "미등록";
+  const fields = [
+    ["크기", value(details.size)],
+    ["속성", propertyLabels[details.property] || value(details.property)],
+    ["카테고리", value(details.category)],
+    ["서브 카테고리", value(details.subcategory)],
+    ["현재 재고", `${Number(details.stock) || 0}개`],
+    ...(details.variantName ? [["선택된 종류", details.variantName]] : []),
+  ];
+
+  return (
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 1250, padding: "20px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(8,15,28,0.68)", backdropFilter: "blur(4px)" }}>
+      <div role="dialog" aria-modal="true" aria-label="물품 상세 정보" style={{ width: "min(760px, 100%)", maxHeight: "min(820px, 92vh)", overflowY: "auto", borderRadius: "20px", border: `1px solid ${C.border}`, background: C.card, color: C.text, boxShadow: "0 24px 70px rgba(0,0,0,0.28)" }}>
+        <div style={{ position: "sticky", top: 0, zIndex: 2, display: "flex", alignItems: "center", gap: "12px", padding: "16px 18px", borderBottom: `1px solid ${C.border}`, background: C.card }}>
+          {item.image ? (
+            <button onClick={() => onImage(item.image)} title="사진 크게 보기" style={{ width: 48, height: 48, flexShrink: 0, padding: 0, overflow: "hidden", borderRadius: "11px", border: `1px solid ${C.border}`, background: C.cardSub, cursor: "zoom-in" }}>
+              <img src={getThumbImageUrl(item.image)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            </button>
+          ) : <div style={{ width: 48, height: 48, flexShrink: 0, borderRadius: "11px", display: "flex", alignItems: "center", justifyContent: "center", background: C.cardSub }}><Boxes size={21} color={C.label} /></div>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "16px", lineHeight: 1.35, fontWeight: 900, overflowWrap: "anywhere" }}>{item.itemLabel || item.name || "물품 상세 정보"}</div>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 5, padding: "3px 8px", borderRadius: 999, background: C.accentSoft, color: C.accentText, fontSize: 10.5, fontWeight: 800 }}>읽기 전용</div>
+          </div>
+          <button onClick={onClose} aria-label="닫기" style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${C.border}`, background: C.cardSub, color: C.label, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={17} /></button>
+        </div>
+
+        <div style={{ padding: "18px", display: "grid", gridTemplateColumns: measured ? "repeat(auto-fit, minmax(min(100%, 280px), 1fr))" : "1fr", gap: "18px" }}>
+          <section>
+            <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 900 }}>등록 정보</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+              {fields.map(([label, fieldValue]) => (
+                <div key={label} style={{ minHeight: 58, padding: "10px 11px", border: `1px solid ${C.border}`, borderRadius: 11, background: C.cardSub }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: C.label }}>{label}</div>
+                  <div style={{ marginTop: 5, fontSize: 12.5, fontWeight: 800, overflowWrap: "anywhere" }}>{fieldValue}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, padding: "11px 12px", borderRadius: 11, background: measured ? C.successSoft : C.cardSub, border: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: C.label }}>실측 크기</div>
+              <div style={{ marginTop: 5, fontSize: 13, fontWeight: 900 }}>{measured ? dimsLabel(details) : "미등록"}</div>
+              {measured ? <div style={{ marginTop: 3, fontSize: 10.5, color: C.label }}>가로 × 세로 × 높이 · {SHAPE_LABEL[shape] || "육면체"}</div> : null}
+            </div>
+          </section>
+
+          {measured ? (
+            <section style={{ minWidth: 0 }}>
+              <h3 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 900 }}>실측 기반 3D 모델</h3>
+              <div style={{ overflow: "hidden", borderRadius: 14, border: `1px solid ${C.border}`, background: "rgba(0,0,0,0.22)" }}>
+                <BoxCanvas widthMm={details.widthMm} depthMm={details.depthMm} heightMm={details.heightMm} shape={shape} height={330} accent={C.accent} />
+              </div>
+              <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.55, color: C.label }}>등록된 치수를 바탕으로 만든 단순화된 모형입니다. 실제 물품의 세부 모양은 사진을 확인해주세요.</div>
+            </section>
+          ) : (
+            <div style={{ padding: "18px", borderRadius: 13, border: `1px dashed ${C.border}`, color: C.label, fontSize: 12, lineHeight: 1.6 }}>실측 가로·세로·높이가 모두 등록되면 이곳에 3D 모델이 표시됩니다.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MyRow({ C, icon, tone, label, sub, image, onImage, onDetails }: any) {
   const color = tone === "success" ? C.success : C.accentText;
   const bg = tone === "success" ? C.successSoft : C.accentSoft;
   return (
@@ -2309,7 +2392,9 @@ function MyRow({ C, icon, tone, label, sub, loc, image, onImage }: any) {
         <div style={{ fontWeight: 700, fontSize: "13px", wordBreak: "break-word" }}>{label}</div>
         <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>{sub}</div>
       </div>
-      {loc ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "11px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "8px", padding: "3px 9px", fontFamily: "monospace", flexShrink: 0 }}><MapPin size={11} />{loc}</span> : null}
+      <button onClick={onDetails} style={{ display: "inline-flex", alignItems: "center", gap: "5px", flexShrink: 0, padding: "7px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.accentText, cursor: "pointer", fontSize: "11px", fontWeight: 800 }}>
+        <Info size={12} /> 상세 정보
+      </button>
     </div>
   );
 }
