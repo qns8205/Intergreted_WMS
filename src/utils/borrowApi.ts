@@ -1,5 +1,5 @@
 // 대여 시스템(구 BorrowForm) API 헬퍼 및 공용 타입/유틸
-// 통합 GAS(AppsScript_Unified.gs)의 대여 액션들을 호출합니다.
+// 서버의 `/api/gas` 액션 디스패처(server/routes/gas.js)로 대여 액션들을 호출합니다.
 
 import { hasVersionWorkInProgress } from "./versionWorkGuard";
 import { compareToolLocation } from "./toolLocation";

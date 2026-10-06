@@ -33,7 +33,7 @@ node server/scripts/import-xlsx.js "/path/to/통합 시트.xlsx"
 
 ## 상시 구동 (systemd)
 
-`deploy/wms.service` 참고 — 설치 경로, `WMS_DB_PATH`(`/var/wms/db.sqlite3`), `WMS_UPLOADS_DIR`(`/var/wms/uploads`)를 환경에 맞게 조정한 뒤:
+`deploy/wms.service` 참고 — 설치 경로를 환경에 맞게 조정한 뒤(운영 서버는 `WMS_DB_PATH`를 지정하지 않아 기본 경로 `server/data/db.sqlite3`, 즉 `/home/configds/wms/server/data/db.sqlite3`를 쓴다):
 
 ```bash
 sudo cp deploy/wms.service /etc/systemd/system/wms.service
@@ -62,7 +62,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy\publish.ps1
 
 ## 정기 백업
 
-`deploy/backup-cron.md` 참고 — `sqlite3 .backup`을 매일 cron으로 실행해 `/var/wms/backups/`에 보관합니다.
+`deploy/backup-cron.md` 참고 — Node `node:sqlite`의 `backup()`으로 서비스를 멈추지 않고 DB를 백업합니다(서버에는 `sqlite3` CLI가 없습니다).
 
 ## 로컬 개발 확인
 

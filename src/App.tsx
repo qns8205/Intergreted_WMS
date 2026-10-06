@@ -626,7 +626,7 @@ export default function App() {
     if (!connected || !scriptUrl) return;
     let cancelled = false;
     // 구버전 판정 기준은 오직 하나: 관리자가 발급한 APP_VERSION.
-    // (배포 자체를 자동 감지하지 않는다. GAS·Vercel 배포를 모두 마친 뒤 관리자가
+    // (배포 자체를 자동 감지하지 않는다. 서버·프론트 배포를 모두 마친 뒤 관리자가
     //  "새 버전 발급"을 눌러야 비로소 구버전 화면들이 차단된다 — 차단 시점을 관리자가 통제한다.)
     const check = async () => {
       try {
@@ -1846,7 +1846,7 @@ export default function App() {
     if (connected) {
       callScript("addDefectLog", log)
         .then((res) => {
-          // 실시간으로 받은 올바른 rowIndex와 구글 드라이브 이미지 URL로 교체 (대용량 base64 데이터 제거 및 최적화)
+          // 실시간으로 받은 올바른 rowIndex와 서버에 저장된 이미지 URL로 교체 (대용량 base64 데이터 제거 및 최적화)
           setDefectLogs((prev) =>
             prev.map((l) => (l.rowIndex === tempIndex ? { ...l, rowIndex: res.rowIndex, photo: res.photo || l.photo } : l))
           );

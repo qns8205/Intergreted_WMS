@@ -16,3 +16,6 @@ outputs/
 *.sqlite3-shm
 *.sqlite3-wal
 tools/printer-backups/
+
+# 예전 PC 에이전트(tools/sm-sync)가 남긴 로컬 브라우저 프로필 — 로그인 쿠키가 들어 있을 수 있다
+tools/sm-sync/
