@@ -2,6 +2,7 @@ import { all, get, run, transaction } from "../db.js";
 import { employeeIdForRentalRow } from "./registeredUsers.js";
 import { padSlot, parseItemLabel } from "./borrowUtils.js";
 import { nowKst, parseKstMs } from "./time.js";
+import { linksFor } from "./penaltyLinks.js";
 
 const FALLBACK_MAX_TYPES = 15;
 const PENALTY_DAYS = 7;
@@ -145,7 +146,7 @@ function returnState(row) {
 
 /**
  * 페널티 하나가 어떤 대여 때문에 생겼는지: 물품, 신청·대여 확인·반납 시각, 기한, 기한을 넘긴 줄.
- * 관리자가 직접 등록한 페널티는 연결된 기록이 없어 events가 빈다.
+ * 관리자가 직접 등록한 페널티는 자동 연결 기록(events)이 비고, 대신 관리자가 고른 links가 붙는다.
  */
 export function penaltyDetails(penaltyId) {
   const penalty = get("SELECT * FROM penalties WHERE id=?", [Number(penaltyId)]);
@@ -185,5 +186,6 @@ export function penaltyDetails(penaltyId) {
       occurredAt: event.occurred_at || "", items,
     };
   });
-  return { penalty, events };
+  // 관리자가 원인으로 직접 연결한 대여·반납 기록(자동 페널티에도 붙일 수 있다).
+  return { penalty, events, links: linksFor(penalty.id) };
 }

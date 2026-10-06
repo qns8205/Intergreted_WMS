@@ -10,6 +10,7 @@ import { importXlsx } from "../lib/xlsxImport.js";
 import { padSlot, normalizeSid } from "../lib/borrowUtils.js";
 import { attachSession, status as smSyncStatus } from "../lib/smSync.js";
 import { penaltyDetails } from "../lib/unattendedPenalties.js";
+import { rentalCandidates, saveLinks, deleteLinks, linksFor } from "../lib/penaltyLinks.js";
 import XLSX from "xlsx";
 import { normalizeEmployeeId } from "../lib/registeredUsers.js";
 
@@ -162,7 +163,7 @@ adminRouter.put("/settings", requireAdmin, (req, res) => {
 // ── Penalties ────────────────────────────────────────────────
 
 adminRouter.get("/penalties", (req, res) => {
-  res.json({ success: true, penalties: all("SELECT * FROM penalties ORDER BY id DESC") });
+  res.json({ success: true, penalties: all("SELECT p.*, (SELECT COUNT(*) FROM penalty_links WHERE penalty_id = p.id) AS link_count FROM penalties p ORDER BY p.id DESC") });
 });
 
 // 대여 기록이 담기므로 목록과 달리 관리자만 본다.
@@ -172,10 +173,40 @@ adminRouter.get("/penalties/:id/details", requireAdmin, (req, res) => {
   res.json({ success: true, ...details });
 });
 
+// 페널티를 줄 사람의 대여·반납 기록 줄(최근순). 원인으로 연결할 줄을 고를 때 쓴다.
+adminRouter.get("/penalties/rentals", requireAdmin, (req, res) => {
+  const name = String(req.query.name || "").trim();
+  if (!name) return res.status(400).json({ success: false, error: "이름 또는 4자리 사번이 필요합니다." });
+  res.json({ success: true, rows: rentalCandidates(name) });
+});
+
+// links: [{ sheetType: "scenario"|"general", rowId, cause: "rental"|"return" }] — 선택. 어느 기록의 어느 물품이
+// 대여 때문인지 반납 때문인지 남긴다. 연결이 하나라도 잘못되면 페널티 등록도 함께 취소된다.
 adminRouter.post("/penalties", requireAdmin, (req, res) => {
-  const { name, maxTypes, reason, expiresAt } = req.body || {};
-  run("INSERT INTO penalties (name, max_types, reason, expires_at) VALUES (?, ?, ?, ?)", [name ?? null, maxTypes ?? null, reason ?? null, expiresAt ?? null]);
-  res.json({ success: true });
+  const { name, maxTypes, reason, expiresAt, links } = req.body || {};
+  try {
+    const id = transaction(() => {
+      const result = run("INSERT INTO penalties (name, max_types, reason, expires_at) VALUES (?, ?, ?, ?)", [name ?? null, maxTypes ?? null, reason ?? null, expiresAt ?? null]);
+      const newId = Number(result.lastInsertRowid);
+      if (Array.isArray(links) && links.length) saveLinks(newId, links, req.admin?.name || req.admin?.loginId || "");
+      return newId;
+    });
+    res.json({ success: true, id });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message || "페널티를 등록하지 못했습니다." });
+  }
+});
+
+// 이미 등록된 페널티의 연결을 통째로 바꾼다(빈 배열이면 모두 해제).
+adminRouter.put("/penalties/:id/links", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!get("SELECT id FROM penalties WHERE id = ?", [id])) return res.status(404).json({ success: false, error: "이미 삭제되었거나 없는 페널티입니다." });
+  try {
+    transaction(() => saveLinks(id, req.body?.links, req.admin?.name || req.admin?.loginId || ""));
+    res.json({ success: true, links: linksFor(id) });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message || "연결을 저장하지 못했습니다." });
+  }
 });
 
 adminRouter.put("/penalties/:id", requireAdmin, (req, res) => {
@@ -185,7 +216,10 @@ adminRouter.put("/penalties/:id", requireAdmin, (req, res) => {
 });
 
 adminRouter.delete("/penalties/:id", requireAdmin, (req, res) => {
-  run("DELETE FROM penalties WHERE id = ?", [req.params.id]);
+  transaction(() => {
+    deleteLinks(Number(req.params.id));
+    run("DELETE FROM penalties WHERE id = ?", [req.params.id]);
+  });
   res.json({ success: true });
 });
 

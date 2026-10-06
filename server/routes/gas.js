@@ -19,6 +19,7 @@ import * as smLocationSync from "../lib/smLocationSync.js";
 import { nudge as smSyncNudge, syncChangesNow as runSmChangesNow, syncAllNow as runSmFullReconcileNow, status as smSyncStatus } from "../lib/smSync.js";
 import { adminFromRequest } from "../lib/auth.js";
 import { unattendedEnabled, penaltyDetails } from "../lib/unattendedPenalties.js";
+import { linksFor, publicLinks } from "../lib/penaltyLinks.js";
 import { getPickupTimeoutMinutes } from "../lib/pickupTimeout.js";
 import { rentalInsights } from "../lib/rentalInsights.js";
 import { applyWarehouseRent, applyWarehouseRentBulk, warehouseLoanGroups, warehouseIsConsumable } from "../lib/warehouseRentals.js";
@@ -745,7 +746,8 @@ function getPenaltyDetail({ query }) {
         // 신청 하나에 여러 물품이 묶여 있으면 가장 많이 넘긴 줄 기준이다.
         overMinutes: Math.max(0, ...e.items.map((i) => (i.missed ? i.overMinutes : 0))),
       }));
-      return { id: r.id, max: r.max_types, reason: r.reason, until: r.expires_at, auto: events.length > 0, events };
+      // 관리자가 원인으로 지정한 물품(대여 때문 / 반납 때문). 사번·내부 행 번호는 싣지 않는다.
+      return { id: r.id, max: r.max_types, reason: r.reason, until: r.expires_at, auto: events.length > 0, events, links: publicLinks(linksFor(r.id)) };
     }),
   };
 }
