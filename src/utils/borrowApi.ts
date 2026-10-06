@@ -92,6 +92,8 @@ export interface UnreturnedItem {
   borrowDate: string;
   borrowPurpose: string;
   email: string;
+  /** 서버가 명부에서 맞춘 사번. 이름만 남은 옛 기록은 비어 있을 수 있다. */
+  employeeId?: string;
   borrowDateTime?: string; // 시간까지 포함한 대여 시각 (묶음 정렬용)
   shift?: "day" | "night"; // 대여 시각 기준 주간/야간
   batchId: string;
@@ -1913,6 +1915,31 @@ export interface PenaltyEntry {
 export async function fetchPenalties(scriptUrl: string): Promise<PenaltyEntry[]> {
   const data = await apiGet(scriptUrl, "getPenalties", {});
   return (data.items || []) as PenaltyEntry[];
+}
+
+/** 랜딩에서 페널티를 눌렀을 때 보여주는 상세. 물품명·사번 같은 대여 기록은 담기지 않는다. */
+export interface PenaltyDetailEvent {
+  eventType: string;
+  label: string;        // 예: "대여 후 24시간 내 반납 미처리"
+  hours: number;        // 기한(시간)
+  requestCode: string;
+  sourceAt: string;     // 기한을 재기 시작한 시각(신청 또는 대여 확인)
+  deadlineAt: string;
+  occurredAt: string;   // 페널티가 생성된 시각
+  overMinutes: number;  // 기한을 넘긴 분(아직 처리 안 됐으면 지금까지)
+}
+export interface PenaltyDetailEntry {
+  id: number;
+  max: number;
+  reason?: string;
+  until?: string;
+  auto: boolean;        // 무인 모드가 자동으로 부여한 것인지(false면 관리자가 직접 등록)
+  events: PenaltyDetailEvent[];
+}
+
+export async function fetchPenaltyDetail(scriptUrl: string, name: string): Promise<PenaltyDetailEntry[]> {
+  const data = await apiGet(scriptUrl, "getPenaltyDetail", { name });
+  return (data.items || []) as PenaltyDetailEntry[];
 }
 
 // 이름 가운데를 가린다 (고성민 → 고*민, 김민 → 김*)

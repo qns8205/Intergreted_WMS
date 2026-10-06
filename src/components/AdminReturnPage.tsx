@@ -168,14 +168,17 @@ interface ReturnedPrintItem {
   borrowerName?: string;
 }
 
-async function printReturnedLocationLabel(items: ReturnedPrintItem[]): Promise<{ pages: number; itemTypes: number }> {
+/** 서버가 받는 위치표 제목. 기본은 방금 반납한 물품의 "반납 위치표"다. */
+type LocationLabelTitle = "반납 위치표" | "한도 제외 물품";
+
+async function printReturnedLocationLabel(items: ReturnedPrintItem[], title: LocationLabelTitle = "반납 위치표"): Promise<{ pages: number; itemTypes: number }> {
   const response = await fetch("/api/label-printer/print-returned-items", {
     method: "POST",
     headers: adminHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, title }),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.success) throw new Error(data.error || "반납 위치표 출력에 실패했습니다.");
+  if (!response.ok || !data.success) throw new Error(data.error || "위치표 출력에 실패했습니다.");
   return { pages: Number(data.pages) || 1, itemTypes: Number(data.itemTypes) || items.length };
 }
 
@@ -291,6 +294,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const [scanMeCopies, setScanMeCopies] = useState(1);
   const [scanMePreview, setScanMePreview] = useState<string | null>(null);
   const [printingReturned, setPrintingReturned] = useState(false);
+  const [printingExempt, setPrintingExempt] = useState(false);
   const [lastReturnedPrint, setLastReturnedPrint] = useState<ReturnedPrintItem[]>(() => {
     try {
       const saved = sessionStorage.getItem("wms_last_return_print");
@@ -1229,6 +1233,29 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       .trim();
   }
 
+  // 한도 제외 항목은 신청 묶음에서 빠져 신청번호가 없으므로(= 신청 단위 인쇄 불가),
+  // 이 사람의 한도 제외 물품 목록을 그대로 보내 위치표로 뽑는다.
+  async function printExemptLabels(items: UnreturnedItem[]) {
+    if (printingExempt || !items.length) return;
+    setPrintingExempt(true);
+    try {
+      const result = await printReturnedLocationLabel(items.map((it) => ({
+        id: it.itemId || "",
+        name: pureItemName(it.itemLabel),
+        quantity: it.quantity || 1,
+        location: it.location || "위치 미등록",
+        variantName: it.variantName || "",
+        employeeId: it.employeeId || "",
+        borrowerName: it.borrowerName,
+      })), "한도 제외 물품");
+      showToast(`한도 제외 물품표 ${result.pages}장을 출력했습니다.`, "ok");
+    } catch (error: any) {
+      showToast(error?.message || "라벨 출력에 실패했습니다.", "error");
+    } finally {
+      setPrintingExempt(false);
+    }
+  }
+
   function changeQty(key: string, delta: number) {
     setCart((prev) =>
       prev
@@ -2124,6 +2151,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                   style={{ height: "25px", padding: "0 8px", borderRadius: "7px", border: `1px solid ${C.border}`, background: C.card, color: C.text, display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10.5px", fontWeight: 800, cursor: printingRequestNo !== null ? "wait" : "pointer", opacity: printingRequestNo !== null && printingRequestNo !== grp.requestNo ? 0.55 : 1, flexShrink: 0 }}
                                 >
                                   <Printer size={12} /> {printingRequestNo === grp.requestNo ? "출력 중" : "인쇄"}
+                                </button>
+                              ) : null}
+                              {grp.isExemptSection ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); printExemptLabels(grp.items); }}
+                                  disabled={printingExempt}
+                                  title="이 사람의 한도 제외 물품 위치표를 라벨 프린터로 출력"
+                                  style={{ height: "25px", padding: "0 8px", borderRadius: "7px", border: `1px solid ${C.warn}99`, background: C.card, color: C.warn, display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10.5px", fontWeight: 800, cursor: printingExempt ? "wait" : "pointer", opacity: printingExempt ? 0.55 : 1, flexShrink: 0 }}
+                                >
+                                  <Printer size={12} /> {printingExempt ? "출력 중" : "인쇄"}
                                 </button>
                               ) : null}
                               <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{countDistinctItemTypes(grp.items)}종 · {grpQty}개</span>

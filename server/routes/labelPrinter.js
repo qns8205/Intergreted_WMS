@@ -28,10 +28,10 @@ labelPrinterRouter.post("/label-printer/print-lookup-qr", requireAdmin, async (r
 
 labelPrinterRouter.post("/label-printer/print-returned-items", requireAdmin, async (req, res) => {
   try {
-    const result = await printReturnedItems(req.body?.items);
+    const result = await printReturnedItems(req.body?.items, req.body?.title);
     res.json({ success: true, ...result });
   } catch (error) {
-    res.status(400).json({ success: false, error: error.message || "반납 위치표 출력에 실패했습니다." });
+    res.status(400).json({ success: false, error: error.message || "위치표 출력에 실패했습니다." });
   }
 });
 
