@@ -844,7 +844,7 @@ export default function DefectLogsPage({
                 <input
                   type="text"
                   placeholder={photoInput && photoInput.startsWith("data:") ? "파일이 업로드되었습니다." : "인터넷 상의 이미지 고유 주소(URL) 직접 입력도 가능합니다"}
-                  value={photoInput && photoInput.startsWith("data:") ? "파일 업로드 완료 (저장 시 구글 드라이브에 원본 저장됨)" : photoInput}
+                  value={photoInput && photoInput.startsWith("data:") ? "파일 업로드 완료 (저장 시 서버에 원본 저장됨)" : photoInput}
                   disabled={photoInput && photoInput.startsWith("data:") ? true : false}
                   onChange={(e) => setPhotoInput(e.target.value.trim())}
                   style={{
@@ -924,7 +924,7 @@ export default function DefectLogsPage({
                 >
                   <Upload size={18} style={{ color: isDragging ? ACCENT : TEXT_DIM }} />
                   <span style={{ fontSize: "11.5px", color: TEXT_MAIN, fontWeight: 500 }}>
-                    {isDragging ? "여기에 이미지를 놓으세요" : "클릭하거나 이미지를 끌어다 놓으세요 (구글 드라이브 자동 저장)"}
+                    {isDragging ? "여기에 이미지를 놓으세요" : "클릭하거나 이미지를 끌어다 놓으세요 (서버에 자동 저장)"}
                   </span>
                   <span style={{ fontSize: "10px", color: TEXT_DIM }}>
                     무손실 원본 화질의 이미지 파일이 안전하게 보관됩니다

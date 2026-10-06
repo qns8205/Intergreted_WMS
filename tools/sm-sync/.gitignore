@@ -1,9 +1,0 @@
-.browser-profile/
-last-report.json
-sm-sample.json
-node_modules/
-.watch-state.json
-watch.log
-agent.log
-dist-agent/
-sm-sync-agent.zip
