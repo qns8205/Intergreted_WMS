@@ -312,6 +312,25 @@ CREATE TABLE IF NOT EXISTS penalties (
   expires_at TEXT
 );
 
+-- 페널티가 어느 대여·반납 기록의 어느 물품 때문에 생겼는지(관리자가 등록할 때 고른다).
+-- 물품·신청 정보는 연결한 시점의 값을 두고, 대여·반납 상태는 원본 줄(sheet_type/row_id)에서 읽는다.
+CREATE TABLE IF NOT EXISTS penalty_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  penalty_id INTEGER NOT NULL,
+  sheet_type TEXT NOT NULL,      -- scenario(sid_rentals) | general(general_rentals)
+  row_id INTEGER NOT NULL,
+  cause TEXT NOT NULL,           -- rental(대여 때문) | return(반납 때문)
+  item_id TEXT,
+  item_name TEXT,
+  variant_name TEXT,
+  qty REAL,
+  request_no INTEGER,
+  applied_at TEXT,
+  created_at TEXT,
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_penalty_links_penalty ON penalty_links(penalty_id);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT

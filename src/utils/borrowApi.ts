@@ -1928,6 +1928,18 @@ export interface PenaltyDetailEvent {
   occurredAt: string;   // 페널티가 생성된 시각
   overMinutes: number;  // 기한을 넘긴 분(아직 처리 안 됐으면 지금까지)
 }
+/** 관리자가 페널티의 원인으로 연결한 대여·반납 기록 한 줄(= 물품 하나). 사번·내부 행 번호는 없다. */
+export interface PenaltyDetailLink {
+  cause: "rental" | "return";   // 대여 때문 / 반납 때문
+  itemName: string;
+  variantName: string;
+  qty: number;
+  requestCode: string;
+  appliedAt: string;
+  pickedUpAt: string;
+  returnedAt: string;
+  state: string;                // 대여 중 / 반납 완료 / 파손 신고 반납 / 기록 없음 …
+}
 export interface PenaltyDetailEntry {
   id: number;
   max: number;
@@ -1935,6 +1947,7 @@ export interface PenaltyDetailEntry {
   until?: string;
   auto: boolean;        // 무인 모드가 자동으로 부여한 것인지(false면 관리자가 직접 등록)
   events: PenaltyDetailEvent[];
+  links: PenaltyDetailLink[];
 }
 
 export async function fetchPenaltyDetail(scriptUrl: string, name: string): Promise<PenaltyDetailEntry[]> {

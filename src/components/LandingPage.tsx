@@ -699,6 +699,33 @@ export default function LandingPage({
                           <span style={{ marginLeft: "auto", fontSize: "11.5px", fontWeight: 800, color: red }}>{d.max}종류 · {d.until ? `${d.until.slice(0, 10)} 해제` : "해제 시까지"}</span>
                         </div>
                         <div style={{ fontSize: "13px", lineHeight: 1.7, fontWeight: 700 }}>{d.reason || "사유 없음"}</div>
+                        {d.links?.length ? (
+                          <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: `1px dashed ${line}`, display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <div style={{ fontSize: "11.5px", fontWeight: 800, color: dim }}>원인이 된 대여·반납</div>
+                            {d.links.map((l, n) => {
+                              const color = l.cause === "return" ? "#d97706" : "#2563eb";
+                              return (
+                                <div key={n} style={{ display: "flex", alignItems: "flex-start", gap: "8px", fontSize: "12.5px", lineHeight: 1.6 }}>
+                                  <span style={{ flexShrink: 0, marginTop: "2px", fontSize: "10.5px", fontWeight: 800, padding: "1px 8px", borderRadius: "999px", color: "#fff", background: color }}>
+                                    {l.cause === "return" ? "반납 때문" : "대여 때문"}
+                                  </span>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 800, overflowWrap: "anywhere" }}>
+                                      {l.itemName}{l.variantName ? ` · ${l.variantName}` : ""} ×{l.qty}
+                                    </div>
+                                    <div style={{ fontSize: "11.5px", color: dim }}>
+                                      {[
+                                        l.requestCode ? `신청 ${l.requestCode}` : "",
+                                        `대여 ${shortTime(l.appliedAt)}${l.returnedAt ? ` → 반납 ${shortTime(l.returnedAt)}` : ""}`,
+                                        l.state,
+                                      ].filter(Boolean).join(" · ")}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
                         {d.events.map((e, n) => {
                           const pickup = e.eventType === "pickup_unconfirmed_4h";
                           return (
