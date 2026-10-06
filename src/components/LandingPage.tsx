@@ -1,6 +1,22 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { ClipboardList, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
-import { fetchNotices, fetchPenalties, fetchActiveItemTypeCount, NoticeData, PenaltyEntry, BorrowLock, ActiveItemTypeInfo } from "../utils/borrowApi";
+import { fetchNotices, fetchPenalties, fetchPenaltyDetail, fetchActiveItemTypeCount, NoticeData, PenaltyEntry, PenaltyDetailEntry, BorrowLock, ActiveItemTypeInfo } from "../utils/borrowApi";
+
+// "2026-10-03 13:01:40" → "10/03 13:01"
+function shortTime(value: string): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(value || "");
+  return m ? `${m[1]}/${m[2]} ${m[3]}:${m[4]}` : value || "-";
+}
+
+// 분 → "1시간 20분" / "35분" / "2일 3시간"
+function overText(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m}분`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return m % 60 ? `${h}시간 ${m % 60}분` : `${h}시간`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}일 ${h % 24}시간` : `${d}일`;
+}
 
 // 고정 안내: 앞으로 적용될 페널티 기준 (코드에 고정한다 — 운영 중 바뀌면 이 배열만 수정)
 const PENALTY_RULES: { label: string; limit: string }[] = [
@@ -117,6 +133,27 @@ export default function LandingPage({
   const penalties = usePenalties(scriptUrl, connected);
   const [itemTypeInfo, setItemTypeInfo] = useState<ActiveItemTypeInfo | null>(null);
   const [openNotice, setOpenNotice] = useState<NoticeData | null>(null);
+  // 페널티를 눌렀을 때 뜨는 상세. 열 때마다 새로 불러온다(그사이 반납되면 결과가 달라진다).
+  const [openPenalty, setOpenPenalty] = useState<PenaltyEntry | null>(null);
+  const [penaltyDetail, setPenaltyDetail] = useState<PenaltyDetailEntry[] | null>(null);
+  const [penaltyDetailError, setPenaltyDetailError] = useState("");
+
+  const penaltyReq = useRef(0);
+
+  function showPenalty(p: PenaltyEntry) {
+    const req = ++penaltyReq.current;
+    setOpenPenalty(p);
+    setPenaltyDetail(null);
+    setPenaltyDetailError("");
+    fetchPenaltyDetail(scriptUrl, p.name)
+      .then((list) => { if (req === penaltyReq.current) setPenaltyDetail(list); })
+      .catch((err) => { if (req === penaltyReq.current) setPenaltyDetailError(err?.message || "상세를 불러오지 못했습니다."); });
+  }
+
+  function closePenalty() {
+    penaltyReq.current++;
+    setOpenPenalty(null);
+  }
 
   // 로그인한 사람에게는 현재 빌린 종류를 뺀 실제 추가 대여 가능 수를 보여준다.
   // 로그인 전/관리자 랜딩에서는 빈 이름으로 조회해 현재 설정된 기본 상한만 표시한다.
@@ -308,10 +345,23 @@ export default function LandingPage({
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
                 {penalties.map((p, i) => (
-                  <h3
+                  <button
                     key={`${p.name}-${i}`}
+                    type="button"
+                    onClick={() => showPenalty(p)}
+                    title="눌러서 사유와 이유 보기"
                     style={{
                       margin: 0,
+                      padding: "6px 8px",
+                      border: "none",
+                      borderRadius: "8px",
+                      background: "transparent",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: "8px",
+                      fontFamily: "inherit",
                       fontSize: isMobile ? "12.5px" : "13.5px",
                       fontWeight: 600,
                       lineHeight: 1.5,
@@ -319,9 +369,12 @@ export default function LandingPage({
                       color: isLightMode ? "#6b7280" : "#94a3b8",
                     }}
                   >
-                    <span style={{ fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5" }}>{p.name}</span>
-                    {" - "}{p.max}종류{" - "}{p.reason || "사유 없음"}{" - "}{p.until ? p.until.slice(0, 10) : "해제 시까지"}
-                  </h3>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5" }}>{p.name}</span>
+                      {" - "}{p.max}종류{" - "}{p.reason || "사유 없음"}{" - "}{p.until ? p.until.slice(0, 10) : "해제 시까지"}
+                    </span>
+                    <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 800, color: isLightMode ? "#c2410c" : "#fdba74", whiteSpace: "nowrap" }}>자세히 ›</span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -591,6 +644,92 @@ export default function LandingPage({
             </div>
           </div>
         ) : null}
+
+        {/* 페널티 상세 모달: 사유와 "왜 이 제한이 걸렸는지" */}
+        {openPenalty ? (() => {
+          const dim = isLightMode ? "#6b7280" : "#94a3b8";
+          const red = isLightMode ? "#b91c1c" : "#fca5a5";
+          const line = isLightMode ? "#e2e8f0" : "#26324a";
+          const stacked = (penaltyDetail || []).filter((d) => d.auto).length;
+          return (
+            <div
+              onClick={closePenalty}
+              style={{ position: "fixed", inset: 0, zIndex: 4000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  width: "min(540px, 100%)", maxHeight: "82vh", overflowY: "auto",
+                  background: isLightMode ? "#ffffff" : "#151d30",
+                  border: `1px solid ${line}`,
+                  borderRadius: "16px", padding: "22px", textAlign: "left",
+                  color: isLightMode ? "#111827" : "#f1f5f9",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", marginBottom: "14px" }}>
+                  <ShieldAlert size={18} style={{ color: red, flexShrink: 0, marginTop: "2px" }} />
+                  <span style={{ flex: 1, fontSize: "16px", fontWeight: 800, lineHeight: 1.4 }}>{openPenalty.name} 님의 대여 제한</span>
+                  <button onClick={closePenalty} style={{ background: "transparent", border: "none", cursor: "pointer", color: isLightMode ? "#94a3b8" : "#64748b", padding: 0 }}>✕</button>
+                </div>
+
+                <div style={{ padding: "12px 14px", borderRadius: "12px", background: isLightMode ? "#fff7ed" : "#1f1611", border: `1px solid ${isLightMode ? "#fed7aa" : "#7c2d12"}`, fontSize: "13px", lineHeight: 1.7, marginBottom: "16px" }}>
+                  지금 한 번에 빌릴 수 있는 물품은 <b style={{ color: red }}>{openPenalty.max}종류</b>까지입니다.<br />
+                  {openPenalty.until
+                    ? <>해제 예정일은 <b>{openPenalty.until.slice(0, 10)}</b>입니다. 그 날짜가 되면 자동으로 풀립니다.</>
+                    : <>기한이 정해져 있지 않아, 관리자가 해제할 때까지 적용됩니다.</>}
+                </div>
+
+                <div style={{ fontSize: "12px", fontWeight: 800, color: dim, marginBottom: "8px" }}>왜 이렇게 됐나요?</div>
+
+                {penaltyDetailError ? (
+                  <div style={{ fontSize: "12.5px", color: red, lineHeight: 1.6 }}>상세를 불러오지 못했습니다. 아래 사유만 확인해 주세요.<br />{openPenalty.reason || "사유 없음"}</div>
+                ) : penaltyDetail === null ? (
+                  <div style={{ fontSize: "12.5px", color: dim }}>불러오는 중…</div>
+                ) : penaltyDetail.length === 0 ? (
+                  <div style={{ fontSize: "13px", lineHeight: 1.7 }}>{openPenalty.reason || "사유 없음"}</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                    {penaltyDetail.map((d, idx) => (
+                      <div key={d.id} style={{ padding: "12px 14px", borderRadius: "12px", border: `1px solid ${line}`, background: isLightMode ? "#f8fafc" : "#0f172a" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+                          <span style={{ fontSize: "10.5px", fontWeight: 800, padding: "2px 8px", borderRadius: "999px", color: d.auto ? "#7c3aed" : "#0369a1", border: `1px solid ${d.auto ? "#7c3aed66" : "#0369a166"}` }}>
+                            {d.auto ? "자동 부여 (무인 모드)" : "관리자가 직접 등록"}
+                          </span>
+                          {idx === 0 && penaltyDetail.length > 1 ? <span style={{ fontSize: "10.5px", fontWeight: 800, color: red }}>가장 최근</span> : null}
+                          <span style={{ marginLeft: "auto", fontSize: "11.5px", fontWeight: 800, color: red }}>{d.max}종류 · {d.until ? `${d.until.slice(0, 10)} 해제` : "해제 시까지"}</span>
+                        </div>
+                        <div style={{ fontSize: "13px", lineHeight: 1.7, fontWeight: 700 }}>{d.reason || "사유 없음"}</div>
+                        {d.events.map((e, n) => {
+                          const pickup = e.eventType === "pickup_unconfirmed_4h";
+                          return (
+                            <div key={n} style={{ marginTop: "8px", paddingTop: "8px", borderTop: `1px dashed ${line}`, fontSize: "12.5px", lineHeight: 1.7, color: isLightMode ? "#374151" : "#cbd5e1" }}>
+                              {pickup ? "대여를 신청한 뒤 " : "대여 확인(수령) 뒤 "}
+                              <b>{e.hours}시간</b> 안에 {pickup ? "대여 확인을" : "반납을"} 처리해야 하는데,
+                              {" "}기한({shortTime(e.deadlineAt)})까지 처리되지 않았습니다
+                              {e.overMinutes > 0 ? <> — <b style={{ color: red }}>{overText(e.overMinutes)}</b> 초과</> : null}.
+                              <div style={{ fontSize: "11.5px", color: dim, marginTop: "2px" }}>
+                                {e.requestCode ? `신청 ${e.requestCode} · ` : ""}{pickup ? "신청" : "대여 확인"} {shortTime(e.sourceAt)} → 페널티 부여 {shortTime(e.occurredAt)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                    {stacked > 1 ? (
+                      <div style={{ fontSize: "12px", color: dim, lineHeight: 1.7 }}>
+                        자동 페널티가 {stacked}건 쌓여 있습니다. 한 건이 생길 때마다 대여 가능 종류가 2종씩 줄고, 가장 최근 건의 값이 지금 적용되는 제한입니다.
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+
+                <div style={{ marginTop: "16px", fontSize: "11.5px", color: dim, lineHeight: 1.6 }}>
+                  사유에 이의가 있거나 일찍 풀어야 하면 관리자에게 문의해 주세요. 반납은 제한 중에도 그대로 할 수 있습니다.
+                </div>
+              </div>
+            </div>
+          );
+        })() : null}
       </div>
 
       {!isAdmin && cardsReady ? (

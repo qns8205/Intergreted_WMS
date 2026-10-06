@@ -18,7 +18,7 @@ import * as smObjectsSession from "../lib/smObjectsSession.js";
 import * as smLocationSync from "../lib/smLocationSync.js";
 import { nudge as smSyncNudge, syncChangesNow as runSmChangesNow, syncAllNow as runSmFullReconcileNow, status as smSyncStatus } from "../lib/smSync.js";
 import { adminFromRequest } from "../lib/auth.js";
-import { unattendedEnabled } from "../lib/unattendedPenalties.js";
+import { unattendedEnabled, penaltyDetails } from "../lib/unattendedPenalties.js";
 import { getPickupTimeoutMinutes } from "../lib/pickupTimeout.js";
 import { rentalInsights } from "../lib/rentalInsights.js";
 import { applyWarehouseRent, applyWarehouseRentBulk, warehouseLoanGroups, warehouseIsConsumable } from "../lib/warehouseRentals.js";
@@ -715,6 +715,39 @@ function getPenalties() {
     return true;
   });
   return { items: latest.map((r) => ({ name: r.name, max: r.max_types, reason: r.reason, until: r.expires_at })) };
+}
+
+/**
+ * 랜딩에서 페널티를 눌렀을 때 보여줄 "왜 이렇게 됐는지".
+ * 한 사람에게 유효한 페널티를 최신순으로 모두 돌려준다 — 무인 모드 위반이 쌓이면 대여 가능 종류가
+ * 2종씩 줄기 때문에, 지금 숫자가 어떻게 나왔는지는 쌓인 내역을 봐야 설명된다.
+ *
+ * 이 응답은 로그인 없이 읽힌다. 물품명·사번 같은 대여 기록(penaltyDetails의 items, employeeId)은
+ * 관리자 전용이라 여기서 빼고, 어떤 규칙의 기한을 얼마나 넘겼는지만 담는다.
+ */
+function getPenaltyDetail({ query }) {
+  const target = String(query.name || "").trim().toLowerCase();
+  if (!target) return { items: [] };
+  const rows = all(
+    "SELECT * FROM penalties WHERE LOWER(TRIM(name)) = ? AND (expires_at IS NULL OR expires_at = '' OR expires_at > ?) ORDER BY id DESC",
+    [target, nowIso()],
+  );
+  return {
+    items: rows.map((r) => {
+      const events = (penaltyDetails(r.id)?.events || []).map((e) => ({
+        eventType: e.eventType,
+        label: e.label,
+        hours: e.hours,
+        requestCode: e.requestCode,
+        sourceAt: e.sourceAt,
+        deadlineAt: e.deadlineAt,
+        occurredAt: e.occurredAt,
+        // 신청 하나에 여러 물품이 묶여 있으면 가장 많이 넘긴 줄 기준이다.
+        overMinutes: Math.max(0, ...e.items.map((i) => (i.missed ? i.overMinutes : 0))),
+      }));
+      return { id: r.id, max: r.max_types, reason: r.reason, until: r.expires_at, auto: events.length > 0, events };
+    }),
+  };
 }
 
 function isSeatExempt(floor, unit) {
@@ -3335,7 +3368,7 @@ const GET_ACTIONS = {
   getAll, getBorrowAppInfo, getObjectItems, getWarehouseInventoryOnly, getScenarioDefinition,
   getUnreturnedItems, getItemBorrowers, getMyBorrowedItems, isConfigDsRegistered, getRegisteredUser, searchRegisteredUsers, getBorrowerSeatRecommendations, getWarehouseBorrowedItems,
   getScenarioObjectsForAdmin, getScenarioAllLogs, getBatchDetail, getWarehouseLogs,
-  getPenalties, getActiveItemTypeCount, getStockChangeHistory, getStockAuditHistory, getStockFormulaStatus, getWarehouseRecentChanges, getWarehouseRackSections, getWarehouseRackLevels, getWarehouseRackLevelPhotos,
+  getPenalties, getPenaltyDetail, getActiveItemTypeCount, getStockChangeHistory, getStockAuditHistory, getStockFormulaStatus, getWarehouseRecentChanges, getWarehouseRackSections, getWarehouseRackLevels, getWarehouseRackLevelPhotos,
   getSeatMap, getSeatOccupancy, getNotices, getNotice, getBorrowLock,
   getScenarioChanges, getItemChangeHistory, getScenarioChangeSummary, getReturnPhotos, getUnattendedReturnPhotos, getPickupPhotos, getItemPhotos, getItemPhotosBulk,
   getTableclothItems, getTableclothUnreturned, getTableclothRentalLogs,
