@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   Search, RotateCcw, Package, MapPin, User, Check, Undo2, RefreshCw,
-  TrendingUp, Clock, CheckCircle2, Repeat, X, UserCheck,
+  TrendingUp, Clock, CheckCircle2, Repeat, X, UserCheck, ShieldAlert,
 } from "lucide-react";
 import {
   ScenarioLogEntry, ReturnRequest, padSlot,
@@ -13,6 +13,7 @@ import {
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import ScrollToTopButton from "./ScrollToTopButton";
+import { PenaltyGrantModal, PenaltyLink } from "./PenaltyForm";
 import RentalInsightsPanel from "./RentalInsightsPanel";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { paginateLogGroups } from "../utils/logPages";
@@ -92,6 +93,28 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [sel, setSel] = useState<Record<string, number>>({});
   // 대여 중인 한 건을 다른 물품으로 교체 (기존 반납 + 새 물품 대여를 한 번에)
   const [swapTarget, setSwapTarget] = useState<ScenarioLogEntry | null>(null);
+  // 로그의 한 줄에서 바로 페널티를 준다. 그 줄이 원인 기록으로 미리 연결된다.
+  const [penaltyTarget, setPenaltyTarget] = useState<{ name: string; link: PenaltyLink } | null>(null);
+  const openPenaltyFor = (it: ScenarioLogEntry) => {
+    const returned = !!it.returned;
+    setPenaltyTarget({
+      name: it.borrowerName,
+      link: {
+        sheetType: it.sheetType,
+        rowId: it.rowIndex,
+        itemName: it.itemName || String(it.itemLabel || "").replace(/^\[[^\]]*\]\s*/, "").replace(/\s*[x×]\s*\d+\s*$/i, "").trim() || "물품",
+        variantName: it.variantName || "",
+        qty: it.quantity || 1,
+        requestCode: "",
+        appliedAt: it.borrowDateTime || it.borrowDate || "",
+        pickedUpAt: "",
+        returnedAt: returned ? it.returnDate || "" : "",
+        state: returned ? "반납 완료" : "대여 중",
+        // 반납된 줄이면 반납 때문, 아직 안 돌아온 줄이면 대여 때문이 기본값이다(모달에서 바꿀 수 있다).
+        cause: returned ? "return" : "rental",
+      },
+    });
+  };
   const [swapItemId, setSwapItemId] = useState("");
   const [swapQty, setSwapQty] = useState(1);
   const [swapSearch, setSwapSearch] = useState("");
@@ -843,6 +866,17 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                           {it.itemKind ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "6px", padding: "2px 7px" }}>{it.itemKind}</span> : null}
                         </div>
                       </div>
+                      {isAdmin ? (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openPenaltyFor(it); }}
+                          title="이 기록 때문에 페널티 부여"
+                          aria-label={`${it.borrowerName} ${it.itemName || it.itemLabel} 페널티 부여`}
+                          style={{ display: "inline-flex", alignItems: "center", gap: "3px", flexShrink: 0, padding: "4px 8px", borderRadius: "7px", border: `1px solid ${C.warn}66`, background: "transparent", color: C.warn, fontSize: "11px", fontWeight: 800, cursor: "pointer" }}
+                        >
+                          <ShieldAlert size={12} /> 페널티
+                        </button>
+                      ) : null}
                       <span style={{ fontSize: "12px", color: C.label, fontWeight: 600, flexShrink: 0 }}>x{it.quantity}</span>
                     </div>
                   );
@@ -913,6 +947,16 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       ) : null}
 
       {/* 물품 교체 모달 */}
+      {penaltyTarget ? (
+        <PenaltyGrantModal
+          isLightMode={isLightMode}
+          borrowerName={penaltyTarget.name}
+          link={penaltyTarget.link}
+          onClose={() => setPenaltyTarget(null)}
+          showToast={showToast}
+        />
+      ) : null}
+
       {swapTarget ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div style={{ width: "min(460px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "22px" }}>
