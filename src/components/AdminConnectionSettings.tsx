@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { X, Users, ShieldAlert, FileSpreadsheet, Trash2, Plus, Upload, Download, ScrollText, Search, ChevronLeft, ChevronRight, UserCheck, Check } from "lucide-react";
+import { X, Users, ShieldAlert, FileSpreadsheet, Trash2, Plus, Upload, Download, ScrollText, Search, ChevronLeft, ChevronRight, UserCheck, Check, Pencil } from "lucide-react";
 import { fetchScenarioObjectsForAdmin, ScenarioObjectAdmin } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
 import { adminHeaders as tokenHeaders } from "../utils/adminAuth";
+import { PenaltyForm, EMPTY_PENALTY, penaltyApi, penaltyPayload, PenaltyLink, CAUSE_LABEL, CAUSE_COLOR, rentalMeta, rentalTitle, linkKey } from "./PenaltyForm";
 
 // 프론트엔드는 항상 로컬 API 서버 하나만 보므로 scriptUrl은 고정값이다(App.tsx도 동일하게 고정).
 const GAS_URL = "/api/gas";
@@ -63,24 +64,6 @@ interface Penalty {
   link_count?: number;
 }
 
-/** 페널티의 원인으로 연결하는 대여·반납 기록 한 줄(= 물품 하나). cause가 있으면 연결된 것이다. */
-type LinkCause = "rental" | "return";
-interface PenaltyRentalRow {
-  sheetType: "scenario" | "general";
-  rowId: number;
-  itemName: string;
-  variantName: string;
-  qty: number;
-  requestCode: string;
-  appliedAt: string;
-  pickedUpAt: string;
-  returnedAt: string;
-  state: string;
-}
-interface PenaltyLink extends PenaltyRentalRow { cause: LinkCause }
-const CAUSE_LABEL: Record<LinkCause, string> = { rental: "대여 때문", return: "반납 때문" };
-const CAUSE_COLOR: Record<LinkCause, string> = { rental: "#2563eb", return: "#d97706" };
-
 /** 무인 모드 자동 페널티가 어떤 대여 때문에 생겼는지(서버 penaltyDetails). */
 interface PenaltyDetailItem {
   name: string; qty: number; appliedAt: string; pickedUpAt: string; returnedAt: string;
@@ -99,111 +82,6 @@ const overText = (minutes: number) => {
   if (minutes < 1440) return `${Math.floor(minutes / 60)}시간${minutes % 60 ? ` ${minutes % 60}분` : ""}`;
   return `${Math.floor(minutes / 1440)}일${Math.floor((minutes % 1440) / 60) ? ` ${Math.floor((minutes % 1440) / 60)}시간` : ""}`;
 };
-
-/** 연결된 기록 한 줄의 설명: "신청 261004-001 · 대여 10/04 09:00 → 반납 10/05 12:00 · 반납 완료" */
-const rentalMeta = (r: PenaltyRentalRow) =>
-  [r.requestCode ? `신청 ${r.requestCode}` : "", `대여 ${shortTime(r.appliedAt) || "-"}${r.returnedAt ? ` → 반납 ${shortTime(r.returnedAt)}` : ""}`, r.state]
-    .filter(Boolean).join(" · ");
-const rentalTitle = (r: PenaltyRentalRow) => `${r.itemName}${r.variantName ? ` · ${r.variantName}` : ""} ×${r.qty}`;
-const linkKey = (r: { sheetType: string; rowId: number }) => `${r.sheetType}:${r.rowId}`;
-
-interface PickerColors { text: string; dim: string; border: string; panel: string; input: string; accent: string }
-
-/**
- * 페널티의 원인이 된 대여·반납 기록을 고른다. 이름(또는 사번)으로 그 사람의 기록 줄을 불러오고,
- * 줄마다 "대여 때문"/"반납 때문"을 누르면 연결된다(같은 버튼을 다시 누르면 해제).
- * 이미 연결된 줄은 불러오기 전에도 맨 위에 보인다.
- */
-function PenaltyLinkPicker({ name, value, onChange, colors, load }: {
-  name: string;
-  value: PenaltyLink[];
-  onChange: (next: PenaltyLink[]) => void;
-  colors: PickerColors;
-  load: (name: string) => Promise<PenaltyRentalRow[]>;
-}) {
-  const [candidates, setCandidates] = useState<PenaltyRentalRow[]>([]);
-  const [loadedFor, setLoadedFor] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  async function fetchRows() {
-    const key = name.trim();
-    if (!key) return;
-    setLoading(true);
-    setError("");
-    try {
-      setCandidates(await load(key));
-      setLoadedFor(key);
-    } catch (err: any) {
-      setError(err.message || "기록을 불러오지 못했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const selected = new Map(value.map((l) => [linkKey(l), l]));
-  // 연결된 줄을 먼저, 그 아래에 아직 연결하지 않은 후보를 보여준다.
-  const rows: PenaltyRentalRow[] = [...value, ...candidates.filter((c) => !selected.has(linkKey(c)))];
-
-  function pick(row: PenaltyRentalRow, cause: LinkCause) {
-    const current = selected.get(linkKey(row));
-    if (current?.cause === cause) onChange(value.filter((l) => linkKey(l) !== linkKey(row)));
-    else if (current) onChange(value.map((l) => (linkKey(l) === linkKey(row) ? { ...l, cause } : l)));
-    else onChange([...value, { ...row, cause }]);
-  }
-
-  return (
-    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <strong style={{ fontSize: 12 }}>대여·반납 기록 연결 <span style={{ color: colors.dim, fontWeight: 500 }}>(선택)</span></strong>
-        <span style={{ fontSize: 11, color: colors.dim, flex: 1, minWidth: 140 }}>어느 기록의 어느 물품 때문인지 남기면 랜딩의 페널티 상세에도 표시됩니다.</span>
-        <button
-          type="button"
-          onClick={fetchRows}
-          disabled={!name.trim() || loading}
-          style={{ background: "transparent", color: colors.accent, border: `1px solid ${colors.accent}66`, borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontWeight: 800, cursor: !name.trim() || loading ? "not-allowed" : "pointer", opacity: !name.trim() ? 0.5 : 1 }}
-        >
-          {loading ? "불러오는 중…" : loadedFor ? "다시 불러오기" : "이 사람의 기록 불러오기"}
-        </button>
-      </div>
-      {!name.trim() ? <div style={{ fontSize: 11.5, color: colors.dim }}>위에서 이름(또는 4자리 사번)을 먼저 입력하세요.</div> : null}
-      {error ? <div style={{ fontSize: 11.5, color: "#ef4444" }}>{error}</div> : null}
-      {loadedFor && !candidates.length && !error ? <div style={{ fontSize: 11.5, color: colors.dim }}>'{loadedFor}'의 대여 기록이 없습니다.</div> : null}
-      {rows.length ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
-          {rows.map((row) => {
-            const current = selected.get(linkKey(row));
-            return (
-              <div key={linkKey(row)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 9px", borderRadius: 8, background: current ? `${CAUSE_COLOR[current.cause]}14` : colors.input, border: `1px solid ${current ? CAUSE_COLOR[current.cause] + "88" : colors.border}` }}>
-                <div style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.5 }}>
-                  <div style={{ fontWeight: 800, overflowWrap: "anywhere" }}>{rentalTitle(row)}</div>
-                  <div style={{ fontSize: 11, color: colors.dim }}>{rentalMeta(row)}</div>
-                </div>
-                <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-                  {(["rental", "return"] as LinkCause[]).map((cause) => {
-                    const on = current?.cause === cause;
-                    return (
-                      <button
-                        key={cause}
-                        type="button"
-                        onClick={() => pick(row, cause)}
-                        aria-pressed={on}
-                        style={{ padding: "5px 9px", borderRadius: 7, fontSize: 11.5, fontWeight: 800, cursor: "pointer", border: `1px solid ${CAUSE_COLOR[cause]}${on ? "" : "66"}`, background: on ? CAUSE_COLOR[cause] : "transparent", color: on ? "#fff" : CAUSE_COLOR[cause] }}
-                      >
-                        {CAUSE_LABEL[cause]}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-      {value.length ? <div style={{ fontSize: 11.5, color: colors.dim }}>{value.length}건 연결됨</div> : null}
-    </div>
-  );
-}
 
 interface SidSummary {
   sid: string;
@@ -275,12 +153,10 @@ export default function AdminConnectionSettings({
 
   // ── Penalties ──
   const [penalties, setPenalties] = useState<Penalty[]>([]);
-  const [newPenalty, setNewPenalty] = useState({ name: "", maxTypes: "", reason: "", expiresAt: "" });
-  // 새 페널티의 원인으로 연결할 대여·반납 기록
-  const [newPenaltyLinks, setNewPenaltyLinks] = useState<PenaltyLink[]>([]);
-  // 이미 등록된 페널티의 연결을 고치는 중인 것
-  const [editLinks, setEditLinks] = useState<{ id: number; links: PenaltyLink[] } | null>(null);
-  const [savingLinks, setSavingLinks] = useState(false);
+  // 등록 폼은 key를 바꿔 새로 그려 비운다. 수정 중인 페널티는 하나만 둔다.
+  const [penaltyFormKey, setPenaltyFormKey] = useState(0);
+  const [editingPenaltyId, setEditingPenaltyId] = useState<number | null>(null);
+  const [savingPenalty, setSavingPenalty] = useState(false);
   const [openPenaltyId, setOpenPenaltyId] = useState<number | null>(null);
   const [penaltyDetails, setPenaltyDetails] = useState<Record<number, PenaltyDetailState>>({});
 
@@ -433,45 +309,63 @@ export default function AdminConnectionSettings({
     }
   }
 
-  const loadPenaltyRentals = (name: string): Promise<PenaltyRentalRow[]> =>
-    api("GET", `/api/penalties/rentals?name=${encodeURIComponent(name)}`).then((data) => data.rows || []);
-
-  const toLinkPayload = (links: PenaltyLink[]) => links.map((l) => ({ sheetType: l.sheetType, rowId: l.rowId, cause: l.cause }));
-
-  async function saveEditedLinks() {
-    if (!editLinks) return;
-    setSavingLinks(true);
-    try {
-      const data = await api("PUT", `/api/penalties/${editLinks.id}/links`, { links: toLinkPayload(editLinks.links) });
-      setPenaltyDetails((current) => {
-        const prev = current[editLinks.id];
-        const events = prev && "events" in prev ? prev.events : [];
-        return { ...current, [editLinks.id]: { events, links: data.links || [] } };
-      });
-      setEditLinks(null);
-      refreshPenalties();
-      showToast("연결된 기록을 저장했습니다.", "ok");
-    } catch (err: any) {
-      showToast("연결 저장 실패: " + err.message, "error");
-    } finally {
-      setSavingLinks(false);
-    }
-  }
-
   function refreshPenalties() {
     api("GET", "/api/penalties")
       .then((data) => setPenalties(data.penalties || []))
       .catch((err) => showToast("페널티 목록 불러오기 실패: " + err.message, "error"));
   }
 
-  // 펼칠 때마다 다시 불러온다 — 그사이 반납되면 결과가 달라진다.
-  function togglePenalty(id: number) {
-    if (openPenaltyId === id) { setOpenPenaltyId(null); return; }
-    setOpenPenaltyId(id);
+  function loadPenaltyDetail(id: number) {
     setPenaltyDetails((current) => (current[id] && !("error" in current[id]) ? current : { ...current, [id]: { loading: true } }));
-    api("GET", `/api/penalties/${id}/details`)
+    return api("GET", `/api/penalties/${id}/details`)
       .then((data) => setPenaltyDetails((current) => ({ ...current, [id]: { events: data.events || [], links: data.links || [] } })))
       .catch((err) => setPenaltyDetails((current) => ({ ...current, [id]: { error: err.message } })));
+  }
+
+  // 펼칠 때마다 다시 불러온다 — 그사이 반납되면 결과가 달라진다.
+  function togglePenalty(id: number) {
+    if (openPenaltyId === id) { setOpenPenaltyId(null); setEditingPenaltyId(null); return; }
+    setOpenPenaltyId(id);
+    setEditingPenaltyId(null);
+    loadPenaltyDetail(id);
+  }
+
+  // 목록의 연필 버튼: 접혀 있어도 펼치면서 바로 수정 상태로 연다(연결된 기록을 알아야 해서 상세도 함께 불러온다).
+  function startEditPenalty(id: number) {
+    setOpenPenaltyId(id);
+    setEditingPenaltyId(id);
+    loadPenaltyDetail(id);
+  }
+
+  async function createPenalty(values: Parameters<typeof penaltyPayload>[0]) {
+    setSavingPenalty(true);
+    try {
+      await penaltyApi("POST", "/api/penalties", penaltyPayload(values));
+      setPenaltyFormKey((k) => k + 1);
+      refreshPenalties();
+      showToast("페널티가 등록되었습니다.", "ok");
+    } catch (err: any) {
+      showToast("페널티 등록 실패: " + err.message, "error");
+    } finally {
+      setSavingPenalty(false);
+    }
+  }
+
+  async function updatePenalty(id: number, values: Parameters<typeof penaltyPayload>[0]) {
+    setSavingPenalty(true);
+    try {
+      await penaltyApi("PUT", `/api/penalties/${id}`, penaltyPayload(values));
+      setEditingPenaltyId(null);
+      refreshPenalties();
+      // 자동 연결 내용과 연결된 기록 상태는 새로 읽는다.
+      setPenaltyDetails((current) => { const next = { ...current }; delete next[id]; return next; });
+      await loadPenaltyDetail(id);
+      showToast("페널티를 수정했습니다.", "ok");
+    } catch (err: any) {
+      showToast("페널티 수정 실패: " + err.message, "error");
+    } finally {
+      setSavingPenalty(false);
+    }
   }
 
   function renderPenaltyDetail(state: PenaltyDetailState | undefined) {
@@ -529,43 +423,22 @@ export default function AdminConnectionSettings({
     );
   }
 
-  /** 관리자가 원인으로 연결한 대여·반납 기록 + 수정 버튼. 상태는 지금 기록에서 읽은 값이다. */
+  /** 관리자가 원인으로 연결한 대여·반납 기록. 상태는 지금 기록에서 읽은 값이다. */
   function renderPenaltyLinks(p: Penalty, state: PenaltyDetailState | undefined) {
     if (!state || "loading" in state || "error" in state) return null;
-    const editing = editLinks?.id === p.id;
     return (
       <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px dashed ${BORDER_COLOR}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <strong style={{ fontSize: 12 }}>원인 기록 (대여·반납 로그 연결)</strong>
-          {!editing ? (
-            <button
-              type="button"
-              onClick={() => setEditLinks({ id: p.id, links: state.links })}
-              style={{ marginLeft: "auto", background: "transparent", color: ACCENT, border: `1px solid ${ACCENT}66`, borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}
-            >
-              {state.links.length ? "연결 수정" : "기록 연결"}
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => setEditingPenaltyId(p.id)}
+            style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 4, background: "transparent", color: ACCENT, border: `1px solid ${ACCENT}66`, borderRadius: 7, padding: "4px 10px", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}
+          >
+            <Pencil size={12} /> 내용 수정
+          </button>
         </div>
-        {editing && editLinks ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <PenaltyLinkPicker
-              name={p.name || ""}
-              value={editLinks.links}
-              onChange={(links) => setEditLinks({ id: p.id, links })}
-              colors={{ text: TEXT_MAIN, dim: TEXT_DIM, border: BORDER_COLOR, panel: PANEL_BG, input: INPUT_BG, accent: ACCENT }}
-              load={loadPenaltyRentals}
-            />
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={saveEditedLinks} disabled={savingLinks} style={{ background: ACCENT, color: "#fff", border: "none", borderRadius: 8, padding: "7px 16px", fontSize: 12, fontWeight: 800, cursor: savingLinks ? "wait" : "pointer", opacity: savingLinks ? 0.6 : 1 }}>
-                {savingLinks ? "저장 중…" : "저장"}
-              </button>
-              <button type="button" onClick={() => setEditLinks(null)} disabled={savingLinks} style={{ background: "transparent", color: TEXT_DIM, border: `1px solid ${BORDER_COLOR}`, borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                취소
-              </button>
-            </div>
-          </div>
-        ) : state.links.length ? (
+        {state.links.length ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {state.links.map((l) => (
               <div key={linkKey(l)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: PANEL_BG, border: `1px solid ${BORDER_COLOR}` }}>
@@ -723,28 +596,6 @@ export default function AdminConnectionSettings({
     }
   }
 
-  async function addPenalty() {
-    if (!newPenalty.name.trim()) {
-      showToast("이름을 입력해 주세요.", "warn");
-      return;
-    }
-    try {
-      await api("POST", "/api/penalties", {
-        name: newPenalty.name.trim(),
-        maxTypes: newPenalty.maxTypes ? Number(newPenalty.maxTypes) : null,
-        reason: newPenalty.reason.trim(),
-        expiresAt: newPenalty.expiresAt.trim(),
-        links: toLinkPayload(newPenaltyLinks),
-      });
-      setNewPenalty({ name: "", maxTypes: "", reason: "", expiresAt: "" });
-      setNewPenaltyLinks([]);
-      refreshPenalties();
-      showToast("페널티가 등록되었습니다.", "ok");
-    } catch (err: any) {
-      showToast("페널티 등록 실패: " + err.message, "error");
-    }
-  }
-
   async function deletePenalty(id: number) {
     if (!window.confirm("이 페널티를 삭제하시겠습니까?")) return;
     try {
@@ -815,6 +666,8 @@ export default function AdminConnectionSettings({
     { key: "import", label: "xlsx 입력/추출", icon: <FileSpreadsheet size={14} /> },
   ];
   const tabs = visibleTabs ? allTabs.filter((t) => visibleTabs.includes(t.key)) : allTabs;
+
+  const pickerColors = { text: TEXT_MAIN, dim: TEXT_DIM, border: BORDER_COLOR, panel: PANEL_BG, input: INPUT_BG, accent: ACCENT };
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -1027,25 +880,16 @@ export default function AdminConnectionSettings({
 
         {tab === "penalties" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              <input style={inputStyle} placeholder="이름" value={newPenalty.name} onChange={(e) => setNewPenalty({ ...newPenalty, name: e.target.value })} />
-              <input style={inputStyle} placeholder="최대 종류" type="number" value={newPenalty.maxTypes} onChange={(e) => setNewPenalty({ ...newPenalty, maxTypes: e.target.value })} />
-              <input style={inputStyle} placeholder="사유" value={newPenalty.reason} onChange={(e) => setNewPenalty({ ...newPenalty, reason: e.target.value })} />
-              <input style={inputStyle} placeholder="만료일 (YYYY-MM-DD)" value={newPenalty.expiresAt} onChange={(e) => setNewPenalty({ ...newPenalty, expiresAt: e.target.value })} />
-            </div>
-            <PenaltyLinkPicker
-              name={newPenalty.name}
-              value={newPenaltyLinks}
-              onChange={setNewPenaltyLinks}
-              colors={{ text: TEXT_MAIN, dim: TEXT_DIM, border: BORDER_COLOR, panel: PANEL_BG, input: INPUT_BG, accent: ACCENT }}
-              load={loadPenaltyRentals}
-            />
-            <button
-              onClick={addPenalty}
-              style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, background: ACCENT, color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-            >
-              <Plus size={14} /> 페널티 등록
-            </button>
+            {/* key가 바뀌면 폼을 새로 그려 입력을 비운다(이 프로젝트의 타입 설정은 함수 컴포넌트에 key를 직접 못 준다). */}
+            <React.Fragment key={penaltyFormKey}>
+              <PenaltyForm
+                mode="create"
+                initial={EMPTY_PENALTY}
+                colors={pickerColors}
+                submitting={savingPenalty}
+                onSubmit={createPenalty}
+              />
+            </React.Fragment>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {penalties.map((p) => {
                 const open = openPenaltyId === p.id;
@@ -1064,14 +908,38 @@ export default function AdminConnectionSettings({
                           {p.link_count ? <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, color: ACCENT, border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "1px 7px" }}>기록 {p.link_count}건 연결</span> : null}
                         </span>
                       </button>
+                      <button onClick={() => startEditPenalty(p.id)} aria-label={`${p.name || ""} 페널티 수정`} title="내용 수정" style={{ background: "transparent", border: "none", color: ACCENT, cursor: "pointer", flexShrink: 0, display: "flex" }}>
+                        <Pencil size={14} />
+                      </button>
                       <button onClick={() => deletePenalty(p.id)} aria-label={`${p.name || ""} 페널티 삭제`} style={{ background: "transparent", border: "none", color: "#ef4444", cursor: "pointer", flexShrink: 0 }}>
                         <Trash2 size={14} />
                       </button>
                     </div>
                     {open ? (
                       <div style={{ borderTop: `1px solid ${BORDER_COLOR}`, background: INPUT_BG, padding: "10px 12px 12px" }}>
-                        {renderPenaltyDetail(penaltyDetails[p.id])}
-                        {renderPenaltyLinks(p, penaltyDetails[p.id])}
+                        {editingPenaltyId === p.id && penaltyDetails[p.id] && "links" in penaltyDetails[p.id] ? (
+                          <React.Fragment key={`edit-${p.id}`}>
+                            <PenaltyForm
+                              mode="edit"
+                              initial={{
+                                name: p.name || "",
+                                maxTypes: p.max_types == null ? "" : String(p.max_types),
+                                reason: p.reason || "",
+                                expiresAt: p.expires_at || "",
+                                links: (penaltyDetails[p.id] as { links: PenaltyLink[] }).links,
+                              }}
+                              colors={pickerColors}
+                              submitting={savingPenalty}
+                              onSubmit={(values) => updatePenalty(p.id, values)}
+                              onCancel={() => setEditingPenaltyId(null)}
+                            />
+                          </React.Fragment>
+                        ) : (
+                          <>
+                            {renderPenaltyDetail(penaltyDetails[p.id])}
+                            {renderPenaltyLinks(p, penaltyDetails[p.id])}
+                          </>
+                        )}
                       </div>
                     ) : null}
                   </div>
