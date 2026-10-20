@@ -12,6 +12,7 @@ export default function UnattendedModeSettings({ onOpen, showToast, onModeChange
   const [registered, setRegistered] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<any[]>([]);
+  const [damageExemptions, setDamageExemptions] = useState<Record<number,{exempt:boolean;reason:string}>>({});
   const refresh = async () => {
     const token = localStorage.getItem(TOKEN_KEY) || "";
     const r = await fetch("/api/unattended/status", { headers: { "x-unattended-device": token }, cache: "no-store" });
@@ -44,17 +45,31 @@ export default function UnattendedModeSettings({ onOpen, showToast, onModeChange
   };
   const resolveDamage = async (id:number, action:"confirm"|"reject") => {
     setBusy(true);
-    try { const r=await fetch(`/api/unattended/damage-pending/${id}/resolve`,{method:"POST",headers:adminHeaders(),body:JSON.stringify({action})}); const d=await r.json(); if(!r.ok)throw new Error(d.error); await refreshPending(); if(action==="confirm")window.dispatchEvent(new Event("wms-notifications-changed")); showToast(action==="confirm"?"파손을 확인하고 불량 로그에 기록했습니다.":"파손 판정을 취소하고 대여 상태로 복구했습니다.","ok"); }
+    try { const r=await fetch(`/api/unattended/damage-pending/${id}/resolve`,{method:"POST",headers:adminHeaders(),body:JSON.stringify({action,penaltyExempt:damageExemptions[id]?.exempt || false,exemptionReason:damageExemptions[id]?.reason || ''})}); const d=await r.json(); if(!r.ok)throw new Error(d.error); await refreshPending(); if(action==="confirm")window.dispatchEvent(new Event("wms-notifications-changed")); showToast(action==="confirm"?"파손을 확인했습니다. 사전 미신고 수량은 면제하지 않으면 5종 차감 14일이 적용됩니다.":"파손 판정을 취소하고 대여 상태로 복구했습니다.","ok"); }
     catch(e:any){showToast(e.message||"처리에 실패했습니다.","error");} finally{setBusy(false);}
   };
   return <div style={{ background: "var(--panel-bg,#151d30)", border: "1px solid var(--panel-border,#26324a)", borderRadius: 14, padding: 20 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, fontSize: 15 }}><MonitorCheck size={18}/> 무인 모드</div>
-    <p style={{ fontSize: 12, color: "var(--text-dim,#94a3b8)", lineHeight: 1.65 }}>등록된 관리자 PC에서 사번으로 대여·반납 물품을 조회하고, 사진·파손 여부·위치 확인 QR까지 처리합니다. 개인 PC에서는 무인 반납 API가 거부됩니다.</p>
+    <p style={{ fontSize: 12, color: "var(--text-dim,#94a3b8)", lineHeight: 1.65, margin: "8px 0 14px" }}>등록된 관리자 PC에서 사번으로 대여·반납 물품을 조회하고, 사진·파손 여부·위치 확인 QR까지 처리합니다. 개인 PC에서는 무인 반납 API가 거부됩니다.</p>
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <button disabled={busy} onClick={toggle} style={{ border: 0, borderRadius: 9, padding: "9px 14px", fontWeight: 800, cursor: "pointer", background: enabled ? "#dc2626" : "#2563eb", color: "#fff" }}><Power size={14} style={{ verticalAlign: -2, marginRight: 6 }}/>{enabled ? "무인 모드 끄기" : "무인 모드 켜기"}</button>
-      <button disabled={busy} onClick={register} style={{ border: "1px solid #2563eb", borderRadius: 9, padding: "9px 14px", fontWeight: 800, cursor: "pointer", background: "transparent", color: "#2563eb" }}>{registered ? "이 PC 재등록" : "이 PC 등록"}</button>
-      {enabled && registered ? <button onClick={onOpen} style={{ border: 0, borderRadius: 9, padding: "9px 14px", fontWeight: 800, cursor: "pointer", background: "#059669", color: "#fff" }}>무인 화면 열기 →</button> : null}
+      <button disabled={busy} onClick={toggle} style={{ border: 0, borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", background: enabled ? "#dc2626" : "#2563eb", color: "#fff" }}><Power size={14} style={{ verticalAlign: -2, marginRight: 6 }}/>{enabled ? "무인 모드 끄기" : "무인 모드 켜기"}</button>
+      <button disabled={busy} onClick={register} style={{ border: "1px solid #2563eb", borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", background: "transparent", color: "#2563eb" }}>{registered ? "이 PC 재등록" : "이 PC 등록"}</button>
+      {enabled && registered ? <button onClick={onOpen} style={{ border: 0, borderRadius: 9, padding: "9px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", background: "#059669", color: "#fff" }}>무인 화면 열기 →</button> : null}
     </div>
-    {pending.length ? <div style={{marginTop:16,borderTop:"1px solid var(--panel-border,#334155)",paddingTop:14}}><div style={{fontWeight:850,marginBottom:8,color:"#dc2626"}}>파손 확인 대기 {pending.length}건</div>{pending.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",fontSize:12}}><span style={{flex:1}}><b>{p.item_name}</b> × {p.qty}<br/><span style={{opacity:.7}}>{p.created_at}</span></span>{p.image_path?<a href={p.image_path} target="_blank" rel="noreferrer" style={{color:"#2563eb"}}>사진</a>:null}<button disabled={busy} onClick={()=>resolveDamage(p.id,"reject")} style={{border:"1px solid #64748b",background:"transparent",color:"inherit",borderRadius:7,padding:"6px 8px",cursor:"pointer"}}>오신고</button><button disabled={busy} onClick={()=>resolveDamage(p.id,"confirm")} style={{border:0,background:"#dc2626",color:"#fff",borderRadius:7,padding:"6px 8px",cursor:"pointer"}}>파손 확인</button></div>)}</div>:null}
+    {pending.length ? <section aria-label="무인 파손 확인 대기" style={{ marginTop: 18, borderTop: '1px solid var(--panel-border,#334155)', paddingTop: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 800, marginBottom: 8 }}>파손 확인 대기<span style={{ padding: '2px 7px', borderRadius: 999, background: 'rgba(220,38,38,.1)', color: '#dc2626', fontSize: 11 }}>{pending.length}건</span></div>
+      <p style={{ fontSize: 12, color: 'var(--text-dim,#94a3b8)', lineHeight: 1.7, margin: '0 0 12px' }}>사전 미신고 파손은 대여 건당 5종 차감이 14일간 적용됩니다. 페널티를 면제하려면 사유를 남겨주세요.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{pending.map(p => <article key={p.id} style={{ border: '1px solid var(--panel-border,#334155)', borderRadius: 10, padding: 12, background: 'var(--input-bg,#0f172a)' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}><strong style={{ flex: 1, minWidth: 0, fontSize: 13, overflowWrap: 'anywhere' }}>{p.item_name}</strong><span style={{ fontWeight: 700, fontSize: 12, whiteSpace: 'nowrap' }}>{p.qty}개</span></div>
+        <div style={{ color: 'var(--text-dim,#94a3b8)', fontSize: 11, marginBottom: 12 }}>{p.created_at}</div>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, lineHeight: 1.6, cursor: 'pointer' }}><input type="checkbox" checked={damageExemptions[p.id]?.exempt || false} onChange={e=>setDamageExemptions(prev=>({...prev,[p.id]:{exempt:e.target.checked,reason:prev[p.id]?.reason || ''}}))} style={{ width: 16, height: 16, flexShrink: 0, margin: '2px 0 0', accentColor: '#2563eb' }}/><span>이 물품의 자동 페널티 면제</span></label>
+        {damageExemptions[p.id]?.exempt && <label style={{ display: 'block', fontSize: 12, fontWeight: 700, marginTop: 10 }}>면제 사유 <span style={{ color: '#dc2626' }}>(필수)</span><input maxLength={500} placeholder="예: 반복 사용에 따른 정상 마모" value={damageExemptions[p.id]?.reason || ''} onChange={e=>setDamageExemptions(prev=>({...prev,[p.id]:{exempt:true,reason:e.target.value}}))} style={{ display: 'block', width: '100%', padding: '9px 10px', marginTop: 6, background: 'var(--panel-bg)', color: 'inherit', border: '1px solid var(--panel-border)', borderRadius: 8, fontSize: 12, fontWeight: 400 }}/></label>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 12, borderTop: '1px solid var(--panel-border)', paddingTop: 12 }}>
+          {p.image_path && <a href={p.image_path} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--accent,#2563eb)', marginRight: 'auto', fontWeight: 700 }}>접수 사진 보기 ↗</a>}
+          <button disabled={busy} onClick={()=>resolveDamage(p.id,'reject')} style={{ border: '1px solid var(--panel-border)', background: 'var(--panel-bg)', color: 'inherit', borderRadius: 8, padding: '8px 11px', fontSize: 12, cursor: 'pointer' }}>오신고</button>
+          <button disabled={busy} onClick={()=>resolveDamage(p.id,'confirm')} style={{ border: 0, background: '#dc2626', color: '#fff', borderRadius: 8, padding: '8px 11px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>파손 확인</button>
+        </div>
+      </article>)}</div>
+    </section> : null}
   </div>;
 }

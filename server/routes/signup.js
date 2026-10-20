@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { all, get, run, transaction } from "../db.js";
 import { requireAdmin } from "../lib/auth.js";
 import { verifySmCredentials } from "../lib/smSync.js";
+import { verifySmLogin } from "../lib/smLogin.js";
+import { borrowerAuthRequired } from "../lib/httpsConfig.js";
 import { normalizeEmployeeId, registeredUser, backfillRentalEmployeeIds } from "../lib/registeredUsers.js";
 import { nowKst } from "../lib/time.js";
 
@@ -35,6 +37,50 @@ signupRouter.post("/signup-requests", (req, res) => {
   run("INSERT INTO signup_requests (employee_id, name, status, created_at) VALUES (?, ?, 'pending', ?)", [employeeId, name, nowKst()]);
   res.json({ success: true });
 });
+
+/**
+ * 신규 사원 가입(SM 확인). 사번과 SM 비밀번호로 SM에 실제 로그인되면 그 사번의 주인이 맞으므로
+ * 관리자 승인 없이 바로 명부에 올린다. 비밀번호는 확인에만 쓰고 저장하지 않는다.
+ * 남의 비밀번호를 대입해 보는 창구가 되지 않게 시도 횟수를 제한한다.
+ */
+export const createSmSignupHandler = (verify = verifySmLogin) => async (req, res) => {
+  let password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (req.body) delete req.body.password;
+  try {
+    if (borrowerAuthRequired() && !req.socket.encrypted) return res.status(426).json({ success: false, error: "HTTPS 주소에서 가입해주세요." });
+    const employeeId = normalizeEmployeeId(req.body?.employeeId);
+    const name = cleanName(req.body?.name);
+    if (!employeeId || employeeId === "0000") return res.status(400).json({ success: false, error: "사번은 4자리 숫자로 입력해주세요." });
+    if (!password || password.length > 512) return res.status(400).json({ success: false, error: "SM 비밀번호를 입력해주세요." });
+    if (name.length < 2 || name.length > 20) return res.status(400).json({ success: false, error: "이름은 2~20자로 입력해주세요." });
+    if (overLimit(`ip:${req.ip}`, MAX_ATTEMPTS_PER_IP) || overLimit(`emp:${employeeId}`, MAX_ATTEMPTS_PER_ID)) {
+      return res.status(429).json({ success: false, error: "시도가 너무 많습니다. 10분쯤 뒤에 다시 해주세요." });
+    }
+    if (registeredUser(employeeId)) return res.status(409).json({ success: false, error: "이미 등록된 사번입니다. 로그인 화면에서 바로 로그인해주세요." });
+
+    const check = await verify(employeeId, password);
+    password = "";
+    if (check.unavailable) return res.status(503).json({ success: false, error: "SM에 연결할 수 없어 확인하지 못했습니다. 잠시 뒤에 다시 시도해주세요." });
+    if (!check.ok) return res.status(401).json({ success: false, error: "사번 또는 SM 비밀번호가 맞지 않습니다. SM에 로그인되는 사번·비밀번호로 가입해주세요." });
+
+    const now = nowKst();
+    transaction(() => {
+      run(
+        `INSERT INTO registered_users (employee_id, name, active, imported_at, source) VALUES (?, ?, 1, ?, 'signup')
+         ON CONFLICT(employee_id) DO UPDATE SET name=excluded.name, active=1, imported_at=excluded.imported_at, source='signup'`,
+        [employeeId, name, now]
+      );
+      // 예전에 남긴 승인 대기 신청이 있으면 함께 정리한다.
+      run("UPDATE signup_requests SET status = 'approved', name = ?, resolved_at = ?, resolved_by = 'SM 인증 자동 가입' WHERE employee_id = ? AND status = 'pending'", [name, now, employeeId]);
+    });
+    try { backfillRentalEmployeeIds(); } catch (err) { console.error("[signup] backfill", err); }
+    res.json({ success: true, employeeId, name });
+  } catch (err) {
+    console.error("[signup] sm signup", err);
+    res.status(500).json({ success: false, error: "가입 중 오류가 발생했습니다." });
+  } finally { password = ""; }
+};
+signupRouter.post("/signup", createSmSignupHandler());
 
 // 로그인 화면이 "명부에 없음"과 "승인 대기 중"을 구분해 안내하는 데 쓴다. 이름은 돌려주지 않는다.
 signupRouter.get("/signup-requests/status", (req, res) => {

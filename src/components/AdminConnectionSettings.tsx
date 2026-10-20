@@ -62,6 +62,8 @@ interface Penalty {
   expires_at: string | null;
   /** 원인으로 연결한 대여·반납 기록 수 */
   link_count?: number;
+  /** 어떤 물품 때문인지 한 줄 요약 */
+  items?: string;
 }
 
 /** 무인 모드 자동 페널티가 어떤 대여 때문에 생겼는지(서버 penaltyDetails). */
@@ -659,7 +661,7 @@ export default function AdminConnectionSettings({
 
   const allTabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "signups", label: signups.length + adminSignups.length ? `가입 승인 (${signups.length + adminSignups.length})` : "가입 승인", icon: <UserCheck size={14} /> },
-    { key: "admins", label: "Admin 계정", icon: <Users size={14} /> },
+    { key: "admins", label: "관리자 계정", icon: <Users size={14} /> },
     { key: "borrowers", label: "대여자 계정", icon: <Users size={14} /> },
     { key: "penalties", label: "페널티", icon: <ShieldAlert size={14} /> },
     { key: "scenarios", label: "SID 편집", icon: <ScrollText size={14} /> },
@@ -695,7 +697,7 @@ export default function AdminConnectionSettings({
         }
       >
         {showHeader && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800 }}>연결 설정</h2>
+          <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 18, fontWeight: 800, margin: 0 }}><Users size={19} color={ACCENT} />계정 설정</h2>
           {!embedded && (
             <button onClick={onClose} style={{ background: "transparent", border: "none", color: TEXT_DIM, cursor: "pointer" }}>
               <X size={20} />
@@ -723,7 +725,9 @@ export default function AdminConnectionSettings({
 
         {tab === "signups" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <p style={{ fontSize: 12, color: TEXT_DIM, lineHeight: 1.6 }}>
+            <section aria-label="대여자 가입 신청" style={{ padding: 18, border: `1px solid ${BORDER_COLOR}`, borderRadius: 12, background: PANEL_BG, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, fontWeight: 800 }}><UserCheck size={16} color={ACCENT} />대여자 가입 신청<span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: TEXT_DIM }}>{signups.length}건</span></div>
+            <p style={{ margin: 0, fontSize: 12, color: TEXT_DIM, lineHeight: 1.7 }}>
               대여자 로그인 화면에서 들어온 가입 신청입니다. 사번과 이름을 확인하고 승인하면 대여자 계정에 등록되어 바로 로그인할 수 있습니다. 이름에 오타가 있으면 고친 뒤 승인하세요.
             </p>
             {signups.map((r) => (
@@ -756,11 +760,13 @@ export default function AdminConnectionSettings({
                 </div>
               </div>
             ))}
-            {signups.length === 0 && <div style={{ fontSize: 12, color: TEXT_DIM }}>대기 중인 대여자 가입 신청이 없습니다.</div>}
+            {signups.length === 0 && <div className="wms-empty-state" style={{ padding: "24px 12px", gap: 9, fontSize: 12, color: TEXT_DIM }}><UserCheck size={26} style={{ opacity: .35 }} />대기 중인 대여자 가입 신청이 없습니다.</div>}
+            </section>
 
-            <div style={{ height: 1, background: BORDER_COLOR, margin: "6px 0" }} />
-            <p style={{ fontSize: 12, color: TEXT_DIM, lineHeight: 1.6 }}>
-              <strong style={{ color: "#7c3aed" }}>관리자 가입 신청</strong> — 관리자 로그인 화면에서 Scenario Manager 계정의 아이디·비밀번호로 신청한 건입니다(두 계정이 같은 것은 서버가 확인했습니다). 승인하면 모든 관리자 기능을 쓰는 계정이 만들어지니, 아는 사람이 맞는지 확인한 뒤 승인하세요.
+            <section aria-label="관리자 가입 신청" style={{ padding: 18, border: `1px solid ${BORDER_COLOR}`, borderRadius: 12, background: PANEL_BG, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 14, fontWeight: 800 }}><Users size={16} color={ACCENT} />관리자 가입 신청<span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: TEXT_DIM }}>{adminSignups.length}건</span></div>
+            <p style={{ margin: 0, fontSize: 12, color: TEXT_DIM, lineHeight: 1.7 }}>
+              Scenario Manager 계정으로 신청하고 계정 일치 여부를 확인한 건입니다. 승인하면 모든 관리자 기능을 사용할 수 있으므로 신청자를 확인한 뒤 승인하세요.
             </p>
             {adminSignups.map((r) => (
               <div key={r.id} style={{ padding: "12px 14px", border: `1px solid #7c3aed55`, borderRadius: 10, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -789,7 +795,8 @@ export default function AdminConnectionSettings({
                 <div style={{ fontSize: 11, color: TEXT_DIM }}>신청 {r.created_at}</div>
               </div>
             ))}
-            {adminSignups.length === 0 && <div style={{ fontSize: 12, color: TEXT_DIM }}>대기 중인 관리자 가입 신청이 없습니다.</div>}
+            {adminSignups.length === 0 && <div className="wms-empty-state" style={{ padding: "24px 12px", gap: 9, fontSize: 12, color: TEXT_DIM }}><Users size={26} style={{ opacity: .35 }} />대기 중인 관리자 가입 신청이 없습니다.</div>}
+            </section>
           </div>
         )}
 
@@ -895,23 +902,24 @@ export default function AdminConnectionSettings({
                 const open = openPenaltyId === p.id;
                 return (
                   <div key={p.id} style={{ border: `1px solid ${open ? ACCENT : BORDER_COLOR}`, borderRadius: 8, fontSize: 12, overflow: "hidden" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 28px 28px", alignItems: "start", gap: 8, padding: "8px 12px" }}>
                       <button
+                        type="button"
                         onClick={() => togglePenalty(p.id)}
                         aria-expanded={open}
                         title="어떤 대여 때문에 생긴 페널티인지 보기"
-                        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, background: "transparent", border: 0, padding: 0, color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer" }}
+                        style={{ width: "100%", minWidth: 0, minHeight: 28, display: "grid", gridTemplateColumns: "14px minmax(0, 1fr)", alignItems: "start", justifyContent: "start", gap: 6, background: "transparent", border: 0, padding: "4px 0", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer" }}
                       >
-                        <ChevronRight size={14} style={{ flexShrink: 0, color: TEXT_DIM, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
-                        <span>
-                          <strong>{p.name}</strong> · 최대 {p.max_types ?? "-"}종 · {p.reason || "-"} · 만료 {p.expires_at || "-"}
-                          {p.link_count ? <span style={{ marginLeft: 6, fontSize: 10.5, fontWeight: 800, color: ACCENT, border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "1px 7px" }}>기록 {p.link_count}건 연결</span> : null}
+                        <ChevronRight size={14} style={{ marginTop: 3, color: TEXT_DIM, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+                        <span style={{ minWidth: 0, lineHeight: 1.6, overflowWrap: "anywhere" }}>
+                          <strong>{p.name}</strong> · 최대 {p.max_types ?? "-"}종 · {p.reason || "-"}{p.items ? <> · 물품: <b>{p.items}</b></> : null} · 만료 {p.expires_at || "-"}
+                          {p.link_count ? <span style={{ display: "inline-flex", whiteSpace: "nowrap", verticalAlign: "middle", marginLeft: 6, fontSize: 10.5, fontWeight: 800, color: ACCENT, border: `1px solid ${ACCENT}66`, borderRadius: 999, padding: "1px 7px" }}>기록 {p.link_count}건 연결</span> : null}
                         </span>
                       </button>
-                      <button onClick={() => startEditPenalty(p.id)} aria-label={`${p.name || ""} 페널티 수정`} title="내용 수정" style={{ background: "transparent", border: "none", color: ACCENT, cursor: "pointer", flexShrink: 0, display: "flex" }}>
+                      <button type="button" onClick={() => startEditPenalty(p.id)} aria-label={`${p.name || ""} 페널티 수정`} title="내용 수정" style={{ width: 28, height: 28, padding: 0, background: "transparent", border: "none", color: ACCENT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <Pencil size={14} />
                       </button>
-                      <button onClick={() => deletePenalty(p.id)} aria-label={`${p.name || ""} 페널티 삭제`} style={{ background: "transparent", border: "none", color: "#ef4444", cursor: "pointer", flexShrink: 0 }}>
+                      <button type="button" onClick={() => deletePenalty(p.id)} aria-label={`${p.name || ""} 페널티 삭제`} style={{ width: 28, height: 28, padding: 0, background: "transparent", border: "none", color: "#ef4444", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <Trash2 size={14} />
                       </button>
                     </div>

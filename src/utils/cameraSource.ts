@@ -29,8 +29,8 @@ export function cameraBase(): Promise<string> {
   resolved = (async () => {
     const here = window.location;
     // 개발 서버(vite)나 https 환경에서는 굳이 손대지 않는다 — 프록시 설정이 따로 있다.
-    if (here.protocol !== "http:") return "";
-    const candidate = `${here.protocol}//${here.hostname}:${CAMERA_PORT}`;
+    if (!["http:", "https:"].includes(here.protocol)) return "";
+    const candidate = `${here.protocol}//${here.hostname}:${here.protocol === "https:" ? 3445 : CAMERA_PORT}`;
     try {
       const c = new AbortController();
       const timer = setTimeout(() => c.abort(), PROBE_TIMEOUT_MS);

@@ -919,7 +919,7 @@ export default function RentalPage({
             </p>
 
             {cart.length === 0 ? (
-              <div
+              <div className="wms-empty-state"
                 style={{
                   border: `2px dashed ${isLightMode ? "#cbd5e1" : "#222f4b"}`,
                   borderRadius: "16px",

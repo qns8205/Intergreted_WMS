@@ -1,15 +1,20 @@
 /**
- * 가입 신청.
+ * 가입.
  *
- * 명부(registered_users)에 없는 사번은 로그인할 수 없다. 여기서 사번과 이름을 남기면
- * 관리자가 계정 설정 > 가입 승인에서 확인한 뒤 명부에 넣는다. 바로 등록하지 않는 건
- * 사번을 잘못 쳐서 남의 사번을 차지하는 일을 사람이 한 번 걸러내기 위해서다.
+ * 명부(registered_users)에 없는 사번은 로그인할 수 없다.
+ * - SM 인증을 쓰는 운영(smVerify): 사번·SM 비밀번호·이름을 받아, SM에 실제 로그인되면 그 사번의
+ *   주인이 맞으므로 바로 명부에 올린다. 가입되면 다시 로그인하도록 안내한다.
+ * - SM 인증을 쓰지 않는 환경: 사번과 이름을 남기면 관리자가 가입 승인에서 확인한 뒤 명부에 넣는다.
+ *   사번을 잘못 쳐서 남의 사번을 차지하는 일을 사람이 한 번 걸러내기 위해서다.
  */
 import React, { useState } from "react";
-import { ArrowLeft, IdCard, User, CheckCircle2, ChevronRight } from "lucide-react";
+import { ArrowLeft, IdCard, User, CheckCircle2, ChevronRight, LockKeyhole } from "lucide-react";
+import { signupWithSm } from "../utils/borrowerAuth";
 
 interface Props {
   isLightMode: boolean;
+  /** SM 비밀번호로 확인해 바로 가입시킨다(관리자 승인 없음). */
+  smVerify?: boolean;
   initialEmployeeId?: string;
   showToast: (msg: string, type: "ok" | "error" | "info" | "warn") => void;
   onBack: () => void;
@@ -17,7 +22,7 @@ interface Props {
 
 type Step = "form" | "confirm" | "done";
 
-export default function SignupRequestPage({ isLightMode, initialEmployeeId = "", showToast, onBack }: Props) {
+export default function SignupRequestPage({ isLightMode, smVerify = false, initialEmployeeId = "", showToast, onBack }: Props) {
   const C = {
     bg: isLightMode ? "#f7f8fa" : "#0b1120",
     card: isLightMode ? "#ffffff" : "#161f30",
@@ -33,18 +38,34 @@ export default function SignupRequestPage({ isLightMode, initialEmployeeId = "",
   const [step, setStep] = useState<Step>("form");
   const [empId, setEmpId] = useState(initialEmployeeId);
   const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
   const [sending, setSending] = useState(false);
 
   const trimmedName = name.trim().replace(/\s+/g, " ");
 
   function next() {
     if (!/^\d{4}$/.test(empId) || empId === "0000") { showToast("4자리 사번을 입력해주세요.", "warn"); return; }
+    if (smVerify && !password) { showToast("SM 비밀번호를 입력해주세요.", "warn"); return; }
     if (trimmedName.length < 2 || trimmedName.length > 20) { showToast("이름을 2~20자로 입력해주세요.", "warn"); return; }
     setStep("confirm");
   }
 
   async function send() {
     setSending(true);
+    if (smVerify) {
+      // SM에 로그인되는지 확인되면 바로 등록된다. 비밀번호는 보내자마자 화면에서도 지운다.
+      const pw = password; setPassword("");
+      try {
+        await signupWithSm(empId, pw, trimmedName);
+        setStep("done");
+      } catch (e: any) {
+        showToast(e.message, "error");
+        setStep("form");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
     try {
       const res = await fetch("/api/signup-requests", {
         method: "POST",
@@ -86,20 +107,31 @@ export default function SignupRequestPage({ isLightMode, initialEmployeeId = "",
         <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "11px 18px", borderRadius: "11px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "15px", fontWeight: 600 }}>
           <ArrowLeft size={15} /> 로그인으로
         </button>
-        <h1 style={{ fontSize: "22px", fontWeight: 800, margin: 0, flex: 1 }}>가입 신청</h1>
+        <h1 style={{ fontSize: "22px", fontWeight: 800, margin: 0, flex: 1 }}>{smVerify ? "가입하기" : "가입 신청"}</h1>
       </div>
 
       <div style={{ maxWidth: "560px", margin: "0 auto", padding: "40px 20px 100px" }}>
         {step === "form" ? (
           <>
             <div style={{ marginBottom: "26px", padding: "18px 20px", background: C.accentSoft, borderRadius: "14px", borderLeft: `5px solid ${C.accent}`, fontSize: "15px", lineHeight: 1.6 }}>
-              처음 사용하는 사번이라면 여기서 신청해주세요. <b>관리자가 승인하면</b> 그때부터 사번으로 로그인할 수 있습니다.
+              {smVerify
+                ? <>처음 사용하는 사번이라면 여기서 가입해주세요. <b>SM(Scenario Manager)에 로그인되는 사번·비밀번호</b>로 확인되면 바로 가입됩니다. WMS는 비밀번호를 저장하지 않습니다.</>
+                : <>처음 사용하는 사번이라면 여기서 신청해주세요. <b>관리자가 승인하면</b> 그때부터 사번으로 로그인할 수 있습니다.</>}
             </div>
             <label style={labelStyle}>사번</label>
             <div style={{ position: "relative", marginBottom: "18px" }}>
               <IdCard size={16} style={{ position: "absolute", left: "15px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
               <input value={empId} maxLength={4} onChange={(e) => setEmpId(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={onEnter} placeholder="4자리 사번" inputMode="numeric" style={inputStyle} />
             </div>
+            {smVerify ? (
+              <>
+                <label style={labelStyle}>SM 비밀번호</label>
+                <div style={{ position: "relative", marginBottom: "18px" }}>
+                  <LockKeyhole size={16} style={{ position: "absolute", left: "15px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
+                  <input type="password" value={password} maxLength={512} autoComplete="off" onChange={(e) => setPassword(e.target.value)} onKeyDown={onEnter} placeholder="SM 로그인 비밀번호" style={inputStyle} />
+                </div>
+              </>
+            ) : null}
             <label style={labelStyle}>이름</label>
             <div style={{ position: "relative", marginBottom: "30px" }}>
               <User size={16} style={{ position: "absolute", left: "15px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
@@ -111,7 +143,7 @@ export default function SignupRequestPage({ isLightMode, initialEmployeeId = "",
           </>
         ) : step === "confirm" ? (
           <>
-            <div style={{ fontSize: "18px", fontWeight: 800, marginBottom: "16px" }}>이대로 신청할까요?</div>
+            <div style={{ fontSize: "18px", fontWeight: 800, marginBottom: "16px" }}>{smVerify ? "이대로 가입할까요?" : "이대로 신청할까요?"}</div>
             <div style={{ padding: "22px 24px", borderRadius: "16px", border: `1.5px solid ${C.accent}`, background: C.card, marginBottom: "14px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "6px 0" }}>
                 <span style={{ color: C.label, fontSize: "15px", fontWeight: 700 }}>사번</span>
@@ -124,25 +156,27 @@ export default function SignupRequestPage({ isLightMode, initialEmployeeId = "",
               </div>
             </div>
             <div style={{ fontSize: "14px", color: C.label, lineHeight: 1.6, marginBottom: "26px" }}>
-              사번이 틀리면 다른 사람의 사번으로 등록됩니다. 한 번 더 확인해주세요. 승인된 뒤에는 관리자만 바꿀 수 있습니다.
+              {smVerify
+                ? "SM 비밀번호로 본인 사번인지 확인한 뒤 바로 가입됩니다. 이름이 틀리면 가입 뒤에는 관리자만 바꿀 수 있으니 한 번 더 확인해주세요."
+                : "사번이 틀리면 다른 사람의 사번으로 등록됩니다. 한 번 더 확인해주세요. 승인된 뒤에는 관리자만 바꿀 수 있습니다."}
             </div>
             <div style={{ display: "flex", gap: "10px" }}>
               <button onClick={() => setStep("form")} disabled={sending} style={secondaryBtn}>수정</button>
               <button onClick={send} disabled={sending} style={{ ...primaryBtn, opacity: sending ? 0.7 : 1, cursor: sending ? "default" : "pointer" }}>
-                {sending ? "신청 중..." : "이대로 신청"}
+                {sending ? (smVerify ? "SM 확인 중..." : "신청 중...") : smVerify ? "이대로 가입" : "이대로 신청"}
               </button>
             </div>
           </>
         ) : (
-          <div style={{ textAlign: "center", paddingTop: "20px" }}>
+          <div className="wms-empty-state" style={{ textAlign: "center", paddingTop: "20px" }}>
             <CheckCircle2 size={56} style={{ display: "block", color: C.success, margin: "0 auto 16px" }} />
-            <div style={{ fontSize: "22px", fontWeight: 900, marginBottom: "10px" }}>가입 신청이 접수되었습니다</div>
+            <div style={{ fontSize: "22px", fontWeight: 900, marginBottom: "10px" }}>{smVerify ? "가입되었습니다" : "가입 신청이 접수되었습니다"}</div>
             <div style={{ fontSize: "15px", color: C.label, lineHeight: 1.7, marginBottom: "30px" }}>
               사번 <b style={{ color: C.text }}>{empId}</b> · <b style={{ color: C.text }}>{trimmedName}</b><br />
-              관리자가 승인하면 이 사번으로 로그인할 수 있습니다.
+              {smVerify ? <b style={{ color: C.text }}>로그인 화면으로 돌아가 다시 로그인해주세요.</b> : "관리자가 승인하면 이 사번으로 로그인할 수 있습니다."}
             </div>
             <div style={{ display: "flex" }}>
-              <button onClick={onBack} style={primaryBtn}>로그인 화면으로</button>
+              <button onClick={onBack} style={primaryBtn}><ArrowLeft size={16} /> {smVerify ? "로그인 화면으로 돌아가기" : "로그인 화면으로"}</button>
             </div>
           </div>
         )}

@@ -24,6 +24,7 @@ import CameraCaptureModal from "./CameraCaptureModal";
 import { smartMatch } from "../utils/search";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import ScenarioManagerObjectLink from "./ScenarioManagerObjectLink";
+import ScenarioRentalVariantLabel from "./ScenarioRentalVariantLabel";
 
 interface Props {
   scriptUrl: string;
@@ -1356,6 +1357,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
               </div>
               <div className="sap-card-body" style={{ padding: "12px 14px", flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
                 <div style={{ fontWeight: 700, fontSize: "14px", lineHeight: 1.35, wordBreak: "break-word" }}>{it.name}</div>
+                {it.variants?.length ? <div style={{ fontSize: 11, color: C.accentText, overflowWrap: "anywhere" }}>종류: {it.variants.map((variant) => variant.name).join(" · ")}</div> : null}
                 <div style={{ fontSize: "11px", color: C.label }}><ScenarioManagerObjectLink id={it.id} color={C.label}>ID: {it.id}</ScenarioManagerObjectLink></div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "5px" }}>
                   {it.rootSlot ? <span style={{ display: "inline-flex", alignItems: "center", gap: "4px", fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}><MapPin size={11} />{padSlot(it.rootSlot)}</span> : <span style={{ fontSize: "10px", fontWeight: 700, color: C.error, background: C.errorSoft, borderRadius: "6px", padding: "2px 7px" }}>위치 없음</span>}
@@ -2380,6 +2382,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                               <span>·</span>
                               <span>{u.borrowDate || "-"}</span>
                             </div>
+                            <ScenarioRentalVariantLabel item={u} C={C} />
                           </div>
                           <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{u.quantity || 1}개</span>
                           {u.batchId ? <ChevronRight size={15} style={{ color: C.label, flexShrink: 0 }} /> : null}
@@ -2424,19 +2427,10 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                                 </div>
                                 <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" }}>
                                   <span>{l.sheetType === "scenario" ? `SID 대여${l.scenarioId ? ` (${l.scenarioId})` : ""}` : "일반 대여"}</span>
-                                  {/* 같은 물품이라도 어떤 종류를 빌려갔는지 이력에서 구분되게 한다 */}
-                                  {l.variantName ? (
-                                    <span style={{ fontSize: "10.5px", fontWeight: 700, padding: "1px 7px", borderRadius: "999px", background: C.accentSoft, color: C.accentText, border: `1px solid ${C.accent}33` }}>
-                                      {l.variantName}
-                                    </span>
-                                  ) : l.variantPending ? (
-                                    <span style={{ fontSize: "10.5px", fontWeight: 700, padding: "1px 7px", borderRadius: "999px", background: C.warnSoft, color: C.warn, border: `1px solid ${C.warn}55` }}>
-                                      종류 미정
-                                    </span>
-                                  ) : null}
                                   <span>·</span>
                                   <span>대여 {l.borrowDate || "-"}</span>
                                 </div>
+                                <ScenarioRentalVariantLabel item={l} C={C} />
                               </div>
                               <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{l.quantity || 1}개</span>
                               <span
@@ -2643,17 +2637,8 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {x.itemName || x.itemLabel}
-                          {/* 같은 물품이라도 어떤 종류를 빌려갔는지 구분되게 한다 */}
-                          {x.variantName ? (
-                            <span style={{ fontSize: "10.5px", fontWeight: 700, padding: "1px 7px", borderRadius: "999px", marginLeft: "5px", background: C.accentSoft, color: C.accentText, border: `1px solid ${C.accent}33` }}>
-                              {x.variantName}
-                            </span>
-                          ) : x.variantPending ? (
-                            <span style={{ fontSize: "10.5px", fontWeight: 700, padding: "1px 7px", borderRadius: "999px", marginLeft: "5px", background: C.warnSoft, color: C.warn, border: `1px solid ${C.warn}55` }}>
-                              종류 미정
-                            </span>
-                          ) : null}
                         </div>
+                        <ScenarioRentalVariantLabel item={x} C={C} />
                         <div style={{ fontSize: "11px", color: C.label, marginTop: "2px", display: "flex", gap: "6px", flexWrap: "wrap" }}>
                           {x.itemId ? <span style={{ fontFamily: "monospace" }}>{x.itemId}</span> : null}
                           {x.location ? <span>📍 {x.location}</span> : null}
@@ -2709,7 +2694,7 @@ export default function ScenarioAdminPage({ scriptUrl, connected, isLightMode, s
             {unreturnedLoading && !unreturnedLoaded ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "10px", padding: "32px 0", color: C.label }}><Spinner size={26} /> 전체 물품을 스캔하는 중...</div>
             ) : rentedMismatches.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>
+              <div className="wms-empty-state" style={{ textAlign: "center", padding: "32px 0", color: C.label, fontSize: "13px" }}>
                 <ClipboardCheck size={26} style={{ marginBottom: "8px", color: C.success }} /><br />
                 불일치가 없습니다. 기록과 실제 대여 현황이 일치합니다.
               </div>

@@ -12,9 +12,11 @@ import {
   fetchSeatMap, SeatMap,
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
+import { scenarioVariantText } from "../utils/scenarioVariant";
 import ScrollToTopButton from "./ScrollToTopButton";
 import { PenaltyGrantModal, PenaltyLink } from "./PenaltyForm";
 import RentalInsightsPanel from "./RentalInsightsPanel";
+import CancelLogsPanel from "./CancelLogsPanel";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { paginateLogGroups } from "../utils/logPages";
 
@@ -103,7 +105,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         sheetType: it.sheetType,
         rowId: it.rowIndex,
         itemName: it.itemName || String(it.itemLabel || "").replace(/^\[[^\]]*\]\s*/, "").replace(/\s*[x×]\s*\d+\s*$/i, "").trim() || "물품",
-        variantName: it.variantName || "",
+        variantName: scenarioVariantText(it),
         qty: it.quantity || 1,
         requestCode: "",
         appliedAt: it.borrowDateTime || it.borrowDate || "",
@@ -132,6 +134,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const [reborrowUnit, setReborrowUnit] = useState("");
   const [reborrowFloors, setReborrowFloors] = useState<SeatMap["floors"]>([]);
   const [reborrowSeatsLoading, setReborrowSeatsLoading] = useState(false);
+  // 취소 로그 탭에서 고른 줄로 재대여할 때 그 줄들(반납 로그 선택과 따로 둔다).
+  const [reborrowFrom, setReborrowFrom] = useState<ScenarioLogEntry[] | null>(null);
+  // 취소 로그에서 재대여에 성공하면 그 탭을 다시 불러오고 선택을 비우게 한다.
+  const [cancelReload, setCancelReload] = useState(0);
+  useEffect(() => { if (!reborrowModalOpen) setReborrowFrom(null); }, [reborrowModalOpen]);
   useVersionWorkGuard("return-log-reborrow", reborrowModalOpen || reborrowing, "반납 로그 재대여 신청 중");
   useEffect(() => {
     if (!reborrowModalOpen) return;
@@ -154,7 +161,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const RECENT_DAYS = 14;
   const [returnedRecentOnly, setReturnedRecentOnly] = useState(true);
 
-  const [viewMode, setViewMode] = useState<"log" | "byItem">("log");
+  const [viewMode, setViewMode] = useState<"log" | "cancel" | "byItem">("log");
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
 
   // 화면에 데이터가 떠 있는지 여부는 ref로 추적한다.
@@ -232,8 +239,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         // 14일치만 먼저 받고, 그 이전 기록은 "더 보기"를 눌러야 받아온다 (한 번에 다 받으면 느려짐).
         setReturnedRecentOnly(true);
         const [unreturnedPage, returnedPage, ver] = await Promise.all([
-          fetchScenarioAllLogsPaged(scriptUrl, { scope: "unreturned", slim: true }),
-          fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true, recentDays: RECENT_DAYS }),
+          fetchScenarioAllLogsPaged(scriptUrl, { scope: "unreturned", slim: true, excludeCancelled: true }),
+          fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true, recentDays: RECENT_DAYS, excludeCancelled: true }),
           fetchBorrowAppVersion(scriptUrl).catch(() => ""),
         ]);
         setLogs(sortLogs([...unreturnedPage.items, ...returnedPage.items]));
@@ -272,7 +279,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     setScopeLoadingMore((p) => ({ ...p, [scope]: true }));
     try {
       if (scope === "returned" && returnedRecentOnly) {
-        const page = await fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true });
+        const page = await fetchScenarioAllLogsPaged(scriptUrl, { scope: "returned", slim: true, excludeCancelled: true });
         setLogs((prev) => {
           const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
           return sortLogs(prev.concat(page.items.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`))));
@@ -284,7 +291,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         return;
       }
       const offset = scopeOffsets[scope];
-      const page = await fetchScenarioAllLogsPaged(scriptUrl, { scope, slim: true, peopleLimit: PEOPLE_PAGE_SIZE, peopleOffset: offset });
+      const page = await fetchScenarioAllLogsPaged(scriptUrl, { scope, slim: true, peopleLimit: PEOPLE_PAGE_SIZE, peopleOffset: offset, excludeCancelled: true });
       setLogs((prev) => {
         const seen = new Set(prev.map((l) => `${l.sheetType}:${l.rowIndex}`));
         return sortLogs(prev.concat(page.items.filter((l) => !seen.has(`${l.sheetType}:${l.rowIndex}`))));
@@ -322,7 +329,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
       if (statusFilter === "returned" && !it.returned) return false;
       if (borrowerFilter && it.borrowerName !== borrowerFilter) return false;
       if (!q) return true;
-      return smartMatch([it.itemLabel, it.borrowerName, it.employeeId, it.scenarioId, it.borrowPurpose, it.location, padSlot(it.location)], q);
+      return smartMatch([it.itemLabel, scenarioVariantText(it), it.borrowerName, it.employeeId, it.scenarioId, it.borrowPurpose, it.location, padSlot(it.location)], q);
     });
   }, [logs, search, kindFilter, statusFilter, borrowerFilter]);
 
@@ -411,7 +418,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   const selEntries = useMemo(() => Object.keys(sel).map((k) => logs.find((l) => selKey(l) === k)).filter(Boolean) as ScenarioLogEntry[], [sel, logs]);
   const selHasReturned = selEntries.some((e) => e.returned);
   const selHasUnreturned = selEntries.some((e) => !e.returned);
-  const reborrowTargets = selEntries.filter((e) => e.returned);
+  const reborrowTargets = reborrowFrom ?? selEntries.filter((e) => e.returned);
   const reborrowHasOriginalSeats = reborrowTargets.every((e) => !!e.floor?.trim() && !!e.unit?.trim());
   const reborrowSeatValid = reborrowSeatMode === "same" ? reborrowHasOriginalSeats : reborrowFloors.some((f) =>
     f.id === reborrowFloor && f.units.some((u) => u.label === reborrowUnit));
@@ -503,10 +510,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
     return list.filter((e) => (e.variantName || e.variantPending) && !e.variantId);
   }
 
-  function openReBorrowModal() {
+  function openReBorrowModal(fromCancel?: ScenarioLogEntry[]) {
     if (!isAdmin) { showToast("재대여는 관리자만 가능합니다.", "warn"); return; }
-    const targets = selEntries.filter((e) => e.returned);
-    if (!targets.length) { showToast("재대여할(반납완료) 물품을 선택해주세요.", "warn"); return; }
+    const targets = fromCancel ?? selEntries.filter((e) => e.returned);
+    if (!targets.length) { showToast(fromCancel ? "재대여할 취소 물품을 선택해주세요." : "재대여할(반납완료) 물품을 선택해주세요.", "warn"); return; }
+    setReborrowFrom(fromCancel ?? null);
     const lost = variantLostEntries(targets);
     if (lost.length) {
       showToast(
@@ -529,7 +537,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
   }
 
   async function doReBorrow() {
-    const targets = selEntries.filter((e) => e.returned);
+    const targets = reborrowTargets;
+    const fromCancel = !!reborrowFrom;
     if (!isAdmin || !targets.length || reborrowing) return;
     if (!reborrowSeatValid) { showToast("재대여할 좌석을 선택해주세요.", "warn"); return; }
     const seat = reborrowSeatMode === "choose" ? { floor: reborrowFloor, unit: reborrowUnit } : undefined;
@@ -550,6 +559,8 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               ok += byBorrower[b].length;
               const succeeded = new Set(byBorrower[b].map(selKey));
               setSel((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => !succeeded.has(key))));
+              // 취소 로그에서 온 재대여도 성공한 줄은 빼 둔다 — 실패분만 다시 시도할 때 두 번 빌리지 않게.
+              if (fromCancel) setReborrowFrom((prev) => (prev ? prev.filter((e) => !succeeded.has(selKey(e))) : prev));
             }
             else showToast(`${byBorrower[b][0].borrowerName} 재대여 실패: ${res.message}`, "error");
           }
@@ -574,7 +585,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         if (ok < targets.length) return; // 성공분은 선택에서 빼고, 실패분만 수정·재시도한다.
       } else { showToast("데모 모드: 실제 재대여는 연동 시 동작합니다.", "info"); }
       setReborrowModalOpen(false);
-      setSel({});
+      if (fromCancel) setCancelReload((n) => n + 1); else setSel({});
       setReborrowing(false);      // 목록 재조회를 기다리며 "처리 중"으로 남지 않게 먼저 푼다
       await load();
     } catch (e: any) { showToast(`재대여 실패: ${e.message}`, "error"); }
@@ -603,10 +614,11 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         }
       `}</style>
 
-      {/* 내부 탭: 반납 로그 / 물품별 보기 */}
-      <div style={{ display: "flex", gap: "6px", marginBottom: "14px" }}>
+      {/* 내부 탭: 반납 로그 / 취소 로그 / 물품별 보기 */}
+      <div style={{ display: "flex", gap: "6px", marginBottom: "14px", flexWrap: "wrap" }}>
         {[
           { key: "log" as const, label: "반납 로그" },
+          { key: "cancel" as const, label: "취소 로그" },
           { key: "byItem" as const, label: "현재 대여 물품별 보기" },
         ].map((t) => (
           <button
@@ -625,7 +637,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         ))}
       </div>
 
-      {viewMode === "byItem" ? (
+      {viewMode === "cancel" ? (
+        <CancelLogsPanel scriptUrl={scriptUrl} connected={connected} C={C} showToast={showToast} isAdmin={isAdmin}
+          reloadKey={cancelReload} reborrowing={reborrowing} onReborrow={(entries) => openReBorrowModal(entries)} />
+      ) : viewMode === "byItem" ? (
         <div>
           <div style={{ fontSize: "12px", color: C.label, marginBottom: "12px" }}>
             현재 대여 중인 물품 <b style={{ color: C.accentText }}>{byItemGroups.length}종</b>
@@ -639,7 +654,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
               </div>
             </div>
           ) : byItemGroups.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
+            <div className="wms-empty-state" style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px" }}>
               {byItemGroups.map((g) => (
@@ -653,6 +668,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                     <div style={{ fontSize: "13px", fontWeight: 700, color: C.text, wordBreak: "break-word", flex: 1 }}>{g.itemName}</div>
                   </div>
                   {g.itemId ? <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>[{padSlot(g.itemId)}]</div> : null}
+                  {g.entries.some((entry) => scenarioVariantText(entry)) ? <div style={{ fontSize: 11, color: C.accentText, overflowWrap: "anywhere" }}>종류: {[...new Set(g.entries.map(scenarioVariantText).filter(Boolean))].join(" · ")}</div> : null}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px" }}>
                     <span style={{ fontSize: "11px", color: C.label }}>{new Set(g.entries.map((e) => e.borrowerName)).size}명에게 대여 중</span>
                     <span style={{ fontSize: "13px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px" }}>{g.totalQty}개</span>
@@ -768,7 +784,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             </div>
           </div>
         ) : whFilteredLogs.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
+          <div className="wms-empty-state" style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
             <Check size={36} style={{ color: C.border, marginBottom: "8px" }} />
             <div>표시할 {whTab} 기록이 없습니다.</div>
           </div>
@@ -827,7 +843,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           </div>
         </div>
       ) : filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 반납 기록이 없습니다.</div></div>
+          <div className="wms-empty-state" style={{ textAlign: "center", padding: "64px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>표시할 반납 기록이 없습니다.</div></div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <LogPageNavigation page={currentLogPage} total={logPages.length} onChange={setLogPage} C={C} />
@@ -859,6 +875,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                       {isAdmin ? <input type="checkbox" readOnly checked={checked} style={{ width: 16, height: 16, accentColor: C.accent, flexShrink: 0 }} /> : <Package size={15} style={{ color: C.label, flexShrink: 0 }} />}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "13px", fontWeight: 600, wordBreak: "break-word", textDecoration: it.returned ? "line-through" : "none", opacity: it.returned ? 0.7 : 1 }}>{it.itemLabel}</div>
+                        {scenarioVariantText(it) ? <div style={{ fontSize: "11.5px", fontWeight: 700, color: C.accentText, marginTop: 3 }}>종류: {scenarioVariantText(it)}</div> : null}
                         <div style={{ display: "flex", gap: "6px", marginTop: "3px", flexWrap: "wrap" }}>
                           {it.location ? <span style={{ display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "10px", fontWeight: 700, color: C.warn, background: C.warnSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}><MapPin size={10} />{padSlot(it.location)}</span> : null}
                           {it.employeeId ? <span style={{ fontSize: "10px", fontWeight: 700, color: C.accentText, background: C.accentSoft, borderRadius: "6px", padding: "2px 7px", fontFamily: "monospace" }}>사번 {it.employeeId}</span> : null}
@@ -929,7 +946,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           <span style={{ flex: 1, fontSize: "13px", fontWeight: 700, minWidth: "80px" }}>{selCount}건 선택됨</span>
           <button onClick={() => setSel({})} style={{ padding: "10px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 700 }}>해제</button>
           {selHasReturned ? (
-            <button onClick={openReBorrowModal} disabled={reborrowing} title="반납완료된 항목을 다시 대여 (기존 좌석 유지 또는 새 좌석 선택)" style={{ padding: "10px 16px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: reborrowing ? 0.7 : 1 }}>
+            <button onClick={() => openReBorrowModal()} disabled={reborrowing} title="반납완료된 항목을 다시 대여 (기존 좌석 유지 또는 새 좌석 선택)" style={{ padding: "10px 16px", borderRadius: "10px", border: "none", background: C.warn, color: "#fff", cursor: "pointer", fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "7px", opacity: reborrowing ? 0.7 : 1 }}>
               {reborrowing ? <><Spinner size={14} /> 처리 중...</> : <><Repeat size={15} /> 다시 대여</>}
             </button>
           ) : null}
@@ -968,6 +985,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             <div style={{ padding: "12px 14px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}`, marginBottom: "14px" }}>
               <div style={{ fontSize: "11px", color: C.label, marginBottom: "4px" }}>기존 대여 (반납 처리됩니다)</div>
               <div style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>{swapTarget.itemLabel}</div>
+              {scenarioVariantText(swapTarget) ? <div style={{ fontSize: 12, color: C.accentText, marginTop: 4 }}>종류: {scenarioVariantText(swapTarget)}</div> : null}
               <div style={{ fontSize: "11.5px", color: C.label, marginTop: "3px" }}>
                 {swapTarget.borrowerName} · {swapTarget.borrowDate}
                 {swapTarget.floor || swapTarget.unit ? ` · ${[swapTarget.floor, swapTarget.unit].filter(Boolean).join(" · ")}` : ""}
@@ -1040,7 +1058,10 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
         </div>
       ) : null}
 
-      {/* 재대여 명의 선택 모달 */}
+      </>
+      )}
+
+      {/* 재대여 명의 선택 모달 — 취소 로그 탭에서도 열리므로 탭 바깥에 둔다 */}
       {reborrowModalOpen ? (
         <div onClick={() => !reborrowing && setReborrowModalOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 3000, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
           <div role="dialog" aria-modal="true" aria-label="재대여 신청" onClick={(e) => e.stopPropagation()} style={{ width: "min(460px, 100%)", maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: "16px", border: `1px solid ${C.border}`, padding: "22px" }}>
@@ -1050,7 +1071,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             </div>
 
             <div style={{ fontSize: "12.5px", color: C.label, marginBottom: "16px", lineHeight: 1.6 }}>
-              선택한 반납완료 {reborrowTargets.length}건을 새로 신청합니다. 기존 반납 기록은 유지되며, 현재 재고를 확인한 뒤 대여 수량을 차감합니다.
+              선택한 {reborrowFrom ? "취소" : "반납완료"} {reborrowTargets.length}건을 새로 신청합니다. 기존 {reborrowFrom ? "취소" : "반납"} 기록은 유지되며, 현재 재고를 확인한 뒤 대여 수량을 차감합니다.
             </div>
 
             <fieldset disabled={reborrowing} style={{ border: 0, padding: 0, margin: "0 0 20px", minWidth: 0 }}>
@@ -1085,7 +1106,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
             <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px" }}>
               <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px", borderRadius: "10px", border: `1.5px solid ${reborrowSameName ? C.accent : C.border}`, background: reborrowSameName ? C.accentSoft : "transparent", cursor: "pointer" }}>
                 <input type="radio" disabled={reborrowing} checked={reborrowSameName} onChange={() => setReborrowSameName(true)} />
-                <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>원래 반납자 명의로 재대여</span>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: C.text }}>원래 {reborrowFrom ? "신청자" : "반납자"} 명의로 재대여</span>
               </label>
               <label style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 12px", borderRadius: "10px", border: `1.5px solid ${!reborrowSameName ? C.accent : C.border}`, background: !reborrowSameName ? C.accentSoft : "transparent", cursor: "pointer" }}>
                 <input type="radio" disabled={reborrowing} checked={!reborrowSameName} onChange={() => setReborrowSameName(false)} />
@@ -1146,8 +1167,6 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
           </div>
         </div>
       ) : null}
-      </>
-      )}
 
       {/* 물품별 보기: 대여자 상세 모달 */}
       {selectedItemGroup ? (
@@ -1177,6 +1196,7 @@ export default function ScenarioLogsPage({ scriptUrl, connected, isLightMode, is
                       <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
                         {e.sheetType === "scenario" ? `SID 대여${e.scenarioId ? ` (${e.scenarioId})` : ""}` : "일반 대여"} · {e.borrowDate || "-"}
                       </div>
+                      {scenarioVariantText(e) ? <div style={{ fontSize: 12, color: C.accentText, fontWeight: 700, marginTop: 4 }}>종류: {scenarioVariantText(e)}</div> : null}
                     </div>
                     <span style={{ fontSize: "12px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "8px", padding: "3px 10px", flexShrink: 0 }}>{e.quantity}개</span>
                   </div>

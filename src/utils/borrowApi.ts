@@ -80,6 +80,8 @@ export interface ScenarioDefinition {
 }
 
 export interface UnreturnedItem {
+  plannerReturn?: { quantity: number; planId: number; routine: number; collectionName: string };
+  planner?: PlannerRentalContext;
   sheetType: "scenario" | "general";
   rowIndex: number;
   borrowerName: string;
@@ -117,10 +119,15 @@ export interface UnreturnedItem {
   variantName?: string;      // 확정된 종류 이름 (표시용)
   variantPending?: boolean;  // "종류 상관없음"으로 신청되어 아직 안 정해진 줄 — 재고가 아직 안 빠졌다
   variantUnassigned?: boolean; // 종류가 생기기 전에 나간 대여 건 — 반납할 때 어느 종류가 돌아오는지 골라야 한다
+  /** 같은 물품의 직전 대여·반납 종류 — 같은 종류가 연달아 나가지 않게 보라색으로 알려준다. */
+  previousVariant?: { variantId: number; variantName: string; kind: "대여" | "반납"; at: string };
+  /** 이 줄의 종류가 직전 대여·반납과 같다. */
+  sameVariantAsPrevious?: boolean;
   /** 대여/반납 처리 화면에서 건별로 지정 — 켜져 있으면 이 대여 줄은 종류 수 한도 계산에서 빠진다. */
   typeLimitExempt?: boolean;
   /** 한도 제외를 지정한 이유. 제외 항목과 함께 관리자 화면에 표시한다. */
   typeLimitExemptReason?: string;
+  rentalTerms?: {mode:'general'|'reason'|'long_term'|'planner';reason:string;dueDate:string;deadlineAt?:string;reviewReason?:string;reviewedBy?:string;generalSince?:string};
   /** 내 대여 조회에서만 제공되는 읽기 전용 카탈로그 정보. 보관 위치·구매 정보는 포함하지 않는다. */
   details?: {
     size: string;
@@ -136,7 +143,20 @@ export interface UnreturnedItem {
   } | null;
 }
 
+export interface PlannerRentalContext {
+  planId: number;
+  collectionName: string;
+  routine: number;
+  nextRoutine: {
+    number: number;
+    shotCount: number;
+    items: { id: string; name: string; location: string; variantName: string; quantity: number; keptQuantity: number }[];
+  } | null;
+}
+
 export interface BorrowEntry {
+  rentalTerms?: {mode:'general'|'reason'|'long_term';reason:string;dueDate:string};
+  requestRental?: { mode: "request" | "general"; reason: string };
   itemType: "scenario" | "general";
   borrowerName: string;
   affiliation: string;
@@ -148,7 +168,7 @@ export interface BorrowEntry {
   requiredObjects?: ScenarioItem[];
   additionalItems?: ScenarioItem[];
   syncNeeded?: boolean;
-  borrowedItems?: { id: string; name: string; quantity: number; variantId?: number }[];
+  borrowedItems?: { id: string; name: string; quantity: number; variantId?: number; reservationId?: number }[];
   generalOption?: string;
   floor?: string; // 층수 (예: "B2") — 좌석 위치 기록용
   unit?: string;  // 유닛 (예: "Unit 1") — 좌석 위치 기록용
@@ -390,7 +410,9 @@ async function apiPostImpl_(scriptUrl: string, action: string, payload: any, tim
   }
   const text = await res!.text();
   try {
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    if (data.success && typeof window !== 'undefined') window.dispatchEvent(new Event('wms:rental-notifications-changed'));
+    return data;
   } catch {
     const cleanSnippet = text.trim().replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").substring(0, 150);
     throw new Error(`서버가 올바르지 않은 POST 응답을 반환했습니다. [서버 응답 요약: ${cleanSnippet}...] (요청 액션: ${action})`);
@@ -405,6 +427,12 @@ function apiGet(scriptUrl: string, action: string, params: Record<string, string
 function apiPost(scriptUrl: string, action: string, payload: any, timeoutMs?: number): Promise<any> {
   // 변경 이력의 "누가"는 서버가 로그인 세션에서 채운다.
   return withGasConcurrencyLimit(() => apiPostImpl_(scriptUrl, action, payload, timeoutMs), true);
+}
+
+export async function fetchAdminRentalNotifications(scriptUrl: string): Promise<{ pickup: number; reservations: number; photoReviews: number; objectReports: number }> {
+  const data = await apiGet(scriptUrl, 'getAdminRentalNotifications', {}, { timeoutMs: 10000, retries: 0 });
+  if (!data.success) throw new Error(data.error || '대여 알림을 불러오지 못했습니다.');
+  return { pickup: Math.max(0, Number(data.pickup) || 0), reservations: Math.max(0, Number(data.reservations) || 0), photoReviews: Math.max(0, Number(data.photoReviews) || 0), objectReports: Math.max(0, Number(data.objectReports) || 0) };
 }
 
 export async function fetchBorrowAppVersion(scriptUrl: string): Promise<string> {
@@ -464,10 +492,58 @@ export async function fetchUnreturnedItems(scriptUrl: string, forceRefresh?: boo
   }
 }
 export interface CurrentItemBorrower {
+  floor?: string;
+  unit?: string;
+  reservationNoticeSeen?: boolean;
   borrowerName: string;
   quantity: number;
   pickedUp: boolean;
   variantName: string;
+}
+
+export interface ItemReservation {
+  rentalTerms?: {mode:'general'|'reason'|'long_term'|'planner';reason:string;dueDate:string};
+  id: number; itemId: string; itemName: string; image: string; quantity: number;
+  variantId?: number; variantName: string; startsAt: string; borrowerName: string; mine: boolean;
+  floor?: string; unit?: string; stock?: number; available?: boolean; promotionError?: string;
+  requestFor?: string; requestRental?: {mode: "request" | "general"; reason: string};
+  status?: "reserved" | "fulfilled"; requestNo?: number;
+}
+export async function fetchReservations(scriptUrl: string, mine = false, employeeId?: string): Promise<ItemReservation[]> {
+  const data = await apiGet(scriptUrl, mine ? "getMyReservations" : "getReservations", employeeId ? { employeeId } : {}, { retries: 0 });
+  if (!data.success) throw Error(data.message || data.error || "예약 목록을 불러오지 못했습니다.");
+  return data.items || [];
+}
+export interface AdminItemReservation extends ItemReservation {
+  employeeId: string; floor: string; unit: string; createdAt: string; stock: number; available: boolean;
+  status: "reserved" | "fulfilled"; requestNo?: number;
+}
+export async function fetchAdminReservations(scriptUrl: string): Promise<AdminItemReservation[]> {
+  const data = await apiGet(scriptUrl, "getAdminReservations", {}, { retries: 0 });
+  return data.items || [];
+}
+export async function cancelAdminItemReservation(scriptUrl: string, reservationId: number): Promise<{releasedQuantity:number}> {
+  const data = await apiPost(scriptUrl, "cancelAdminItemReservation", { reservationId });
+  if (!data.success) throw Error(data.message || data.error || "예약을 취소하지 못했습니다.");
+  return {releasedQuantity:Number(data.releasedQuantity) || 0};
+}
+export async function reserveItems(scriptUrl: string, payload: { items: BrowseCartItem[]; startsAt: string; floor: string; unit: string; clientId: string; rentalTerms?: {mode:'general'|'reason'|'long_term';reason:string;dueDate:string}; requestRental?: {mode: "request" | "general"; reason: string} }) {
+  const data = await apiPost(scriptUrl, "reserveItems", payload);
+  if (!data.success) throw Error(data.message || data.error || "예약을 저장하지 못했습니다.");
+  return data;
+}
+export async function cancelItemReservation(scriptUrl: string, reservationId: number) {
+  const data = await apiPost(scriptUrl, "cancelItemReservation", { reservationId });
+  if (!data.success) throw Error(data.message || data.error || "예약을 취소하지 못했습니다.");
+}
+export async function acknowledgeReservationNotice(scriptUrl: string, reservationIds: number[], employeeId?: string) {
+  const data = await apiPost(scriptUrl, "acknowledgeReservationNotice", { reservationIds, ...(employeeId ? { employeeId } : {}) });
+  if (!data.success) throw Error(data.message || data.error || "예약 안내 확인을 저장하지 못했습니다.");
+}
+export async function fetchReservationBorrowers(scriptUrl: string, reservationId: number): Promise<CurrentItemBorrower[]> {
+  const data = await apiGet(scriptUrl, "getReservationBorrowers", { reservationId: String(reservationId) }, { retries: 0 });
+  if (!data.success) throw Error(data.message || data.error || "현재 대여자를 불러오지 못했습니다.");
+  return data.borrowers || [];
 }
 
 export async function fetchItemBorrowers(scriptUrl: string, itemId: string, category: "scenario" | "tablecloth" = "scenario", variantId?: number): Promise<CurrentItemBorrower[]> {
@@ -482,6 +558,60 @@ export async function fetchMyBorrowedItems(scriptUrl: string, name: string, empl
   if (affiliation) params.affiliation = affiliation;
   const data = await apiGet(scriptUrl, "getMyBorrowedItems", params);
   return (data.items || []) as UnreturnedItem[];
+}
+
+/** 양도 화면 첫 단계에 띄울 "지금 들고 있는 물품". key는 서버가 다시 확인하는 식별자다. */
+export interface TransferableItem {
+  key: string;
+  kind: "scenario" | "warehouse";
+  itemId: string;
+  name: string;
+  quantity: number;
+  variantName: string;
+  image: string;
+  scenarioId: string;
+  borrowDate: string;
+  transferable: boolean;
+  /** 넘길 수 없는 이유(예: "대여 확인 전"). 넘길 수 있으면 빈 문자열. */
+  reason: string;
+  /** 대여 방식이 없는 예전 대여 — 양도할 때 받는 사람의 대여 방식을 골라야 한다. */
+  needsRentalMode?: boolean;
+}
+
+export async function fetchMyTransferableItems(scriptUrl: string, employeeId: string): Promise<TransferableItem[]> {
+  const data = await apiGet(scriptUrl, "getMyTransferableItems", { employeeId });
+  if (data.success === false) throw new Error(data.error || "대여 중인 물품을 불러오지 못했습니다.");
+  return (data.items || []) as TransferableItem[];
+}
+
+export interface TransferResult { receiverName: string; movedQty: number; itemTypes: number; requestNo: number | null; message: string }
+
+/** 고른 물품을 받는 사람 명의로 한 번에 옮긴다. 하나라도 실패하면 아무것도 바뀌지 않는다. */
+export async function postTransferMyItems(scriptUrl: string, payload: {
+  employeeId: string;
+  toEmployeeId: string;
+  floor: string;
+  unit: string;
+  items: { key: string; quantity: number }[];
+  rentalTerms?: { mode: 'general' | 'reason' | 'long_term'; reason: string; dueDate: string };
+}): Promise<TransferResult> {
+  const res = await apiPost(scriptUrl, "transferMyItems", payload);
+  if (!res || res.success === false) throw new Error(res?.error || res?.message || "양도하지 못했습니다.");
+  return res as TransferResult;
+}
+
+export interface MyReturnedItem extends UnreturnedItem {
+  itemName: string;
+  returnDate: string;
+  returnSource: string;
+  cancelled: boolean;
+}
+
+export async function fetchMyReturnedItems(scriptUrl: string, name: string, employeeId: string, affiliation?: string): Promise<MyReturnedItem[]> {
+  const params: Record<string, string> = { name, employeeId, scope: "workday" };
+  if (affiliation) params.affiliation = affiliation;
+  const data = await apiGet(scriptUrl, "getMyBorrowedItems", params);
+  return (data.items || []) as MyReturnedItem[];
 }
 
 /** registered: 등록됨. ambiguous: 같은 이름의 계정이 여러 개 등록돼 있어(동명이인) 어느 쪽인지 구분할 수 없음 —
@@ -555,6 +685,17 @@ export async function postRecordDamagedReturn(
   return (await apiPost(scriptUrl, "recordDamagedReturn", payload)) as BorrowResult & { created?: number; warnings?: string[] };
 }
 
+export async function objectReportGet(scriptUrl: string, admin: boolean, identity: { employeeId?: string; name?: string } = {}) {
+  const data = await apiGet(scriptUrl, admin ? 'getObjectReports' : 'getMyObjectReports', { employeeId:identity.employeeId || '',name:identity.name || '' }, { retries:0 });
+  if (!data.success) throw Error(data.error || data.message || '보고 목록을 불러오지 못했습니다.');
+  return data;
+}
+export async function objectReportPost(scriptUrl: string, action: 'createObjectReport' | 'completeObjectReport' | 'reviewObjectReport' | 'registerObjectReportTarget' | 'processDamagedReturn', payload: unknown) {
+  const data = await apiPost(scriptUrl, action, payload, action === 'registerObjectReportTarget' ? 300000 : undefined);
+  if (!data.success) throw Error(data.error || data.message || '처리하지 못했습니다.');
+  return data;
+}
+
 /** 대여 실물 확인(체크) 처리 — 반납의 postProcessReturn과 대칭. 재고는 안 건드리고 확인 시각만 남긴다. */
 // variantId는 "종류 상관없음"으로 신청된 줄에만 필요하다 — 담당자가 실제로 나간 종류를
 // 고르면 그때 처음으로 재고가 차감된다.
@@ -563,6 +704,13 @@ export async function postConfirmPickup(scriptUrl: string, items: { sheetType: "
 }
 
 export interface ReturnPhotoBatchItem {
+  itemId?: string;
+  sheetType?: "scenario" | "general" | "warehouse" | "tablecloth";
+  rowIndex?: number;
+  variantId?: number | null;
+  variantName?: string;
+  variantPending?: boolean;
+  variantUnassigned?: boolean;
   itemLabel: string;
   borrower: string;
   location?: string;
@@ -591,6 +739,8 @@ export async function postSaveReturnPhoto(
   return apiPost(scriptUrl, "saveReturnPhoto", data, RETURN_PHOTO_TIMEOUT_MS);
 }
 
+export type PhotoReviewKind = "return" | "pickup" | "tool";
+export interface PhotoReview { status: "ok" | "issue"; note?: string; reviewer?: string; reviewedAt?: string }
 export interface ReturnPhotoEntry {
   id: number;
   occurredAt: string;
@@ -598,11 +748,14 @@ export interface ReturnPhotoEntry {
   photo: string;
   thumb: string;
   items: ReturnPhotoBatchItem[];
+  /** 무인 모드 사진만 있다. 관리자가 확인했는지(없으면 아직 확인 전). */
+  reviewKind?: PhotoReviewKind;
+  review?: PhotoReview | null;
 }
 
 /** 저장된 반납 증빙 사진 목록(최신순)을 불러온다. itemSearch를 주면 그 사진에 함께 찍힌
  *  물품 중 이름이 일치하는 게 있는 사진만 걸러서 돌려준다. */
-export async function fetchReturnPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
+export async function fetchReturnPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string; uncheckedOnly?: boolean }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
   const params: Record<string, string> = {};
   if (opts?.limit) params.limit = String(opts.limit);
   if (opts?.offset) params.offset = String(opts.offset);
@@ -715,6 +868,7 @@ export interface BrowseIdentity {
   unit?: string;
 }
 export interface BrowseCartItem {
+  reservationId?: number;
   id: string;
   name: string;
   quantity: number;
@@ -727,6 +881,7 @@ export interface BrowseCartItem {
 
 const IDENTITY_KEY = "wms_browse_identity";
 const CART_PREFIX = "wms_browse_cart:";
+const RESERVATION_CART_PREFIX = "wms_reservation_cart:";
 
 export function identityKey(name: string, employeeId: string): string {
   return `${String(name || "").trim()}|${String(employeeId || "").trim()}`;
@@ -747,7 +902,7 @@ export function clearIdentity(): void {
   try {
     localStorage.removeItem(IDENTITY_KEY);
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith(CART_PREFIX) || k.startsWith(WH_CART_PREFIX)) localStorage.removeItem(k);
+      if (k.startsWith(CART_PREFIX) || k.startsWith(RESERVATION_CART_PREFIX) || k.startsWith(WH_CART_PREFIX)) localStorage.removeItem(k);
     }
   } catch { /* 저장소를 못 건드려도 세션 자체는 이미 끊긴다 */ }
 }
@@ -776,6 +931,18 @@ export function loadBrowseCart(name: string, employeeId: string): BrowseCartItem
 
 export function clearBrowseCart(name: string, employeeId: string): void {
   try { localStorage.removeItem(CART_PREFIX + identityKey(name, employeeId)); } catch {}
+}
+
+export function saveReservationCart(name: string, employeeId: string, items: BrowseCartItem[]): void {
+  try {
+    const key = RESERVATION_CART_PREFIX + identityKey(name, employeeId);
+    if (items.length) localStorage.setItem(key, JSON.stringify(items));
+    else localStorage.removeItem(key);
+  } catch {}
+}
+export function loadReservationCart(name: string, employeeId: string): BrowseCartItem[] {
+  try { return JSON.parse(localStorage.getItem(RESERVATION_CART_PREFIX + identityKey(name, employeeId)) || "[]"); }
+  catch { return []; }
 }
 
 /* ══════════ COS 물품 타입 & 헬퍼 ══════════ */
@@ -882,23 +1049,50 @@ export async function fetchSmObjectStatus(scriptUrl: string): Promise<SmObjectSt
 }
 
 /** 무인 대여 확인 때 직접 촬영한 수령 증빙 사진 목록. */
-export async function fetchPickupPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
+export async function fetchPickupPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string; uncheckedOnly?: boolean }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
   const params: Record<string, string> = {};
   if (opts?.limit) params.limit = String(opts.limit);
   if (opts?.offset) params.offset = String(opts.offset);
   if (opts?.itemSearch) params.itemSearch = opts.itemSearch;
+  if (opts?.uncheckedOnly) params.reviewFilter = "unchecked";
   const data = await apiGet(scriptUrl, "getPickupPhotos", params);
   return { items: (data.items || []) as ReturnPhotoEntry[], hasMore: !!data.hasMore };
 }
 
 /** 무인 모드에서 직접 처리한 반납 사진. 일반 관리자 반납 사진과 분리해서 불러온다. */
-export async function fetchUnattendedReturnPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
+export async function fetchUnattendedReturnPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string; uncheckedOnly?: boolean }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
   const params: Record<string, string> = {};
   if (opts?.limit) params.limit = String(opts.limit);
   if (opts?.offset) params.offset = String(opts.offset);
   if (opts?.itemSearch) params.itemSearch = opts.itemSearch;
+  if (opts?.uncheckedOnly) params.reviewFilter = "unchecked";
   const data = await apiGet(scriptUrl, "getUnattendedReturnPhotos", params);
   return { items: (data.items || []) as ReturnPhotoEntry[], hasMore: !!data.hasMore };
+}
+
+/** 무인 공구 대여 신청 때 대여자가 찍은 사진. */
+export async function fetchToolRequestPhotos(scriptUrl: string, opts?: { limit?: number; offset?: number; itemSearch?: string; uncheckedOnly?: boolean }): Promise<{ items: ReturnPhotoEntry[]; hasMore: boolean }> {
+  const params: Record<string, string> = {};
+  if (opts?.limit) params.limit = String(opts.limit);
+  if (opts?.offset) params.offset = String(opts.offset);
+  if (opts?.itemSearch) params.itemSearch = opts.itemSearch;
+  if (opts?.uncheckedOnly) params.reviewFilter = "unchecked";
+  const data = await apiGet(scriptUrl, "getToolRequestPhotos", params);
+  return { items: (data.items || []) as ReturnPhotoEntry[], hasMore: !!data.hasMore };
+}
+
+/** 무인 사진 탭별 아직 확인하지 않은 장수. */
+export async function fetchPhotoReviewCounts(scriptUrl: string): Promise<Record<PhotoReviewKind, number>> {
+  const data = await apiGet(scriptUrl, "getUnattendedPhotoReviewCounts", {});
+  return { return: 0, pickup: 0, tool: 0, ...(data.counts || {}) };
+}
+
+/** 무인 사진을 확인함/문제 있음으로 표시한다. status를 비우면 표시를 지운다. */
+export async function setPhotoReview(scriptUrl: string, kind: PhotoReviewKind, id: number, status: "ok" | "issue" | "", note = ""): Promise<PhotoReview | null> {
+  const data = await apiPost(scriptUrl, "setPhotoReview", { kind, id, status, note });
+  if (data?.success !== true) throw new Error(data?.message || data?.error || "확인 표시를 저장하지 못했습니다.");
+  if (status && (data.review?.status !== status || data.review?.note !== note.trim().slice(0, 500))) throw new Error("메모 저장 결과를 확인하지 못했습니다. 입력한 내용은 유지됩니다. 다시 시도해주세요.");
+  return (data?.review || null) as PhotoReview | null;
 }
 
 export async function fetchRegisteredUser(scriptUrl: string, employeeId: string, opts?: { includeSeatRecommendations?: boolean }): Promise<{ found: boolean; employeeId?: string; name?: string; seatRecommendations?: BorrowerSeatRecommendation[] }> {
@@ -1557,7 +1751,7 @@ export interface ActiveItemTypeInfo {
   count: number;
   max: number;                 // 실제 적용되는 한도 (페널티가 있으면 낮아진 값)
   baseMax?: number;            // 페널티 없을 때의 기본 한도
-  penalty?: { max: number; reason?: string; until?: string } | null;
+  penalty?: { max: number; reason?: string; items?: string; until?: string } | null;
   exempt?: boolean;            // 좌석배치도에서 ∞로 지정된 유닛이면 true (서버 판정)
   items: { id: string; name: string; quantity: number; borrowDate: string }[];
 }
@@ -1601,6 +1795,16 @@ export function compareRackSlot(la: string | null | undefined, lb: string | null
 /* ══════════ 시나리오 대여 대장 (반납완료 포함 전체 조회 + 재대여) ══════════ */
 
 export interface ScenarioLogEntry {
+  variantUnassigned?: boolean;
+  /** 반납 처리됐지만 물건이 나간 적 없이 취소된 줄(미수령 자동 취소 등). */
+  cancelled?: boolean;
+  returnSource?: string;
+  /** 누가 취소했는지: auto(미수령 자동 취소) | admin(관리자) | self(대여자 본인) | ""(기록 없음). */
+  cancelBy?: string;
+  /** 취소를 처리한 관리자 또는 대여자 이름. */
+  cancelActor?: string;
+  /** 신청 시각. */
+  appliedAt?: string;
   sheetType: "scenario" | "general";
   rowIndex: number;
   /** 이 대여가 어떤 종류였는지. 종류를 안 쓰는 물품이면 빈 값. */
@@ -1642,6 +1846,7 @@ export interface ScenarioLogQuery {
   recentDays?: number;                             // 반납분을 최근 N일로 제한
   scope?: "all" | "unreturned" | "returned";      // 미반납만 / 반납분만 / 전체
   slim?: boolean;                                  // 화면에서 안 쓰는 필드 제외 (전송량 절감)
+  excludeCancelled?: boolean;                      // 취소된 줄은 빼고(취소 로그에서 따로 본다)
 }
 
 export async function fetchScenarioAllLogs(
@@ -1671,9 +1876,18 @@ export async function fetchScenarioAllLogsPaged(
   if (query.recentDays && query.recentDays > 0) params.recentDays = String(query.recentDays);
   if (query.scope && query.scope !== "all") params.scope = query.scope;
   if (query.slim) params.slim = "1";
+  if (query.excludeCancelled) params.excludeCancelled = "1";
   if (query.peopleOffset) params.peopleOffset = String(query.peopleOffset);
   const data = await apiGet(scriptUrl, "getScenarioAllLogs", params, { timeoutMs: TIMEOUT_BULK_MS, retries: 1 });
   return { items: (data.items || []) as ScenarioLogEntry[], hasMore: !!data.hasMore, totalPeople: Number(data.totalPeople) || 0 };
+}
+
+/** 취소 로그: 물건이 나가지 않고 닫힌 대여(미수령 자동 취소·관리자 취소·본인 취소). 취소 시각 최신순. */
+export async function fetchCancelLogs(scriptUrl: string, recentDays?: number): Promise<ScenarioLogEntry[]> {
+  const params: Record<string, string> = {};
+  if (recentDays && recentDays > 0) params.recentDays = String(recentDays);
+  const data = await apiGet(scriptUrl, "getCancelLogs", params, { timeoutMs: TIMEOUT_BULK_MS, retries: 1 });
+  return (data.items || []) as ScenarioLogEntry[];
 }
 
 // 반납완료된 대여를 그대로 다시 대여 신청 (동일 물품/수량/대여자)
@@ -1755,6 +1969,18 @@ export async function postSetTypeLimitExempt(
   return apiPost(scriptUrl, "setTypeLimitExempt", { sheetType, rowIndex, exempt, reason });
 }
 
+export async function postConvertRentalToGeneral(scriptUrl:string,requestNo:number,reason:string):Promise<{changed:boolean;message:string}> {
+  const result=await apiPost(scriptUrl,'convertRentalToGeneral',{requestNo,reason});
+  if (!result.success) throw Error(result.message || result.error || '대여 방식 변경에 실패했습니다.');
+  return result;
+}
+
+export async function postConvertRentalToReason(scriptUrl:string,requestNo:number,reason:string):Promise<{changed:boolean;message:string}> {
+  const result=await apiPost(scriptUrl,'convertRentalToReason',{requestNo,reason});
+  if (!result.success) throw Error(result.message || result.error || '대여 방식 변경에 실패했습니다.');
+  return result;
+}
+
 /* ══════════ 앱 버전 발급 (관리자 전용) ══════════ */
 // 배포를 마친 뒤 이 함수를 호출하면 서버 APP_VERSION이 새 값으로 바뀌고,
 // 열려 있던 구버전 화면들에 새로고침 안내가 뜬다.
@@ -1788,6 +2014,7 @@ export async function postWarehouseRentBulk(
 /* ══════════ 신청 묶음(배치) 상세 ══════════ */
 // 한 번의 신청에 무엇이 함께 나갔는지 확인한다. 반납 완료 건도 포함된다.
 export interface BatchDetailItem {
+  variantUnassigned?: boolean;
   variantName?: string;
   variantPending?: boolean;
   sheetType: "scenario" | "general";
@@ -1909,6 +2136,8 @@ export interface PenaltyEntry {
   name: string;
   max: number;      // 이 사람에게 적용되는 최대 대여 종류
   reason?: string;
+  /** 어떤 물품 때문인지 한 줄 요약(없으면 빈 값). */
+  items?: string;
   until?: string;   // 비어 있으면 해제할 때까지
 }
 
@@ -1943,6 +2172,8 @@ export interface PenaltyDetailLink {
 export interface PenaltyDetailEntry {
   id: number;
   max: number;
+  /** 어떤 물품 때문인지 한 줄 요약. */
+  items?: string;
   reason?: string;
   until?: string;
   auto: boolean;        // 무인 모드가 자동으로 부여한 것인지(false면 관리자가 직접 등록)
@@ -1965,11 +2196,29 @@ export function maskName(name: string): string {
 }
 
 /* ══════════ 랜딩 공지 ══════════ */
-export interface NoticeData { title?: string; text: string; updatedAt?: string; author?: string }
+/** 로그인 팝업에서의 상태(관리자 편집기용). 서버 시각 기준으로 계산해서 내려준다. */
+export interface NoticePopupState { active: boolean; remainingMinutes: number; ageMinutes: number | null }
+export interface NoticeData {
+  title?: string; text: string; updatedAt?: string; author?: string; popup?: NoticePopupState;
+  /** 관리자 편집기 전용: 이 칸이 서버에 저장돼 있던 몇 번째 공지에서 왔는지. 내용을 고쳐도 유지돼서 "수정됨"을 알아본다. 서버로 보내지 않는다. */
+  _origin?: number;
+}
 export const NOTICE_MAX = 3;
 
 export async function fetchNotices(scriptUrl: string): Promise<NoticeData[]> {
   const data = await apiGet(scriptUrl, "getNotices", {});
+  return (data.items || []) as NoticeData[];
+}
+
+/** 관리자 편집기용: 공지마다 로그인 팝업에 아직 나가는지, 얼마나 남았는지를 함께 받는다. */
+export async function fetchNoticesForEditor(scriptUrl: string): Promise<NoticeData[]> {
+  const data = await apiGet(scriptUrl, "getNoticesForEditor", {});
+  return (data.items || []) as NoticeData[];
+}
+
+/** 대여자 로그인 직후 팝업용: 서버가 작성한 지 48시간 이내의 공지만 골라서 준다. */
+export async function fetchNoticePopup(scriptUrl: string): Promise<NoticeData[]> {
+  const data = await apiGet(scriptUrl, "getNoticePopup", {});
   return (data.items || []) as NoticeData[];
 }
 
@@ -1978,7 +2227,7 @@ export async function saveNotices(
   items: NoticeData[],
   author: string
 ): Promise<{ success: boolean; items?: NoticeData[]; message?: string }> {
-  return apiPost(scriptUrl, "saveNotices", { items, author });
+  return apiPost(scriptUrl, "saveNotices", { items: items.map((n) => ({ title: n.title, text: n.text })), author });
 }
 
 export async function fetchNotice(scriptUrl: string): Promise<NoticeData> {

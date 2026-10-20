@@ -1,22 +1,27 @@
+import { rentalTermsLabel } from '../../shared/rentalTerms.js';
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import WarehouseManualRequestsPanel from "./WarehouseManualRequestsPanel";
+import UnattendedRecoveryPanel from "./UnattendedRecoveryPanel";
+import { DamageReportEvidence } from './ObjectReports';
 import { Search, RotateCcw, User, Package, X, Undo2, Check, MapPin, Repeat, Camera, AlertTriangle, Printer } from "lucide-react";
 import { cameraUrl, claimCameraStream, releaseCameraStream, fallbackToSameOrigin, resetCameraBase, hardResetCameraSession, restartCameraCapture } from "../utils/cameraSource";
 import {
   fetchUnreturnedItems, UnreturnedItem,
-  postProcessReturn, postConfirmPickup, postSaveReturnPhoto, postRecordDamagedReturn, fetchBorrowAppVersion,
+  postProcessReturn, postConfirmPickup, postSaveReturnPhoto, objectReportPost, fetchBorrowAppVersion,
   postUpdateBorrowerSeat, fetchSeatMap, SeatMap,
   isVersionMismatchMessage, signalVersionOutdated,
   fetchScenarioObjectsForAdmin, ScenarioObjectAdmin, postRecordBorrow, nowString,
-  postSwapBorrowItem, postSetTypeLimitExempt,
+  postSwapBorrowItem, postSetTypeLimitExempt, postConvertRentalToGeneral, postConvertRentalToReason,
   fetchWarehouseBorrowedItems, postWarehouseRentBulk,
   fetchWarehouseInventory, WarehouseItem,
-  postRecordBorrow as postBorrow,
+  postRecordBorrow as postBorrow, BorrowEntry,
 
 
 
 } from "../utils/borrowApi";
 import { smartMatch } from "../utils/search";
+import { rentalSidLabel, rentalSidLabels } from "../utils/rentalSid";
+import { sortReverseQrLocation } from "../utils/rentalDisplayOrder";
 import { adminHeaders } from "../utils/adminAuth";
 import { getThumbImageUrl } from "../utils/drive";
 import { getGoogleDriveImageUrl } from "../utils/drive";
@@ -24,6 +29,18 @@ import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 import { countDistinctItemTypes } from "../utils/itemTypeCount";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import RegisteredUserPicker from "./RegisteredUserPicker";
+import RentalTermsFields, { RentalMode } from "./RentalTermsFields";
+import PlannerRentalPreview from "./PlannerRentalPreview";
+import { plannerCollectionNames, plannerContexts, plannerReturnQuantity } from "../utils/plannerRentalDisplay";
+
+// 목록 줄 칩: 대여 방식 + 기한/면제 여부까지 보이게 한다 (사유는 아래 줄에 따로)
+function rentalTermsChip(terms: any): string {
+  if (!terms) return '';
+  if (terms.mode === 'planner') return 'Shoot Planner · 루틴 종료 시 반납 · 시간 제한 면제';
+  if (terms.mode === 'long_term') return `장기대여 · ${terms.dueDate}까지 반납`;
+  if (terms.mode === 'reason') return '사유 대여 · 4시간 제한 면제';
+  return terms.deadlineAt ? `일반 대여 · ${terms.deadlineAt}까지 반납` : '일반 대여 · 수령 확인 후 4시간 내 반납 (점심시간 제외)';
+}
 
 // 대여/반납 기록 두 건을 "같은 사람" 것으로 묶어도 되는지 판단한다 — 연체 독촉·반납 후
 // 재대여 등에서 여러 기록을 대여자별로 그룹핑할 때 쓴다. cfgw 소속은 이메일이 곧
@@ -198,6 +215,8 @@ interface Props {
 interface TransferTarget {
   name: string;
   employeeId: string;
+  /** 대여 방식이 없는 예전 대여를 양도할 때 받는 사람에게 한 번에 적용할 방식 */
+  rentalTerms?: BorrowEntry["rentalTerms"];
 }
 
 // 반납 장바구니 한 줄 = 특정 대여 행에서 몇 개를 반납할지
@@ -209,6 +228,7 @@ interface ReturnCartLine {
   borrower: string;
   email?: string;                     // 대여자 식별용(동명이인 구분) — 반납 후 재대여 그룹핑에 쓴다
   itemLabel: string;
+  scenarioId?: string;               // 원래 SID 대여 번호 — 표시 전용
   location: string;
   borrowDate?: string;                // 원래 대여 시각 — 반납 사진에 "누가 언제 빌렸는지" 남기는 용도
   max: number;                       // 이 행에서 반납 가능한 최대 수량
@@ -259,6 +279,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     warnSoft: isLightMode ? "rgba(180,83,9,0.10)" : "rgba(251,191,36,0.14)",
     error: isLightMode ? "#dc2626" : "#f87171",
     errorSoft: isLightMode ? "rgba(220,38,38,0.10)" : "rgba(248,113,113,0.14)",
+    // 직전 대여·반납과 같은 종류 표시
+    repeat: isLightMode ? "#7c3aed" : "#c4b5fd",
+    repeatSoft: isLightMode ? "rgba(124,58,237,0.10)" : "rgba(196,181,253,0.16)",
   };
 
   // 지난번 목록을 먼저 그려 화면이 비어 보이지 않게 한다 (응답이 오면 교체)
@@ -332,15 +355,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 이름만으로는 부족하고 이메일(= 사번/등록계정)까지 확정돼야 한다.
   const [transferMode, setTransferMode] = useState(false);
   const [transferTarget, setTransferTarget] = useState<TransferTarget>({ name: "", employeeId: "" });
+  const [transferRentalMode, setTransferRentalMode] = useState<RentalMode | null>(null);
+  const [transferRentalReason, setTransferRentalReason] = useState("");
+  const [transferRentalDueDate, setTransferRentalDueDate] = useState("");
   // 담은 순서를 기억해 C 키로 하나씩 되돌린다
   const addHistoryRef = useRef<string[]>([]);
   // 장바구니 처리 확인 모달 상태 (window.confirm 대신 인앱 모달로 안정적 처리)
   type DamagePayload = {
+    clientId: string;
     items: { itemId: string; itemName: string; qty: number; variantId?: number; noStock?: boolean; keepBorrowed?: boolean;
-             rentalSheetType?: "scenario" | "general"; rentalRowIndex?: number }[];
+             rentalSheetType?: "scenario" | "general"; rentalRowIndex?: number; penaltyExempt?: boolean; exemptionReason?: string }[];
     defectType: string; note: string; actionTaken: string; culprit: string; photo: string;
   };
   const [confirmBatch, setConfirmBatch] = useState<{ parts: string[]; batch: ReturnCartLine[]; reborrow: boolean; transfer: TransferTarget | null; damage?: DamagePayload } | null>(null);
+  const [damageRetry, setDamageRetry] = useState<any>(null);
+  const [damageRetryBusy, setDamageRetryBusy] = useState(false);
 
   // 파손 반납 입력 단계. "수량 → 불량 로그" 두 단계를 거친 뒤 원래 확인 모달로 넘어간다.
   const [damageFlow, setDamageFlow] = useState<{
@@ -355,6 +384,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       // 원본과 다른 종류를 내주는 일이 흔해서 대여 줄의 종류도 이걸로 갱신한다.
       variants: { id: number; name: string; stock: number }[];
       replacementVariantId?: number;
+      penaltyExempt?: boolean;
+      exemptionReason?: string;
     }[];
     defectType: string; note: string; actionTaken: string; culprit: string; photo: string;
   } | null>(null);
@@ -364,7 +395,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     batch: ReturnCartLine[];
     reborrow: boolean;
     transfer: TransferTarget | null;
-    lines: { key: string; label: string; qty: number; kind: "반납" | "확인"; variants: { id: number; name: string; stock: number }[] }[];
+    lines: { key: string; label: string; qty: number; kind: "반납" | "확인"; variants: { id: number; name: string; stock: number }[]; previous?: UnreturnedItem["previousVariant"] }[];
     choice: Record<string, number>;
   } | null>(null);
   // 반납 증빙 사진 — 처리 묶음에 실제 반납(공구 소모 포함)이 섞여 있으면 필수로 한 장 찍어야 한다.
@@ -603,10 +634,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     });
     const q = search.trim();
     return (q
-      ? list.filter((g) => smartMatch([g.name, g.email, g.employeeId, ...g.items.map((i) => i.itemLabel)], q))
+      ? list.filter((g) => smartMatch([g.name, g.email, g.employeeId, ...g.items.map((i) => i.itemLabel), ...rentalSidLabels(g.items), ...plannerCollectionNames(g.items)], q))
       : list
     ).sort((a, b) => {
       if (processMode === "반납" && category === "scenario") {
+        const aRecommended = a.items.some(item => plannerReturnQuantity(item) > 0);
+        const bRecommended = b.items.some(item => plannerReturnQuantity(item) > 0);
+        if (aRecommended !== bRecommended) return aRecommended ? -1 : 1;
         const aExempt = a.items.some((item) => item.typeLimitExempt);
         const bExempt = b.items.some((item) => item.typeLimitExempt);
         if (aExempt !== bExempt) return aExempt ? 1 : -1;
@@ -624,13 +658,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
 
   const activeItems = useMemo(() => {
     if (!selectedBorrower) return [];
-    return activeSource
+    const selected = activeSource
       .filter((it) => sameBorrowerIdentity(
         String(it.borrowerName || "").trim() || "(이름 없음)", String(it.email || ""),
         selectedBorrower.name, selectedBorrower.email, it.employeeId, selectedBorrower.employeeId
-      ))
-      .sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
-  }, [activeSource, selectedBorrower]);
+      ));
+    // QR와 같은 창고 동선 기준을 쓰되, 관리자는 반대 방향으로 확인한다.
+    // QR에 없는 COS 물품은 기존 정렬을 유지한다.
+    return category === "scenario" ? sortReverseQrLocation(selected)
+      : selected.sort((a, b) => String(a.location || "").localeCompare(String(b.location || "")));
+  }, [activeSource, selectedBorrower, category]);
 
 
   /* ── COS 물품 직접 대여 (관리자가 대신 처리) ── */
@@ -810,6 +847,19 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 반납 없이 오래 보관되는 request 물품처럼, 종류 수 한도 계산에서 건별로 빼고 넣는다.
   const [savingTypeLimitExemptKey, setSavingTypeLimitExemptKey] = useState<string | null>(null);
   const [typeLimitExemptEdit, setTypeLimitExemptEdit] = useState<{ item: UnreturnedItem; reason: string } | null>(null);
+  // to: 'general' = 사유·장기대여 → 일반 대여, 'reason' = 일반 대여 → 사유 대여
+  const [generalConversion,setGeneralConversion]=useState<{item:UnreturnedItem;reason:string;to:'general'|'reason'}|null>(null);
+  const [savingConversion,setSavingConversion]=useState(false);
+  const convertToGeneral=async()=>{
+    if (!generalConversion?.item.requestNo || !generalConversion.reason.trim() || savingConversion) return;
+    setSavingConversion(true);
+    try {
+      const convert=generalConversion.to==='reason' ? postConvertRentalToReason : postConvertRentalToGeneral;
+      const result=await convert(scriptUrl,generalConversion.item.requestNo,generalConversion.reason.trim());
+      setGeneralConversion(null);showToast(result.message,'ok');await load();
+    } catch(error:any) { showToast(error.message || '대여 방식 변경에 실패했습니다.','error'); }
+    finally {setSavingConversion(false);}
+  };
   const saveTypeLimitExempt = async (exempt: boolean) => {
     if (!typeLimitExemptEdit) return;
     const it = typeLimitExemptEdit.item;
@@ -965,9 +1015,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       return `${m[1]} ${m[2].padStart(2, "0")}:${m[3]}`;
     };
 
-    const map = new Map<string, { key: string; when: string; shift?: string; requestNo?: number; items: UnreturnedItem[]; isExemptSection?: boolean }>();
+    const map = new Map<string, { key: string; when: string; shift?: string; requestNo?: number; items: UnreturnedItem[]; isExemptSection?: boolean; isPlannerReturnSection?: boolean }>();
     const exemptItems: UnreturnedItem[] = [];
+    const recommendedItems: UnreturnedItem[] = [];
     activeItems.forEach((it) => {
+      if (processMode === "반납" && category === "scenario" && plannerReturnQuantity(it) > 0) { recommendedItems.push(it); return; }
       if (it.typeLimitExempt) { exemptItems.push(it); return; }
       const key = it.requestNo ? `request:${it.requestNo}` : `${it.batchId || ""}|${bucket(it)}`;
       if (!map.has(key)) map.set(key, { key, when: bucket(it), shift: it.shift, requestNo: it.requestNo, items: [] });
@@ -980,10 +1032,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     };
     // 최근 신청부터 위로 (가장 최근에 빌린 것이 맨 위에 보이도록)
     const regular = Array.from(map.values()).sort((a, b) => ts(b.when) - ts(a.when));
-    return exemptItems.length
+    const groups = exemptItems.length
       ? [...regular, { key: "type-limit-exempt", when: "한도 제외 항목", items: exemptItems, isExemptSection: true }]
       : regular;
-  }, [activeItems]);
+    return recommendedItems.length ? [{ key: "planner-return", when: "계획 반납 추천", items: recommendedItems, isPlannerReturnSection: true }, ...groups] : groups;
+  }, [activeItems, processMode, category]);
 
   // 커서 인덱스는 묶음을 펼친 순서(= activeItems 정렬)와 맞춰야 한다
   const flatItems = useMemo(() => activeGroups.flatMap((g) => g.items), [activeGroups]);
@@ -991,6 +1044,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   const cartKey = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
   const inCartQty = (it: UnreturnedItem) => cart.find((c) => c.key === cartKey(it))?.qty || 0;
   const cartTotal = cart.reduce((n, c) => n + c.qty, 0);
+  // 양도 대상 중 대여 방식이 없는 예전 대여 줄 — 양도할 때 받는 사람의 방식을 한 번에 고른다.
+  const legacyTransferLines = cart.filter((c) => c.sheetType !== "warehouse" && c.action === "반납" && !!c.pickedUp
+    && (() => { const src = items.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key); return !!src && !src.rentalTerms; })());
   const cartTypeCount = useMemo(() => countDistinctItemTypes(cart), [cart]);
 
   // 수량 하나를 장바구니에 담는다 (종류가 아니라 개수 단위)
@@ -1008,6 +1064,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           borrower: String(it.borrowerName || "").trim() || "(이름 없음)",
           email: (it as any).email || undefined,
           itemLabel: it.itemLabel,
+          scenarioId: it.scenarioId,
           location: it.location || "",
           borrowDate: it.borrowDateTime || it.borrowDate,
           max,
@@ -1325,7 +1382,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       // 양도 대상이 되는 줄이 하나도 없으면(대여 확인만 담았거나 전부 소모 처리) 헛돈다.
       const eligible = batch.filter((c) => (c.sheetType === "warehouse" ? c.disposition !== "소모" : c.action === "반납" && !!c.pickedUp));
       if (!eligible.length) { showToast("양도할 수 있는 줄이 없습니다. (대여 확인·소모 처리 줄은 양도 대상이 아닙니다)", "warn"); return; }
-      transfer = { name, employeeId: empId };
+      // 대여 방식이 없는 예전 대여가 섞여 있으면 받는 사람의 방식을 골라야 진행된다.
+      if (legacyTransferLines.length) {
+        const mode = transferRentalMode;
+        if (!mode) { showToast("대여 방식이 정해지지 않은 물품이 있습니다. 받는 사람의 대여 방식을 선택해주세요.", "warn"); return; }
+        if (mode !== "general" && !transferRentalReason.trim()) { showToast("대여 사유를 입력해주세요.", "warn"); return; }
+        if (mode === "long_term" && !transferRentalDueDate) { showToast("반납 예정일을 선택해주세요.", "warn"); return; }
+        transfer = { name, employeeId: empId, rentalTerms: { mode, reason: mode === "general" ? "" : transferRentalReason.trim(), dueDate: mode === "long_term" ? transferRentalDueDate : "" } };
+      } else {
+        transfer = { name, employeeId: empId };
+      }
     }
 
     // 종류가 안 정해진 줄이 있으면 확인 모달보다 먼저 종류를 고르게 한다.
@@ -1341,6 +1407,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           qty: x.line.qty,
           kind: (x.line.action === "반납" ? "반납" : "확인") as "반납" | "확인",
           variants: x.item!.variants || [],
+          previous: x.item!.previousVariant,
         })),
         choice: {},
       });
@@ -1435,6 +1502,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     addHistoryRef.current = [];
     setTransferMode(false);
     setTransferTarget({ name: "", employeeId: "" });
+    setTransferRentalMode(null); setTransferRentalReason(""); setTransferRentalDueDate("");
 
     const pickupLines = batch.filter((c) => c.sheetType !== "warehouse" && c.action !== "반납");
     // 파손품을 버리고 대체품을 계속 쓰기로 한 수량은 반납하지 않는다 — 그만큼 대여중으로 남고,
@@ -1490,10 +1558,12 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       // 깎으면 장부가 어긋난다. 아래 반납 처리 뒤에서 호출한다.
       // 2) 시나리오/일반 반납
       let returnSucceeded = false;
-      if (returnLines.length) {
+      const damageRequest = damage ? {clientId:damage.clientId,damage,returnRequests:returnLines.map(c=>({sheetType:c.sheetType,rowIndex:c.rowIndex,quantity:c.qty,variantId:c.variantId,damaged:!!c.damaged,source:'admin'}))} : null;
+      if (damageRequest) setDamageRetry(damageRequest);
+      if (returnLines.length || damage?.items.length) {
         try {
           const ver = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
-          const res = await postProcessReturn(
+          const res = damage ? await objectReportPost(scriptUrl, "processDamagedReturn", {clientId:damage.clientId, damage, returnRequests:returnLines.map((c) => ({sheetType:c.sheetType,rowIndex:c.rowIndex,quantity:c.qty,variantId:c.variantId,damaged:!!c.damaged,source:"admin"}))}) : await postProcessReturn(
             scriptUrl,
             returnLines.map((c) => ({ sheetType: c.sheetType as "scenario" | "general", rowIndex: c.rowIndex, quantity: c.qty, variantId: c.variantId, damaged: !!c.damaged, source: transfer ? "transfer" : "admin" })),
             ver
@@ -1502,11 +1572,14 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           if (!res.success) { showToast(res.message || "반납/취소 처리 실패", "error"); anyFailed = true; }
           else {
             returnSucceeded = true;
+            if (damage) setDamageRetry(null);
             const completed: string[] = [];
             if (actualReturnLines.length) completed.push(`${actualReturnLines.reduce((n, c) => n + c.qty, 0)}개 반납`);
             if (cancellationLines.length) completed.push(`${cancellationLines.reduce((n, c) => n + c.qty, 0)}개 대여 취소`);
             // 서버의 기존 문구가 취소 건도 "반납"으로 표시하므로 화면에서 의미에 맞게 구성한다.
-            showToast(`${completed.join(" · ")} 처리했습니다.`, "ok");
+            showToast(damage ? res.message : `${completed.join(" · ")} 처리했습니다.`, "ok");
+            window.dispatchEvent(new Event("wms-notifications-changed"));
+            if (damage) (res.warnings || []).forEach((w: string) => showToast(w, "warn"));
             const done = new Map(returnLines.map((c) => [c.key, c.qty]));
             setItems((prev) =>
               prev
@@ -1522,28 +1595,6 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         } catch (e: any) {
           showToast(`반납 처리 실패: ${e.message}`, "error");
           anyFailed = true;
-        }
-      }
-
-      // 2-1) 파손 반납 — 반납으로 재고에 되돌아온 것 중 못 쓰게 된 수량을 다시 깎고 불량 로그로 남긴다.
-      //      반납이 실패했으면 건너뛴다(재고만 깎이는 상황을 만들지 않기 위해).
-      if (damage && damage.items.length) {
-        if (returnLines.length && !returnSucceeded) {
-          showToast("반납 처리가 되지 않아 파손 등록을 건너뛰었습니다.", "warn");
-          anyFailed = true;
-        } else {
-          try {
-            const res = await postRecordDamagedReturn(scriptUrl, damage);
-            if (!res.success) { showToast(res.message || "파손 등록에 실패했습니다.", "error"); anyFailed = true; }
-            else {
-              showToast(res.message || `파손 ${damage.items.length}건을 불량 로그에 등록했습니다.`, "ok");
-              window.dispatchEvent(new Event("wms-notifications-changed"));
-              (res.warnings || []).forEach((w) => showToast(w, "warn"));
-            }
-          } catch (e: any) {
-            showToast(`파손 등록 실패: ${e.message}`, "error");
-            anyFailed = true;
-          }
         }
       }
 
@@ -1658,37 +1709,57 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 );
               }
               if (scenarioPart.length) {
-                // 원래 대여 기록에서 이메일·위치를 가져와 사용자와 좌석 정보를 유지한다
-                const src = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === scenarioPart[0].key);
-                const ver2 = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
-                await postBorrow(scriptUrl, [{
-                  itemType: "general",
-                  borrowerName: who,
-                  // 양도는 받는 사람의 소속/사번으로 이메일을 새로 계산해야 사용자 식별이 맞는다.
-                  // 원래 대여자의 이메일(knownEmail)을 그대로 넘기면 엉뚱한 사람이 태깅된다.
-                  affiliation: "",
-                  employeeId: transfer ? transfer.employeeId : "",
-                  knownEmail: transfer ? undefined : (group.email || src?.email || undefined),
-                  borrowDate: nowString(),
-                  borrowPurpose: note,
-                  generalOption: transfer ? "양도" : "재대여",
-                  borrowedItems: scenarioPart.map((c) => {
-                    const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
-                    // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
-                    // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
-                    // 종류가 나뉜 물품은 방금 반납된 그 종류에서 다시 나가야 한다.
-                    // 빠뜨리면 서버가 "종류를 선택해야 대여할 수 있습니다"로 거부해,
-                    // 반납만 되고 재대여/양도가 실패한 채로 남는다.
-                    return {
-                      id: item?.itemId || "",
-                      name: pureItemName(item?.itemLabel),
-                      quantity: c.qty,
-                      variantId: c.variantId ?? (item as any)?.variantId ?? undefined,
-                    };
-                  }).filter((x) => x.id),
-                  floor: src?.floor,
-                  unit: src?.unit,
-                }], ver2);
+                // 양도는 원래 신청의 사유 대여·장기대여를 받는 사람에게 그대로 넘긴다. 일반 대여는 방식을
+                // 보내지 않아 일반 대여로 새로 열리고, 수령 시각이 지금이라 4시간 기한이 새로 시작된다.
+                // 반납 예정일이 이미 지난 장기대여는 날짜를 새로 정할 수 없으니 같은 사유의 사유 대여로 넘긴다.
+                const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+                const termsOf = (c: (typeof scenarioPart)[number]): BorrowEntry["rentalTerms"] => {
+                  const t = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key)?.rentalTerms;
+                  if (!transfer) return undefined;
+                  if (!t) return transfer.rentalTerms?.mode === "general" ? undefined : transfer.rentalTerms; // 예전 대여: 양도할 때 고른 방식
+                  if (!["reason", "long_term"].includes(t.mode) || !t.reason) return undefined;
+                  return t.mode === "long_term" && t.dueDate >= today ? { mode: "long_term", reason: t.reason, dueDate: t.dueDate } : { mode: "reason", reason: t.reason, dueDate: "" };
+                };
+                const termGroups = new Map<string, { terms: BorrowEntry["rentalTerms"]; part: typeof scenarioPart }>();
+                for (const c of scenarioPart) {
+                  const terms = termsOf(c), key = JSON.stringify(terms ?? null);
+                  if (!termGroups.has(key)) termGroups.set(key, { terms, part: [] });
+                  termGroups.get(key)!.part.push(c);
+                }
+                for (const { terms, part } of termGroups.values()) {
+                  // 원래 대여 기록에서 이메일·위치를 가져와 사용자와 좌석 정보를 유지한다
+                  const src = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === part[0].key);
+                  const ver2 = await fetchBorrowAppVersion(scriptUrl).catch(() => "");
+                  await postBorrow(scriptUrl, [{
+                    rentalTerms: terms,
+                    itemType: "general",
+                    borrowerName: who,
+                    // 양도는 받는 사람의 소속/사번으로 이메일을 새로 계산해야 사용자 식별이 맞는다.
+                    // 원래 대여자의 이메일(knownEmail)을 그대로 넘기면 엉뚱한 사람이 태깅된다.
+                    affiliation: "",
+                    employeeId: transfer ? transfer.employeeId : "",
+                    knownEmail: transfer ? undefined : (group.email || src?.email || undefined),
+                    borrowDate: nowString(),
+                    borrowPurpose: note,
+                    generalOption: transfer ? "양도" : "재대여",
+                    borrowedItems: part.map((c) => {
+                      const item = activeSource.find((it) => `${it.sheetType}:${it.rowIndex}` === c.key);
+                      // itemName은 수량이 제거된 순수 물품명이다. 라벨(itemLabel)을 쓰면
+                      // "Fork x 3"처럼 수량이 이미 붙어 있어 서버에서 한 번 더 붙는다.
+                      // 종류가 나뉜 물품은 방금 반납된 그 종류에서 다시 나가야 한다.
+                      // 빠뜨리면 서버가 "종류를 선택해야 대여할 수 있습니다"로 거부해,
+                      // 반납만 되고 재대여/양도가 실패한 채로 남는다.
+                      return {
+                        id: item?.itemId || "",
+                        name: pureItemName(item?.itemLabel),
+                        quantity: c.qty,
+                        variantId: c.variantId ?? (item as any)?.variantId ?? undefined,
+                      };
+                    }).filter((x) => x.id),
+                    floor: src?.floor,
+                    unit: src?.unit,
+                  }], ver2);
+                }
               }
             }
             const movedQty = reborrowLines.reduce((n, c) => n + c.qty, 0);
@@ -1756,7 +1827,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   // 사진이 필요한 처리 묶음 모달이 열려 있고 아직 확정된 사진이 없으면 스트림을 열고,
   // 그 외(취소/처리 완료/사진 확정)에는 <img>를 걷어내 연결을 끊는다.
   // 파손 폼도 같은 카메라를 쓴다 — 둘 중 하나라도 사진이 필요하면 스트림을 연다.
-  const damageNeedsPhoto = !!damageFlow && damageFlow.step === "form" && !damageFlow.photo;
+  const damageNeedsPhoto = !!damageFlow && damageFlow.step === "form" && !damageFlow.photo && damageFlow.defectType !== "분실";
   const cameraDemand: "damage" | "return" | null = damageNeedsPhoto
     ? "damage"
     : confirmBatch && batchNeedsPhoto && !confirmPhoto
@@ -1821,6 +1892,13 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
     return () => window.clearInterval(timer);
   }, [photoSaving]);
 
+  function cartVariantName(line: ReturnCartLine): string {
+    if (line.sheetType === "warehouse") return "";
+    const source = activeSource.find((item) => `${item.sheetType}:${item.rowIndex}` === line.key);
+    const chosen = source?.variants?.find((variant) => variant.id === line.variantId);
+    return chosen?.name || line.variantName || (source?.variantPending ? "미정" : source?.variantUnassigned ? "미확인" : "");
+  }
+
   async function handleConfirmSubmit() {
     if (!confirmBatch) return;
     if (batchNeedsPhoto) {
@@ -1833,6 +1911,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       }
       try {
         const items = confirmBatch.batch.map((c) => ({
+          itemId: c.itemId,
+          sheetType: c.sheetType,
+          rowIndex: c.rowIndex,
+          variantId: c.variantId,
           itemLabel: c.itemLabel,
           borrower: c.borrower,
           location: c.location,
@@ -1923,7 +2005,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", flex: 1, width: "100%", minWidth: 0, height: "100%", minHeight: 0, background: C.bg, color: C.text, position: isMobile ? "relative" : undefined }}>
+    <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", flex: 1, width: "100%", minWidth: 0, height: "100%", minHeight: 0, background: C.bg, color: C.text, position: "relative" }}>
+      {damageRetry && pendingJobs.length === 0 ? <div role="alert" style={{position:'absolute',top:8,left:8,right:8,zIndex:50,padding:14,background:C.card,border:`1px solid ${C.error}`,borderRadius:10,fontSize:13}}>
+        파손 반납의 완료 응답을 확인하지 못했습니다. 같은 처리 번호로 다시 확인하면 중복 차감되지 않습니다.
+        <button disabled={damageRetryBusy} style={{marginLeft:10,padding:8,cursor:'pointer'}} onClick={async()=>{setDamageRetryBusy(true);try{const res=await objectReportPost(scriptUrl,'processDamagedReturn',damageRetry);setDamageRetry(null);showToast(res.message || '파손 반납을 확인했습니다.','ok');await load(true);onInventoryChanged?.();window.dispatchEvent(new Event('wms-notifications-changed'));}catch(e:any){showToast(e.message,'error');}finally{setDamageRetryBusy(false);}}}>{damageRetryBusy?'확인 중...':'같은 건 다시 확인 및 처리'}</button>
+      </div>:null}
       <style>{`
         @keyframes arSpin { to { transform: rotate(360deg); } }
         .ar-spin { animation: arSpin 0.8s linear infinite; }
@@ -1949,6 +2035,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           </button>
         </div>
 
+        <UnattendedRecoveryPanel onChanged={() => { void load(true); onInventoryChanged?.(); }} />
         <WarehouseManualRequestsPanel scriptUrl={scriptUrl} isLightMode={isLightMode}
           onCompleted={() => { void loadWarehouse(true); onInventoryChanged?.(); }} />
 
@@ -2038,7 +2125,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="대여자 · 사번 · 물품으로 검색..."
+            placeholder="대여자 · 사번 · 물품 · SID로 검색..."
             style={{ ...inputStyle, width: "100%", boxSizing: "border-box", paddingLeft: "36px" }}
           />
         </div>
@@ -2052,7 +2139,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
         {activeLoading && !activeLoaded ? (
           <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>불러오는 중...</div>
         ) : borrowers.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
+          <div className="wms-empty-state" style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "13px" }}>
             <Check size={34} style={{ color: C.border, marginBottom: "8px" }} />
             <div>{category === "scenario" && processMode === "대여" ? "확인할 대여 물품이 없습니다." : "미반납 물품이 없습니다."}</div>
           </div>
@@ -2063,9 +2150,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               const regularItems = g.items.filter((it) => !it.typeLimitExempt);
               const exemptItems = g.items.filter((it) => it.typeLimitExempt);
               const highlightExempt = processMode === "반납" && category === "scenario" && exemptItems.length > 0;
+              const recommendedQty = processMode === "반납" && category === "scenario" ? g.items.reduce((sum,item) => sum + plannerReturnQuantity(item),0) : 0;
               const regularQty = regularItems.reduce((sum, it) => sum + (it.quantity || 1), 0);
               return (
-                <div key={`${g.name}|${g.email}`} style={{ border: `1.5px solid ${highlightExempt ? C.warn : on ? C.accent : C.border}`, borderRadius: "12px", background: highlightExempt ? C.warnSoft : C.card, overflow: "hidden", boxShadow: highlightExempt ? `inset 4px 0 0 ${C.warn}` : undefined }}>
+                <div key={`${g.name}|${g.email}`} style={{ border: `1.5px solid ${recommendedQty ? C.success : highlightExempt ? C.warn : on ? C.accent : C.border}`, borderRadius: "12px", background: recommendedQty ? C.successSoft : highlightExempt ? C.warnSoft : C.card, overflow: "hidden", boxShadow: recommendedQty ? `inset 4px 0 0 ${C.success}` : highlightExempt ? `inset 4px 0 0 ${C.warn}` : undefined }}>
                   <div
                     onClick={() => { setSelectedBorrower(on ? null : { name: g.name, email: g.email, employeeId: g.employeeId }); setCursor(0); }}
                     // 오른쪽 클릭 = 자리 바꾸기. 대여 뒤 자리를 옮긴 사람 때문에 적힌 자리가
@@ -2080,6 +2168,10 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "7px", flexWrap: "wrap" }}>
                         <span style={{ fontSize: "14px", fontWeight: 800 }}>{g.name}</span>
+                        {recommendedQty > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: C.success, background: C.successSoft, padding: "3px 8px", borderRadius: 999 }}>계획 반납 추천 {recommendedQty}개</span>}
+                        {plannerCollectionNames(g.items).map((name) => (
+                          <span key={name} title={`Shoot Planner 컬렉션: ${name}`} style={{ fontSize: "11px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "7px", padding: "2px 7px", overflowWrap: "anywhere" }}>{name}</span>
+                        ))}
                         {g.employeeId ? <span style={{ fontSize: "11px", fontWeight: 900, color: C.accentText, background: C.accentSoft, border: `1px solid ${C.accent}44`, borderRadius: "7px", padding: "2px 7px", fontFamily: "monospace" }}>사번 {g.employeeId}</span> : null}
                         {/* 동명이인이 실제로 두 명 이상 잡혔을 때만, 누가 누구인지 구분할 수 있게 사번/계정을 띄운다 */}
                         {duplicatedNames.has(g.name) ? (
@@ -2094,6 +2186,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           <span key={sname} style={{ fontSize: "10.5px", fontWeight: 800, color: C.warn, background: C.warnSoft, borderRadius: "999px", padding: "2px 8px" }}>
                             📍 {sname}
                           </span>
+                        ))}
+                        {rentalSidLabels(g.items).map((sid) => (
+                          <span key={sid} style={{ fontSize: "10.5px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "7px", padding: "2px 7px", overflowWrap: "anywhere" }}>{sid}</span>
                         ))}
                       </div>
                       <div style={{ fontSize: "11.5px", color: C.label, marginTop: "2px" }}>
@@ -2119,16 +2214,17 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                             key={grp.key}
                             style={{
                               marginBottom: "10px",
-                              padding: grp.isExemptSection ? "8px" : 0,
-                              borderRadius: grp.isExemptSection ? "11px" : undefined,
-                              border: grp.isExemptSection ? `1px solid ${C.warn}88` : undefined,
-                              background: grp.isExemptSection ? C.warnSoft : undefined,
+                              padding: grp.isPlannerReturnSection || grp.isExemptSection ? "8px" : 0,
+                              borderRadius: grp.isPlannerReturnSection || grp.isExemptSection ? "11px" : undefined,
+                              border: grp.isPlannerReturnSection ? `1px solid ${C.success}88` : grp.isExemptSection ? `1px solid ${C.warn}88` : undefined,
+                              background: grp.isPlannerReturnSection ? C.successSoft : grp.isExemptSection ? C.warnSoft : undefined,
                             }}
                           >
                             {/* 신청 시각별 구분선 */}
+                            {plannerContexts(grp.items).map((p) => <div key={p.planId} style={{ fontSize: "11px", color: C.label, margin: "2px 2px 5px", overflowWrap: "anywhere" }}>{p.collectionName} · 루틴 {p.routine}</div>)}
                             <div style={{ display: "flex", alignItems: "center", gap: "7px", padding: "4px 2px 6px" }}>
-                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: grp.isExemptSection ? C.warn : C.accentText, flexShrink: 0 }}>
-                                {grp.isExemptSection ? "🔓 한도 제외 항목" : `🕘 ${/\d{1,2}:\d{2}/.test(grp.when) ? grp.when : `${grp.when} (시각 정보 없음)`}`}
+                              <span style={{ fontSize: "11.5px", fontWeight: 800, color: grp.isPlannerReturnSection ? C.success : grp.isExemptSection ? C.warn : C.accentText, flexShrink: 0 }}>
+                                {grp.isPlannerReturnSection ? "↩ 계획 반납 추천" : grp.isExemptSection ? "🔓 한도 제외 항목" : `🕘 ${/\d{1,2}:\d{2}/.test(grp.when) ? grp.when : `${grp.when} (시각 정보 없음)`}`}
                               </span>
                               {grp.requestNo && !grp.isExemptSection ? (
                                 <button
@@ -2164,7 +2260,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                   <Printer size={12} /> {printingExempt ? "출력 중" : "인쇄"}
                                 </button>
                               ) : null}
-                              <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{countDistinctItemTypes(grp.items)}종 · {grpQty}개</span>
+                              <span style={{ fontSize: "10.5px", color: C.label, flexShrink: 0 }}>{countDistinctItemTypes(grp.items)}종 · {grp.isPlannerReturnSection ? `추천 ${grp.items.reduce((sum,item) => sum + plannerReturnQuantity(item),0)}개` : `${grpQty}개`}</span>
                               <div style={{ flex: 1, height: "1px", background: C.border }} />
                             </div>
 
@@ -2192,15 +2288,16 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                     style={{
                                       display: "flex", alignItems: "center", gap: "8px", padding: "9px 10px", borderRadius: "9px",
                                       cursor: done ? "default" : "pointer",
-                                      background: atCursor ? C.accentSoft : done ? C.successSoft : it.typeLimitExempt ? C.warnSoft : C.cardSub,
-                                      border: `1px solid ${atCursor ? C.accent : done ? C.success + "55" : it.typeLimitExempt ? C.warn + "99" : "transparent"}`,
-                                      boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : it.typeLimitExempt ? `inset 3px 0 0 ${C.warn}` : "none",
+                                      background: atCursor ? C.accentSoft : done || grp.isPlannerReturnSection ? C.successSoft : it.sameVariantAsPrevious ? C.repeatSoft : it.typeLimitExempt ? C.card : C.cardSub,
+                                      border: `1px solid ${atCursor ? C.accent : done || grp.isPlannerReturnSection ? C.success + "88" : it.sameVariantAsPrevious ? C.repeat + "66" : it.typeLimitExempt ? C.warn + "40" : "transparent"}`,
+                                      boxShadow: atCursor ? `inset 3px 0 0 ${C.accent}` : it.sameVariantAsPrevious ? `inset 3px 0 0 ${C.repeat}` : it.typeLimitExempt ? `inset 3px 0 0 ${C.warn}` : "none",
                                     }}
                                   >
                                     <Package size={13} style={{ color: C.label, flexShrink: 0 }} />
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
                                         <span style={{ flex: 1, minWidth: 0, fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.itemLabel}</span>
+                                        {grp.isPlannerReturnSection && <span title={`${it.plannerReturn?.collectionName} · 루틴 ${it.plannerReturn?.routine} 이후 반납 추천. 나머지는 계속 사용합니다.`} style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, borderRadius: 999, padding: "2px 7px", color: C.success, background: C.successSoft }}>추천 {plannerReturnQuantity(it)}개{plannerReturnQuantity(it) < it.quantity ? ` / 보유 ${it.quantity}개` : ""}</span>}
                                         {/* 업체 request용 물품은 취급이 달라서, 담기 전에 보이게 한다 */}
                                         {it.requestFor !== undefined ? (
                                           <span
@@ -2251,12 +2348,21 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                             종류 미지정
                                           </span>
                                         ) : it.variantName ? (
-                                          <span style={{ flexShrink: 0, fontSize: "10px", fontWeight: 700, borderRadius: "999px", padding: "2px 7px", color: C.accentText, background: C.accentSoft }}>
+                                          <span style={{ flexShrink: 0, fontSize: "10px", fontWeight: 700, borderRadius: "999px", padding: "2px 7px", color: it.sameVariantAsPrevious ? C.repeat : C.accentText, background: it.sameVariantAsPrevious ? C.repeatSoft : C.accentSoft }}>
                                             {it.variantName}
+                                          </span>
+                                        ) : null}
+                                        {it.sameVariantAsPrevious && it.previousVariant ? (
+                                          <span
+                                            title={`이 물품의 직전 ${it.previousVariant.kind}(${it.previousVariant.at})도 ${it.previousVariant.variantName || "같은 종류"}였습니다. 시나리오 다양성을 위해 가능하면 다른 종류로 바꿔주세요.`}
+                                            style={{ flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px", color: "#fff", background: C.repeat }}
+                                          >
+                                            직전 {it.previousVariant.kind}와 같은 종류
                                           </span>
                                         ) : null}
                                       </div>
                                       <div style={{ display: "flex", alignItems: "center", gap: "7px", marginTop: "2px", flexWrap: "wrap" }}>
+                                        {rentalSidLabel(it) ? <span style={{ fontSize: "10.5px", fontWeight: 800, color: C.accentText, background: C.accentSoft, borderRadius: "6px", padding: "2px 6px", overflowWrap: "anywhere" }}>{rentalSidLabel(it)}</span> : null}
                                         {it.location ? (
                                           <span style={{ fontSize: "10.5px", color: C.warn, fontFamily: "monospace", display: "flex", alignItems: "center", gap: "3px" }}>
                                             <MapPin size={9} /> {it.location}
@@ -2270,14 +2376,28 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                             {it.shift === "night" ? "🌙" : "☀️"}
                                           </span>
                                         ) : null}
-                                        {it.typeLimitExempt ? (
-                                          <span style={{ fontSize: "10.5px", color: C.warn, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "3px" }}>
-                                            <AlertTriangle size={10} /> 제외 사유: {it.typeLimitExemptReason || "사유 미등록"}
-                                          </span>
-                                        ) : null}
+                                        {it.rentalTerms ? <span title={rentalTermsLabel(it.rentalTerms)} style={{fontSize:'10.5px',fontWeight:700,color:C.accentText,background:C.accentSoft,borderRadius:6,padding:'2px 6px',overflowWrap:'anywhere'}}>{rentalTermsChip(it.rentalTerms)}</span> : null}
                                       </div>
+                                      {(() => {
+                                        const rentalReason = ['reason','long_term'].includes(it.rentalTerms?.mode || '') ? String(it.rentalTerms?.reason || '').trim() : '';
+                                        const reviewReason = String(it.rentalTerms?.reviewReason || '').trim();
+                                        if (!rentalReason && !reviewReason && !it.typeLimitExempt) return null;
+                                        return (
+                                          <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px", marginTop: "4px", fontSize: "10.5px" }}>
+                                            {rentalReason ? <span style={{ color: C.text, overflowWrap: "anywhere" }}><span style={{ color: C.label }}>대여 사유:</span> {rentalReason}</span> : null}
+                                            {reviewReason ? <span style={{ color: C.text, overflowWrap: "anywhere" }}><span style={{ color: C.label }}>관리자 변경 사유:</span> {reviewReason}</span> : null}
+                                            {it.typeLimitExempt ? (
+                                              <span style={{ color: C.warn, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "3px", overflowWrap: "anywhere" }}>
+                                                <AlertTriangle size={10} /> 제외 사유: {it.typeLimitExemptReason || "사유 미등록"}
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        );
+                                      })()}
                                     </div>
-                                    <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0 }}>
+                                    {it.requestNo && ['reason','long_term'].includes(it.rentalTerms?.mode || '') ? <button type="button" title="이 신청을 일반 대여(4시간 내 반납)로 바꿉니다" onClick={e=>{e.stopPropagation();setGeneralConversion({item:it,reason:'',to:'general'});}} style={{flexShrink:0,fontSize:'10.5px',fontWeight:700,padding:'4px 8px',border:`1px solid ${C.border}`,borderRadius:7,background:'transparent',color:C.label,cursor:'pointer',whiteSpace:'nowrap'}}>일반 대여로 변경</button>
+                                      : it.requestNo && it.rentalTerms?.mode === 'general' ? <button type="button" title="이 신청을 사유 대여(4시간 제한 면제)로 바꿉니다" onClick={e=>{e.stopPropagation();setGeneralConversion({item:it,reason:it.typeLimitExempt ? (it.typeLimitExemptReason || '') : '',to:'reason'});}} style={{flexShrink:0,fontSize:'10.5px',fontWeight:700,padding:'4px 8px',border:`1px solid ${C.border}`,borderRadius:7,background:'transparent',color:C.label,cursor:'pointer',whiteSpace:'nowrap'}}>사유 대여로 변경</button>:null}
+                                    <span style={{ fontSize: "11.5px", fontWeight: 800, color: done ? C.success : C.label, flexShrink: 0, minWidth: "30px", textAlign: "right" }}>
                                       {picked} / {max}
                                     </span>
                                   </div>
@@ -2289,6 +2409,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       })}
                     </div>
                   ) : null}
+                  <PlannerRentalPreview plans={plannerContexts(g.items)} expanded={on} color={C.label} border={C.border} />
                 </div>
               );
             })}
@@ -2480,6 +2601,43 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
       ) : null}
 
       {/* 한도 제외는 판단 근거를 함께 남긴다. 기존 제외 건은 여기서 사유를 보완하거나 해제할 수 있다. */}
+      {generalConversion ? (() => {
+        const toReason = generalConversion.to === 'reason';
+        const busy = savingConversion || !generalConversion.reason.trim();
+        const tone = toReason ? { fg: C.accentText, bg: C.accentSoft, line: C.accent } : { fg: C.warn, bg: C.warnSoft, line: C.warn };
+        const notes = toReason
+          ? ['신청 전체가 사유 대여로 바뀌고 4시간 반납 제한이 면제됩니다.', '아래 입력한 사유가 대여 사유로 저장됩니다.', '이미 부과된 미반납 페널티는 그대로 남습니다.']
+          : ['신청 전체의 사유·장기대여 면제가 해제됩니다.', '수령한 물품은 변경 시점부터, 미수령 물품은 수령 확인부터 4시간 안에 반납해야 합니다. (점심시간 12:00~13:00 제외)', '기한을 넘기면 신청당 한 번, 대여 가능 종류 5종이 48시간 동안 차감됩니다.'];
+        return <div onClick={()=>!savingConversion && setGeneralConversion(null)} style={{position:'fixed',inset:0,zIndex:10005,background:'rgba(0,0,0,.6)',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+          <section onClick={e=>e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="general-conversion-title" style={{width:'min(460px,100%)',maxHeight:'90vh',overflowY:'auto',background:C.card,color:C.text,padding:'22px 22px 18px',borderRadius:16,border:`1px solid ${C.border}`,boxShadow:'0 16px 48px rgba(0,0,0,.3)'}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,marginBottom:14}}>
+              <h2 id="general-conversion-title" style={{fontSize:18,fontWeight:800,margin:0}}>{toReason ? '사유 대여로 변경' : '일반 대여로 변경'}</h2>
+              <button type="button" aria-label="닫기" disabled={savingConversion} onClick={()=>setGeneralConversion(null)} style={{width:30,height:30,borderRadius:8,border:0,background:'transparent',color:C.label,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}><X size={18}/></button>
+            </div>
+            <div style={{padding:'12px 14px',borderRadius:12,background:C.cardSub,marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'baseline',gap:8,flexWrap:'wrap'}}>
+                <span style={{fontSize:15,fontWeight:800}}>{generalConversion.item.borrowerName}</span>
+                <span style={{fontSize:12,color:C.label}}>신청 #{generalConversion.item.requestNo}</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginTop:8,fontSize:12}}>
+                <span style={{padding:'3px 8px',borderRadius:7,background:C.card,border:`1px solid ${C.border}`,color:C.label,overflowWrap:'anywhere'}}>{rentalTermsChip(generalConversion.item.rentalTerms) || '대여 방식 없음'}</span>
+                <span aria-hidden style={{color:C.label}}>→</span>
+                <span style={{padding:'3px 8px',borderRadius:7,background:tone.bg,border:`1px solid ${tone.line}55`,color:tone.fg,fontWeight:700}}>{toReason ? '사유 대여 · 4시간 제한 면제' : '일반 대여 · 4시간 내 반납'}</span>
+              </div>
+            </div>
+            <ul style={{margin:'0 0 16px',padding:'10px 14px 10px 30px',borderRadius:12,background:tone.bg,color:C.text,fontSize:12.5,lineHeight:1.65}}>
+              {notes.map(note=><li key={note}>{note}</li>)}
+            </ul>
+            <label style={{display:'block',fontSize:12.5,fontWeight:700,color:C.label}}>{toReason ? '대여 사유' : '변경 사유'} <span style={{color:C.error}}>(필수)</span>
+              <textarea autoFocus required maxLength={2000} rows={3} disabled={savingConversion} value={generalConversion.reason} onChange={e=>setGeneralConversion(previous=>previous?{...previous,reason:e.target.value}:previous)} placeholder={toReason ? '예: KTL 테스트용, 고객사 request 등' : '대여 사유가 적절하지 않은 이유를 입력해주세요'} style={{display:'block',boxSizing:'border-box',width:'100%',marginTop:6,padding:'10px 12px',border:`1px solid ${C.border}`,borderRadius:10,background:C.bg,color:C.text,fontSize:14,fontFamily:'inherit',resize:'vertical'}}/>
+            </label>
+            <div style={{display:'flex',gap:8,marginTop:18}}>
+              <button type="button" disabled={savingConversion} onClick={()=>setGeneralConversion(null)} style={{flex:1,padding:12,borderRadius:10,border:`1px solid ${C.border}`,background:C.card,color:C.text,fontSize:14,fontWeight:600,cursor:'pointer'}}>취소</button>
+              <button type="button" disabled={busy} onClick={()=>void convertToGeneral()} style={{flex:2,padding:12,borderRadius:10,border:0,background:toReason ? C.accent : C.warn,color:'#fff',fontSize:14,fontWeight:700,opacity:busy ? .45 : 1,cursor:busy ? 'not-allowed' : 'pointer'}}>{savingConversion ? '변경 중…' : toReason ? '사유 대여로 변경' : '일반 대여로 변경'}</button>
+            </div>
+          </section>
+        </div>;
+      })() : null}
       {typeLimitExemptEdit ? (
         <div
           onClick={() => !savingTypeLimitExemptKey && setTypeLimitExemptEdit(null)}
@@ -2648,20 +2806,24 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       const picked = variantPrompt.choice[ln.key] === v.id;
                       // 반납은 재고를 되돌리는 쪽이라 남은 재고가 적어도 고를 수 있어야 한다.
                       const short = ln.kind !== "반납" && v.stock < ln.qty;
+                      // 대여 확인에서 직전과 같은 종류는 보라색으로 표시해 다른 종류를 고르도록 유도한다.
+                      const repeat = ln.kind === "확인" && ln.previous?.variantId === v.id;
                       return (
                         <button
                           key={v.id}
                           disabled={short}
+                          title={repeat ? `직전 ${ln.previous!.kind}(${ln.previous!.at})와 같은 종류입니다. 가능하면 다른 종류를 골라주세요.` : undefined}
                           onClick={() => setVariantPrompt((p) => (p ? { ...p, choice: { ...p.choice, [ln.key]: v.id } } : p))}
                           style={{
                             padding: "8px 12px", borderRadius: "9px", cursor: short ? "not-allowed" : "pointer",
-                            border: `1.5px solid ${picked ? C.accent : C.border}`,
-                            background: picked ? C.accentSoft : C.card,
-                            color: short ? C.label : picked ? C.accentText : C.text,
+                            border: `1.5px solid ${picked ? (repeat ? C.repeat : C.accent) : repeat ? C.repeat + "88" : C.border}`,
+                            background: repeat ? C.repeatSoft : picked ? C.accentSoft : C.card,
+                            color: short ? C.label : repeat ? C.repeat : picked ? C.accentText : C.text,
                             fontSize: "12.5px", fontWeight: 700, opacity: short ? 0.5 : 1,
                           }}
                         >
-                          {v.name} <span style={{ fontWeight: 600, color: C.label }}>(재고 {v.stock})</span>
+                          {v.name} <span style={{ fontWeight: 600, color: repeat ? C.repeat : C.label }}>(재고 {v.stock})</span>
+                          {repeat ? <span style={{ display: "block", fontSize: "10.5px", fontWeight: 800, marginTop: 2 }}>직전 {ln.previous!.kind}와 같은 종류</span> : null}
                         </button>
                       );
                     })}
@@ -2948,8 +3110,38 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               <option value="파손">파손 (Damaged)</option>
               <option value="오염">오염 (Contaminated)</option>
               <option value="기능 오작동">기능 오작동 (Malfunctioning)</option>
+              <option value="분실">분실 (Lost) · 사진 없이 기록</option>
               <option value="기타">기타 (Others)</option>
             </select>
+
+            {damageFlow.defectType === "파손" ? <section aria-label="사전 신고 및 페널티 확인" style={{ marginBottom: 20, fontSize: 12, lineHeight: 1.6, color: C.text, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ padding: "12px 14px", borderRadius: 10, background: C.warnSoft, display: "flex", alignItems: "flex-start", gap: 9 }}>
+                <AlertTriangle size={17} style={{ color: C.warn, flexShrink: 0, marginTop: 2 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, color: C.warn, marginBottom: 4 }}>사전 미신고 시 자동 페널티</div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>대여 가능 종류 5종 차감 · 14일간</div>
+                  <p style={{ margin: "6px 0 0", fontSize: 11.5, color: C.label }}>미신고 수량이 있으면 대여 건당 한 번 적용됩니다. 차감 후 최소 한도는 0종입니다.</p>
+                </div>
+              </div>
+              <DamageReportEvidence scriptUrl={scriptUrl} lines={damageFlow.lines} isLightMode={isLightMode}/>
+              <div style={{ border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ padding: "10px 12px", background: C.cardSub, fontWeight: 800 }}>물품별 페널티 면제</div>
+                {damageFlow.lines.map((ln,i)=><div key={ln.key} style={{ padding: "12px", borderTop: `1px solid ${C.border}` }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+                    <span style={{ flex: 1, minWidth: 0, fontWeight: 700, overflowWrap: "anywhere" }}>{ln.label}</span>
+                    <span style={{ flexShrink: 0, color: C.error, fontWeight: 700 }}>파손 {ln.qty}개</span>
+                  </div>
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", color: C.label, minHeight: 28 }}>
+                    <input type="checkbox" checked={!!ln.penaltyExempt} onChange={e=>setDamageFlow(prev=>prev?{...prev,lines:prev.lines.map((x,j)=>j===i?{...x,penaltyExempt:e.target.checked}:x)}:prev)} style={{ width: 16, height: 16, margin: "2px 0 0", flexShrink: 0, accentColor: C.accent }}/>
+                    <span>이 물품의 자동 페널티 면제</span>
+                  </label>
+                  {ln.penaltyExempt ? <div style={{ marginTop: 8 }}>
+                    <label htmlFor={`damage-exemption-${i}`} style={{ display: "block", fontWeight: 700, marginBottom: 6 }}>면제 사유 <span style={{ color: C.error }}>(필수)</span></label>
+                    <input id={`damage-exemption-${i}`} value={ln.exemptionReason || ""} maxLength={500} placeholder="예: 반복 사용에 따른 정상 마모 확인" onChange={e=>setDamageFlow(prev=>prev?{...prev,lines:prev.lines.map((x,j)=>j===i?{...x,exemptionReason:e.target.value}:x)}:prev)} style={{ ...inputStyle, width:"100%", boxSizing:"border-box", fontSize: 12 }}/>
+                  </div> : null}
+                </div>)}
+              </div>
+            </section>:null}
 
             <label style={{ fontSize: "12.5px", fontWeight: 700, display: "block", marginBottom: "6px" }}>파손자</label>
             <input
@@ -2975,6 +3167,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
               style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.text, fontSize: "13px", marginBottom: "14px", boxSizing: "border-box" }}
             />
 
+            {damageFlow.defectType === "분실" ? (
+              <div style={{ padding: "10px 12px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}`, fontSize: "12px", color: C.label, lineHeight: 1.6 }}>
+                분실은 찍을 물건이 없어 <b style={{ color: C.text }}>사진 없이</b> 불량 로그에 기록합니다.
+              </div>
+            ) : (<>
             <div style={{ fontSize: "12.5px", fontWeight: 700, marginBottom: "6px", display: "flex", alignItems: "center", gap: "6px" }}>
               <Camera size={14} /> 파손 사진 (필수)
             </div>
@@ -3021,6 +3218,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 {cameraError ? <div style={{ marginTop: "6px", fontSize: "11px", color: C.error }}>{cameraError}</div> : null}
               </div>
             )}
+            </>)}
 
             <div style={{ display: "flex", gap: "10px", marginTop: "16px" }}>
               <button
@@ -3033,8 +3231,11 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 onClick={() => {
                   const f = damageFlow;
                   if (!f) return;
-                  if (!f.photo) { showToast("파손 사진을 먼저 촬영해주세요.", "warn"); return; }
+                  const lost = f.defectType === "분실";
+                  if (f.defectType === "파손" && f.lines.some(ln=>ln.penaltyExempt && !ln.exemptionReason?.trim())) { showToast("페널티 면제 사유를 입력해주세요.", "warn"); return; }
+                  if (!f.photo && !lost) { showToast("파손 사진을 먼저 촬영해주세요.", "warn"); return; }
                   const damage: DamagePayload = {
+                    clientId: crypto.randomUUID(),
                     items: f.lines.map((ln) => ({
                       itemId: ln.itemId,
                       itemName: ln.itemName,
@@ -3047,22 +3248,25 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       keepBorrowed: ln.keepBorrowed,
                       rentalSheetType: ln.sheetType,
                       rentalRowIndex: ln.rowIndex,
+                      penaltyExempt: ln.penaltyExempt,
+                      exemptionReason: ln.exemptionReason,
                     })),
                     defectType: f.defectType,
                     note: f.note.trim(),
                     actionTaken: f.actionTaken.trim(),
                     culprit: f.culprit.trim(),
-                    photo: f.photo,
+                    // 분실로 바꾸기 전에 찍어 둔 사진이 있어도 보내지 않는다.
+                    photo: lost ? "" : f.photo,
                   };
                   setDamageFlow(null);
                   finalizeBatch(f.batch, f.reborrow, f.transfer, damage);
                 }}
-                disabled={!damageFlow.photo}
+                disabled={!damageFlow.photo && damageFlow.defectType !== "분실"}
                 style={{
                   flex: 2, padding: "12px", borderRadius: "10px", border: "none",
-                  background: damageFlow.photo ? C.error : C.border,
-                  color: damageFlow.photo ? "#fff" : C.label,
-                  fontSize: "13px", fontWeight: 800, cursor: damageFlow.photo ? "pointer" : "not-allowed",
+                  background: damageFlow.photo || damageFlow.defectType === "분실" ? C.error : C.border,
+                  color: damageFlow.photo || damageFlow.defectType === "분실" ? "#fff" : C.label,
+                  fontSize: "13px", fontWeight: 800, cursor: damageFlow.photo || damageFlow.defectType === "분실" ? "pointer" : "not-allowed",
                 }}
               >
                 확인 화면으로
@@ -3184,7 +3388,8 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                   <div key={c.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "7px 10px", borderRadius: "8px", background: C.cardSub, fontSize: "12px" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.itemLabel}</div>
-                      <div style={{ fontSize: "10.5px", color: C.label }}>{c.borrower}{c.location ? ` · ${c.location}` : ""}</div>
+                      {cartVariantName(c) ? <div style={{ marginTop: 3, fontSize: 12, color: C.accentText }}>종류: {cartVariantName(c)}</div> : null}
+                      <div style={{ fontSize: "10.5px", color: C.label, overflowWrap: "anywhere" }}>{c.borrower}{rentalSidLabel(c) ? ` · ${rentalSidLabel(c)}` : ""}{c.location ? ` · ${c.location}` : ""}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
                       <span style={{ fontWeight: 800, color: badgeColor, fontSize: "11px" }}>{badgeText}</span>
@@ -3266,6 +3471,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
             <div style={{ padding: "11px 13px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}`, marginBottom: "12px" }}>
               <div style={{ fontSize: "10.5px", color: C.label, marginBottom: "3px" }}>기존 물품 (반납 처리됩니다)</div>
               <div style={{ fontSize: "13px", fontWeight: 700 }}>{swapTarget.itemLabel}</div>
+              {swapTarget.variantName || swapTarget.variantPending || swapTarget.variantUnassigned ? <div style={{ fontSize: 12, color: C.accentText, marginTop: 4 }}>종류: {swapTarget.variantPending ? "미정" : swapTarget.variantName || "미확인"}</div> : null}
               <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>
                 {swapTarget.borrowerName}{swapTarget.location ? ` · ${swapTarget.location}` : ""}
               </div>
@@ -3407,6 +3613,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: "12.5px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
                         <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id} · {it.rootSlot || "위치 없음"}</div>
+                        {it.variants?.length ? <div style={{ marginTop: 3, fontSize: 11, color: C.accentText, overflowWrap: "anywhere" }}>종류: {it.variants.map((variant) => variant.name).join(" · ")}</div> : null}
                       </div>
                       <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 700, color: stock > 0 ? C.success : C.error }}>재고 {stock}</span>
                       {picked > 0 ? <span style={{ flexShrink: 0, fontSize: "11.5px", fontWeight: 800, color: C.accentText }}>{picked}개</span> : null}
@@ -3546,8 +3753,9 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 <div key={c.key} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "11px 12px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}` }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: "13px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.itemLabel}</div>
+                    {cartVariantName(c) ? <div style={{ marginTop: 3, fontSize: 12, color: C.accentText }}>종류: {cartVariantName(c)}</div> : null}
                     <div style={{ fontSize: "10.5px", color: C.label, marginTop: "2px" }}>
-                      {c.borrower}{c.location ? ` · ${c.location}` : ""}
+                      {c.borrower}{rentalSidLabel(c) ? ` · ${rentalSidLabel(c)}` : ""}{c.location ? ` · ${c.location}` : ""}
                     </div>
                   </div>
                   {c.sheetType === "warehouse" ? (
@@ -3648,6 +3856,15 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                 <span style={{ fontSize: "10.5px", color: C.label, lineHeight: 1.5 }}>
                   이름을 입력한 뒤 명부 검색 결과를 선택하면 사번이 자동으로 연결됩니다.
                 </span>
+                {legacyTransferLines.length ? (
+                  <div style={{ marginTop: "4px", padding: "10px", borderRadius: "10px", background: C.card, border: `1px solid ${C.border}` }}>
+                    <div style={{ fontSize: "12px", fontWeight: 800, marginBottom: "4px" }}>받는 사람의 대여 방식 <span style={{ color: C.error }}>(필수)</span></div>
+                    <div style={{ fontSize: "10.5px", color: C.label, lineHeight: 1.5, marginBottom: "8px" }}>
+                      대여 방식이 없는 예전 대여 {legacyTransferLines.length}줄에 한 번에 적용됩니다. 나머지는 원래 방식이 그대로 넘어갑니다.
+                    </div>
+                    <RentalTermsFields C={C} mode={transferRentalMode} reason={transferRentalReason} dueDate={transferRentalDueDate} onMode={setTransferRentalMode} onReason={setTransferRentalReason} onDueDate={setTransferRentalDueDate} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

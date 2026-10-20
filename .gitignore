@@ -2,6 +2,12 @@ node_modules/
 dist/
 .env
 .env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
 
 # local SQLite data & uploaded images (not committed — populated via xlsx import / uploads)
 server/data/
@@ -11,6 +17,8 @@ server/uploads/
 .tmp-*
 tmp/
 outputs/
+output/
+.scratch*/
 .claude/
 *.sqlite3
 *.sqlite3-shm
@@ -19,3 +27,12 @@ tools/printer-backups/
 
 # 예전 PC 에이전트(tools/sm-sync)가 남긴 로컬 브라우저 프로필 — 로그인 쿠키가 들어 있을 수 있다
 tools/sm-sync/
+
+# 운영 화면 캡처와 재고·위치 변경 자료는 로컬에만 보관한다.
+/docs/assets/
+/docs/WMS_오브젝트_변형과_파손_보고_교육.md
+/오브젝트_슬롯_맞교환_추천안.md
+/오브젝트별_슬롯_이동목록.md
+/오브젝트별_이동위치.*
+/위치변경안_*.csv
+/위치변경안_*.md

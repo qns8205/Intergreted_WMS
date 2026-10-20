@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Camera, Check, Plus, Trash2, Sparkles, X } from "lucide-react";
+import { Camera, Check, Plus, Trash2 } from "lucide-react";
 import CameraCaptureModal from "./CameraCaptureModal";
 import { SeatFloor } from "../utils/borrowApi";
 import { resizeAndCompressImage } from "../utils/drive";
-import { submitToolRequest, ToolRequestReceipt, searchTools, suggestTools, ToolSearchCandidate, ToolSearchResult, ToolSuggestion } from "../utils/warehouseManualApi";
+import { submitToolRequest, ToolRequestReceipt, suggestTools, ToolSuggestion } from "../utils/warehouseManualApi";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { kioskPalette, KIOSK_ACCENT_SOFT, KIOSK_PRIMARY_BG, KIOSK_PRIMARY_TEXT } from "../utils/kioskTheme";
 
@@ -21,14 +21,6 @@ interface Props {
 export default function UnattendedToolBorrowForm({ active, enabled, employeeId, name, floors, floorsLoaded, isLightMode, onSubmitted, kiosk, onFinished }: Props) {
   const [floor, setFloor] = useState("");
   const [items, setItems] = useState<{ name: string; qty: number; itemId?: number; image?: string }[]>([{ name: "", qty: 1 }]);
-  const [search, setSearch] = useState<{ index: number; query: string; loading: boolean; result?: ToolSearchResult; error?: string } | null>(null);
-  const searchController = useRef<AbortController | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function closeSearch() {
-    searchController.current?.abort(); searchController.current = null;
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = null; setSearch(null);
-  }
   // 이름을 적는 동안 비슷한 COS 물품을 바로 아래 띄운다. 이름이 글자 그대로 같아야 자동 처리되므로
   // 여기서 골라야 관리자 확인 대기로 쌓이지 않는다.
   const [suggest, setSuggest] = useState<{ index: number; items: ToolSuggestion[] } | null>(null);
@@ -53,7 +45,6 @@ export default function UnattendedToolBorrowForm({ active, enabled, employeeId, 
     }, 220);
   }
   useEffect(() => () => {
-    searchController.current?.abort(); if (searchTimer.current) clearTimeout(searchTimer.current);
     suggestController.current?.abort(); if (suggestTimer.current) clearTimeout(suggestTimer.current);
   }, []);
   const [photo, setPhoto] = useState("");
@@ -70,11 +61,11 @@ export default function UnattendedToolBorrowForm({ active, enabled, employeeId, 
   useEffect(() => {
     if (identityRef.current === employeeId) return;
     identityRef.current = employeeId;
-    closeSearch(); closeSuggest();
+    closeSuggest();
     setFloor(""); setItems([{ name: "", qty: 1 }]); setPhoto(""); setReceipt(null); setError("");
     clientId.current = newId(); payloadRef.current = null;
   }, [employeeId]);
-  useEffect(() => { if (!active) { setCamera(false); closeSearch(); closeSuggest(); } }, [active]);
+  useEffect(() => { if (!active) { setCamera(false); closeSuggest(); } }, [active]);
   const dirty = !receipt && (!!floor || !!photo || items.some(i => !!i.name.trim()));
   useVersionWorkGuard("unattended-tool-request", dirty || busy || photoBusy, "공구 대여 신청 작성 중");
   const k = !!kiosk, P = kioskPalette(isLightMode);
@@ -88,35 +79,13 @@ export default function UnattendedToolBorrowForm({ active, enabled, employeeId, 
   const button: React.CSSProperties = { ...input, width: "auto", background: bg, minHeight: k ? 56 : undefined, fontSize: k ? 17 : undefined, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 7, fontWeight: k ? 800 : 700 };
   const section: React.CSSProperties = { padding: k ? "24px 28px" : 20, border: `1px solid ${border}`, borderRadius: k ? 26 : 16, background: bg, boxShadow: k ? "0 12px 32px rgba(0,0,0,.09)" : undefined };
   const heading: React.CSSProperties = { fontSize: F.h, margin: "0 0 14px", fontWeight: k ? 900 : undefined };
-  async function findTools(index: number) {
-    if (locked || !enabled) return;
-    const query = items[index].name.trim();
-    if (!query) { setError("AI로 찾을 공구 이름을 먼저 입력해주세요."); return; }
-    closeSearch(); closeSuggest(); setError("");
-    const controller = new AbortController(); searchController.current = controller;
-    setSearch({ index, query, loading: true });
-    searchTimer.current = setTimeout(() => controller.abort(), 6000);
-    try {
-      const result = await searchTools(employeeId, query, controller.signal);
-      if (searchController.current === controller) setSearch({ index, query, loading: false, result });
-    } catch (e: any) {
-      if (searchController.current === controller) setSearch({ index, query, loading: false, error: e.name === "AbortError" ? "응답이 늦어 검색을 중단했습니다. 직접 입력으로 신청하거나 다시 검색해주세요." : e instanceof TypeError ? "검색 서버에 연결하지 못했습니다. 직접 입력으로 신청하거나 다시 검색해주세요." : e.message });
-    } finally {
-      if (searchController.current === controller && searchTimer.current) { clearTimeout(searchTimer.current); searchTimer.current = null; }
-    }
-  }
-  function linkCandidate(index: number, candidate: ToolSearchCandidate) {
+  function linkCandidate(index: number, candidate: ToolSuggestion) {
     if (locked) return;
     setItems(prev => prev.map((item, n) => n === index ? { ...item, name: candidate.name, itemId: candidate.id, image: candidate.image } : item));
   }
-  function selectCandidate(candidate: ToolSearchCandidate) {
-    if (!search || locked) return;
-    linkCandidate(search.index, candidate);
-    closeSearch();
-  }
   async function submit() {
     if (submitting.current) return;
-    closeSearch(); closeSuggest(); setError("");
+    closeSuggest(); setError("");
     if (!enabled) { setError("무인 모드가 종료되어 신청할 수 없습니다."); return; }
     if (!employeeId || !floor || items.some(i => !i.name.trim() || !Number.isInteger(i.qty) || i.qty < 1 || i.qty > 999) || !photo) {
       setError("층수, 물품 이름·수량, 촬영 사진을 모두 확인해주세요."); return;
@@ -174,51 +143,33 @@ export default function UnattendedToolBorrowForm({ active, enabled, employeeId, 
         <h2 style={heading}>2. 가져갈 물품 이름 · 수량</h2>
         <div style={{ padding: k ? "14px 16px" : "12px 14px", marginBottom: 14, borderRadius: k ? 14 : 10, background: soft, lineHeight: 1.6 }}>
           <strong style={{ display: "block", fontSize: F.body }}>이름을 적으면 비슷한 물품이 아래에 바로 뜹니다. 맞는 물품을 눌러주세요.</strong>
-          <span style={{ fontSize: F.small, color: muted }}>목록에 없으면 적은 이름 그대로 신청해도 됩니다. 관리자가 사진을 보고 확인합니다. 그래도 못 찾겠으면 AI 검색을 눌러보세요.</span>
+          <span style={{ fontSize: F.small, color: muted }}>목록에 없으면 적은 이름 그대로 신청해도 됩니다. 관리자가 사진을 보고 확인합니다.</span>
         </div>
         <fieldset disabled={!floor || locked} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           {items.map((item, n) => <div key={n} style={{ marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8 }}>
             <div style={{ display: "flex", flex: 1, minWidth: 0, border: `1px solid ${border}`, borderRadius: k ? 16 : 10, overflow: "hidden" }}>
-            <input aria-label={`물품 이름 ${n + 1}`} maxLength={150} placeholder="물품 이름 직접 입력" style={{ ...input, border: 0, borderRadius: 0, flex: 1, minWidth: 0 }} value={item.name} onChange={e => { closeSearch(); setItems(prev => prev.map((i, idx) => idx === n ? { name: e.target.value, qty: i.qty } : i)); queueSuggest(n, e.target.value); }} />
-            <button type="button" aria-label={`AI 검색 ${n + 1}`} disabled={!enabled || !item.name.trim()} onClick={() => void findTools(n)} style={{ ...button, border: 0, borderLeft: `1px solid ${border}`, borderRadius: 0, color: accent, padding: k ? "10px 16px" : "10px", flexShrink: 0 }}><Sparkles size={16} /><span>AI 검색</span></button>
+            <input aria-label={`물품 이름 ${n + 1}`} maxLength={150} placeholder="물품 이름 직접 입력" style={{ ...input, border: 0, borderRadius: 0, flex: 1, minWidth: 0 }} value={item.name} onChange={e => { setItems(prev => prev.map((i, idx) => idx === n ? { name: e.target.value, qty: i.qty } : i)); queueSuggest(n, e.target.value); }} />
             </div>
             <input aria-label={`수량 ${n + 1}`} type="number" min={1} max={999} style={{ ...input, width: k ? 96 : 82 }} value={item.qty || ""} onChange={e => setItems(prev => prev.map((i, idx) => idx === n ? { ...i, qty: Number(e.target.value) } : i))} />
-            {items.length > 1 && <button aria-label={`물품 삭제 ${n + 1}`} style={button} onClick={() => { closeSearch(); closeSuggest(); setItems(prev => prev.filter((_, idx) => idx !== n)); }}><Trash2 size={15} /></button>}
+            {items.length > 1 && <button aria-label={`물품 삭제 ${n + 1}`} style={button} onClick={() => { closeSuggest(); setItems(prev => prev.filter((_, idx) => idx !== n)); }}><Trash2 size={15} /></button>}
             </div>
             {item.itemId && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: k ? accent : muted, fontSize: k ? 15 : 12, fontWeight: k ? 800 : undefined }}>
               {item.image && <img src={item.image} alt="선택한 공구" style={{ width: k ? 48 : 40, height: k ? 48 : 40, objectFit: "contain", borderRadius: 6 }} />}
               <span><Check size={k ? 15 : 12} /> 확인한 물품 · {item.name} · #{item.itemId}</span>
               <button type="button" style={{ border: 0, background: "transparent", color: muted, cursor: "pointer", font: "inherit", fontSize: k ? 14 : undefined, padding: k ? "8px 6px" : undefined }} onClick={() => setItems(prev => prev.map((i, idx) => idx === n ? { name: i.name, qty: i.qty } : i))}>선택 해제</button>
             </div>}
-            {suggest?.index === n && suggest.items.length > 0 && !item.itemId && search?.index !== n && item.name.trim() && <div style={{ marginTop: 8, border: `1px solid ${border}`, borderRadius: k ? 16 : 12, overflow: "hidden", background: bg }}>
+            {suggest?.index === n && suggest.items.length > 0 && !item.itemId && item.name.trim() && <div style={{ marginTop: 8, border: `1px solid ${border}`, borderRadius: k ? 16 : 12, overflow: "hidden", background: bg }}>
               <div style={{ padding: k ? "10px 14px" : "8px 12px", fontSize: F.small, color: muted, background: k ? P.surface : "transparent" }}>이 중에 있나요? 누르면 정확한 물품으로 신청됩니다.</div>
               {suggest.items.map(c => <button key={c.id} type="button" onClick={() => { linkCandidate(n, c); closeSuggest(); }}
                 style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", padding: k ? "10px 14px" : "8px 12px", minHeight: k ? 72 : 52, border: 0, borderTop: `1px solid ${border}`, background: "transparent", color: text, cursor: "pointer", font: "inherit" }}>
                 {thumb(c.image, k ? 52 : 38)}
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block", fontWeight: 800, fontSize: k ? 18 : 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                  <span style={{ display: "block", marginTop: 2, fontSize: F.small, color: c.stock === 0 && !c.consumable ? "#b45309" : muted }}>{[c.location, c.consumable ? "소모품" : "", c.stock === null ? "재고 확인 필요" : `재고 ${c.stock}개`].filter(Boolean).join(" · ")}</span>
+                  <span style={{ display: "block", marginTop: 2, fontSize: F.small, color: c.stock === 0 && !c.consumable ? "#b45309" : muted }}>{[c.consumable ? "소모품" : "", c.stock === null ? "재고 확인 필요" : `재고 ${c.stock}개`].filter(Boolean).join(" · ")}</span>
                 </span>
                 <span style={{ color: accent, fontWeight: 800, fontSize: k ? 15 : 12, whiteSpace: "nowrap" }}>선택</span>
               </button>)}
-            </div>}
-            {search?.index === n && <div style={{ border: `1px solid ${border}`, borderRadius: 12, padding: 12, marginTop: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}><strong style={{ fontSize: k ? 17 : 14 }}>{search.loading ? "유사 공구를 찾고 있습니다…" : `‘${search.query}’ 검색 결과`}</strong><button type="button" aria-label="AI 검색 닫기" onClick={closeSearch} style={{ ...button, padding: 6, border: 0 }}><X size={16} /></button></div>
-              {search.error && <p role="alert" style={{ fontSize: F.note, color: "#b45309", lineHeight: 1.6 }}>{search.error}</p>}
-              {search.result && <>
-                <p style={{ fontSize: F.small, color: muted, lineHeight: 1.6 }}>{search.result.message}</p>
-                {!search.result.items.length && <p style={{ color: muted, fontSize: F.note }}>맞는 후보가 없습니다. 입력한 이름과 촬영 사진으로 신청하면 관리자가 확인합니다.</p>}
-                <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(${k ? 180 : 150}px, 1fr))`, gap: 10 }}>
-                  {search.result.items.map(candidate => <button key={candidate.id} type="button" onClick={() => selectCandidate(candidate)} style={{ ...button, width: "100%", padding: 10, display: "flex", flexDirection: "column", alignItems: "stretch", textAlign: "left" }}>
-                    {candidate.image ? <img src={candidate.image} alt={candidate.name} loading="lazy" style={{ height: 115, width: "100%", objectFit: "contain", borderRadius: 8 }} /> : <div style={{ height: 115, display: "grid", placeItems: "center", color: muted, fontSize: 12, background: k ? P.surface : isLightMode ? "#f8fafc" : "#0f172a", borderRadius: 8 }}>등록된 사진 없음</div>}
-                    <span style={{ fontSize: k ? 17 : 14, overflowWrap: "anywhere" }}>{candidate.name}</span>
-                    <span style={{ fontSize: F.small, color: muted, fontWeight: 400 }}>#{candidate.id} · {candidate.consumable ? "소모품" : "대여 물품"} · {candidate.stock === null ? "재고 확인 필요" : `재고 ${candidate.stock}개`}</span>
-                    <span style={{ fontSize: F.small, color: accent }}>이 물품 선택</span>
-                  </button>)}
-                </div>
-                <p style={{ margin: "12px 0 0", fontSize: F.small, color: muted }}>맞는 물품이 없으면 닫고 직접 입력해주세요. 후보 선택만으로 신청되지는 않습니다.</p>
-              </>}
             </div>}
           </div>)}
           <button style={button} disabled={items.length >= 30} onClick={() => { closeSuggest(); setItems(prev => [...prev, { name: "", qty: 1 }]); }}><Plus size={16} /> 물품 추가</button>

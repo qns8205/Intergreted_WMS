@@ -6,6 +6,7 @@ import {
   CheckCircle2, AlertCircle, Bookmark, RotateCcw, Flame, PlusCircle, IdCard,
   Trash2, RefreshCw, AlertTriangle, Layers, Clock3} from "lucide-react";
 import ImageZoomModal from "./ImageZoomModal";
+import RentalTermsFields, { RentalMode } from "./RentalTermsFields";
 import TableclothPanel from "./TableclothPanel";
 import { SizeViewerModal, hasDims } from "./SizeViewer";
 import {
@@ -20,6 +21,7 @@ import {
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, getThumbImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
+import { scenarioVariantText } from "../utils/scenarioVariant";
 import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { useNoticeCountdown } from "../utils/useNoticeCountdown";
@@ -36,6 +38,7 @@ type Mode =
 type ItemSortKey = "id_desc" | "id_asc" | "location_desc" | "location_asc" | "name_asc";
 
 interface CartItem {
+  reservationId?: number;
   id: string;
   name: string;
   quantity: number;
@@ -77,6 +80,7 @@ function cartLineLabel(c: { name: string; variantId?: number; variantName?: stri
 interface SidEntry { sid: string; loading: boolean; scenario: ScenarioDefinition | null }
 
 interface BorrowSystemPageProps {
+  initialItems?: CartItem[] | null;
   key?: string;
   scriptUrl: string;
   connected: boolean;
@@ -107,7 +111,7 @@ interface BorrowSystemPageProps {
 
 /* ══════════════════════════════ 컴포넌트 ══════════════════════════════ */
 
-export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast: showToastRaw, entry = "borrow", initialIdentity = null, initialKind = null, initialSeat = null, initialSid = "", initialAdditionalItems = [], onGoPickItems, onInventoryChanged, isAdmin = false, unattendedEnabled = false }: BorrowSystemPageProps) {
+export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, onBack, showToast: showToastRaw, entry = "borrow", initialIdentity = null, initialKind = null, initialSeat = null, initialSid = "", initialAdditionalItems = [], initialItems = null, onGoPickItems, onInventoryChanged, isAdmin = false, unattendedEnabled = false }: BorrowSystemPageProps) {
   // 무인 모드 중에는 비관리자에게 보관 위치를 숨긴다. 대여 신청 후에는
   // 서버가 확인한 사번으로 위치 확인 사이트 QR을 보여준다.
   const hideLocation = unattendedEnabled && !isAdmin;
@@ -268,6 +272,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   // 깨질 위험 / 화재 위험 / 특정 업체 request용으로 표시된 물품이 장바구니에 있을 때,
   // 마지막(확인) 단계로 넘어가기 직전 한 번 더 확인시키는 팝업.
   const [hazardModal, setHazardModal] = useState<{ items: { id: string; name: string; fragile?: boolean; fireRisk?: boolean; requestFor?: string; personalOwner?: string }[]; proceedMode: Mode } | null>(null);
+  const requestDecisionRef = useRef<{ key: string; mode: RentalMode; reason: string; dueDate:string } | null>(null);
+  const [requestRentalModal, setRequestRentalModal] = useState<{ key: string; items: { id: string; name: string }[]; partialConfirmed: boolean; submitType: "general" | "scenario" } | null>(null);
+  const [requestRentalMode, setRequestRentalMode] = useState<RentalMode | null>(null);
+  const [requestRentalReason, setRequestRentalReason] = useState("");
+  const [rentalDueDate,setRentalDueDate] = useState('');
+  const rentalTermsInvalid = !requestRentalMode || (requestRentalMode !== 'general' && !requestRentalReason.trim()) || (requestRentalMode === 'long_term' && (!rentalDueDate || rentalDueDate < new Date(Date.now()+9*3600000).toISOString().slice(0,10)));
 
   // 마지막 확인 단계(targetMode)로 넘어가기 전에 위험/request 물품이 있는지 검사하고,
   // 있으면 모달을 띄워 확인을 받은 뒤에만 진행한다.
@@ -344,7 +354,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   useVersionWorkGuard(
     "borrow-system-work",
     submitting || returnSubmitting || !!resultInfo.isSyncing || cart.length > 0 || reqCart.length > 0 || sidCart.length > 0
-      || Object.values(selectedReturn).some((qty) => qty > 0),
+      || Object.values(selectedReturn).some((qty) => Number(qty) > 0),
     entry === "return" ? "반납 신청 중" : "대여 신청 중",
   );
 
@@ -462,10 +472,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     // 위험 물품(파손·화재·request용·개인 물품) 확인은 물품을 담는 순간에 이미 받았다.
     // 여기서 또 물으면 같은 것을 두 번 확인시키는 꼴이라 하지 않는다.
     if (kind === "general") {
-      if (generalTypeOverflow) { setAutoBusy(false); setTypeOverflowModal(generalTypeOverflow); return; }
       if (generalStockShortfall.length > 0) { setAutoBusy(false); setStockShortfallModal(generalStockShortfall); return; }
     } else {
-      if (scenarioTypeOverflow) { setAutoBusy(false); setTypeOverflowModal(scenarioTypeOverflow); return; }
       if (scenarioStockShortfall.length > 0) { setAutoBusy(false); setSidExcludeModal({ phase: "submit", stage: "confirm", items: scenarioStockShortfall }); return; }
     }
     // 어느 쪽으로 신청할지 그대로 넘긴다. setItemType은 아직 반영되기 전이라 믿을 수 없다.
@@ -538,11 +546,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       loadItems();
       // 열람 시나리오 장바구니 → 일반대여 카트로
       if (initialIdentity && (initialIdentity.affiliation === "cfgw" || !initialIdentity.affiliation)) {
-        const saved = loadBrowseCart(initialIdentity.name, initialIdentity.employeeId);
+        const saved = initialItems ?? loadBrowseCart(initialIdentity.name, initialIdentity.employeeId);
         // 열람에서 고른 종류(variantId)까지 그대로 이어받는다 — 빠뜨리면 대여 화면에서
         // "종류를 골라야 합니다"로 막혀 다시 담아야 한다.
         if (saved.length) {
-          setCart(saved.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity, rootSlot: c.rootSlot, variantId: c.variantId, variantName: c.variantName })));
+          setCart(saved.map((c) => ({ ...c })));
           setItemType(initialSid ? "scenario" : "general");
         }
       }
@@ -670,19 +678,6 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     if (total <= activeTypeInfo.max) return null;
     return { current: activeTypeInfo.count, adding: addingCount, max: activeTypeInfo.max };
   }
-  const scenarioTypeOverflow = useMemo(() => {
-    const ids = new Set<string>();
-    sidCart.forEach((e) => (e.scenario?.items || []).forEach((it: any) => ids.add(it.id)));
-    reqCart.forEach((c) => ids.add(c.id));
-    return computeTypeOverflow(ids);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sidCart, reqCart, activeTypeInfo]);
-  const generalTypeOverflow = useMemo(() => {
-    const ids = new Set<string>();
-    cart.forEach((c) => ids.add(c.id));
-    return computeTypeOverflow(ids);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, activeTypeInfo]);
 
   function subsOf(cat: string): string[] {
     return cat && categoryMap[cat] ? Array.from<string>(categoryMap[cat]).sort() : [];
@@ -814,7 +809,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       const nm = (affiliation === "other" ? otherName : borrowerName).trim();
       const eid = affiliation === "cfgw" ? employeeId.trim() : "";
       saveIdentity({ name: nm, employeeId: eid, affiliation });
-      const saved = loadBrowseCart(nm, eid);
+      const saved = initialItems ?? loadBrowseCart(nm, eid);
       if (saved.length > 0) {
         const savedCart = saved.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity, rootSlot: c.rootSlot, variantId: c.variantId, variantName: c.variantName }));
         const merge = (prev: CartItem[]) => {
@@ -822,7 +817,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           saved.forEach((sv) => {
             // 같은 물품이라도 종류가 다르면 별개의 줄이므로 줄 키로 비교한다.
             const i = next.findIndex((c) => cartLineKey(c) === cartLineKey(sv));
-            if (i === -1) next.push({ id: sv.id, name: sv.name, quantity: sv.quantity, rootSlot: sv.rootSlot, variantId: sv.variantId, variantName: sv.variantName });
+            if (i === -1) next.push({ ...sv });
           });
           return next;
         };
@@ -914,8 +909,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     // 조회 자체가 실패한 SID는 시나리오 등록 여부를 확인할 수 없으므로, 확실해질 때까지 진행을 막는다.
     const failed = sidCart.find((e) => e.scenario?.fetchError);
     if (failed) { showToast(`${failed.sid} 조회에 실패해 시나리오 등록 여부를 확인할 수 없습니다. 다시 시도해주세요.`, "error"); return; }
-    // 15종류 한도를 넘기면 확인 화면으로 넘어가지 못하게 여기서 바로 막는다.
-    if (scenarioTypeOverflow) { setTypeOverflowModal(scenarioTypeOverflow); return; }
+    // 종류 한도는 제출 시 Request 대여 방식을 선택한 뒤 판정한다.
     // 재고가 모자란 물품이 있으면 막지 않고, 무엇이 빠지는지 보여주고 확인을 받는다.
     if (scenarioStockShortfall.length > 0) {
       setSidExcludeModal({ phase: "cart", stage: "warn", items: scenarioStockShortfall });
@@ -961,6 +955,25 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     // 기록과 함께 처리된다. 여기서 전체 목록을 한 번 더 받으면 실패 지점만 하나 늘어나고,
     // 조회 직후 다른 사람이 먼저 빌리는 경쟁 상태도 완전히 막지 못한다.
     const submitInventory = objectItems;
+    const picked: { id: string; name: string }[] = submitType === "general" ? cart : [
+      ...sidCart.flatMap((entry) => entry.scenario?.items || []), ...reqCart,
+    ];
+    const requestItems = picked.filter((item) => submitInventory.find((obj) => obj.id === item.id)?.requestFor !== undefined);
+    const requestKey = JSON.stringify([...new Set(picked.map((item) => item.id))].sort());
+    const decision = requestDecisionRef.current?.key === requestKey ? requestDecisionRef.current : null;
+    if (picked.length && !decision) {
+      setAutoBusy(false);
+      setHazardModal(null);
+      setRequestRentalMode(null);
+      setRequestRentalReason("");
+      setRentalDueDate('');
+      setRequestRentalModal({ key: requestKey, items: requestItems, partialConfirmed, submitType });
+      return;
+    }
+    const exemptIds = new Set(decision && decision.mode !== 'general' ? requestItems.map((item) => item.id) : []);
+    const limitedIds = new Set(picked.filter((item) => !exemptIds.has(item.id)).map((item) => item.id));
+    const overflow = limitedIds.size ? computeTypeOverflow(limitedIds) : null;
+    if (overflow) { setAutoBusy(false); setTypeOverflowModal(overflow); return; }
 
     const name = affiliation === "other" ? otherName.trim() : borrowerName.trim();
     const contact = { affiliation, employeeId: employeeId.trim() };
@@ -1002,7 +1015,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
       borrowList.push({
         itemType: "general", borrowerName: name, ...contact,
-        borrowedItems: cart.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity, variantId: c.variantId })),
+        borrowedItems: cart.map((c) => ({ id: c.id, name: c.name, quantity: c.quantity, variantId: c.variantId, reservationId: c.reservationId })),
         generalOption, borrowDate: nowStr, borrowPurpose: purposeGeneral,
         floor: selFloor || undefined, unit: selUnit || undefined,
       });
@@ -1107,6 +1120,12 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       });
     }
 
+    if (decision) {
+      borrowList.forEach((info) => {
+        info.rentalTerms = {mode:decision.mode,reason:decision.reason,dueDate:decision.dueDate};
+        info.requestRental = {mode:decision.mode === 'general' ? 'general' : 'request',reason:decision.reason};
+      });
+    }
     setSubmitting(true);
     
     // 일단 즉시 "접수 완료 및 동기화 중" 화면 표시 (사용자가 대기할 필요가 없도록 비동기 처리)
@@ -1159,7 +1178,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           }
           let borrowQr: { image: string; url: string; expiresAt: number } | undefined;
           if (res.success && res.lookupPath && /^\d{4}$/.test(res.employeeId || "")) {
-            const url = `${window.location.protocol}//${window.location.hostname}:3002${res.lookupPath}?employeeId=${encodeURIComponent(res.employeeId!)}`;
+            const url = `${window.location.protocol}//${window.location.hostname}:${window.location.protocol === "https:" ? "3445" : "3002"}${res.lookupPath}?employeeId=${encodeURIComponent(res.employeeId!)}`;
             try {
               const image = await QRCode.toDataURL(url, { width: 360, margin: 2 });
               borrowQr = { image, url, expiresAt: Date.now() + 30_000 };
@@ -1182,7 +1201,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
           if (res.success) {
             // 성공이 확인된 뒤에만 장바구니를 비운다.
             // 전송 전/진행 중에 비우면 자동 신청이 멈췄을 때 사용자가 담은 목록까지 사라진다.
-            clearBrowseCart(name, affiliation === "cfgw" ? employeeId.trim() : "");
+            if (!initialItems?.some((item) => item.reservationId)) clearBrowseCart(name, affiliation === "cfgw" ? employeeId.trim() : "");
             setCart([]); setReqCart([]);
             // 성공 시 리스트 새로고침
             loadUnreturned();
@@ -1200,7 +1219,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
             title: "대여 신청 완료!",
             sub: "성공적으로 접수되었습니다. (로컬 데모)"
           }));
-          clearBrowseCart(name, affiliation === "cfgw" ? employeeId.trim() : "");
+          if (!initialItems?.some((item) => item.reservationId)) clearBrowseCart(name, affiliation === "cfgw" ? employeeId.trim() : "");
           setCart([]); setReqCart([]);
         }
       } catch (e: any) {
@@ -1252,7 +1271,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
 
   const sumQty = (items: UnreturnedItem[]) => items.reduce((n, it) => n + (Math.max(1, parseInt(String(it.quantity), 10) || 1)), 0);
   const sortByLoc = (items: UnreturnedItem[]) => items.slice().sort((a, b) => computeLocationSortIndex(a.location) - computeLocationSortIndex(b.location));
-  const borrowDateKey = (it: UnreturnedItem) => it.submitDisplay || it.borrowDate || "(날짜 없음)";
+  const borrowDateKey = (it: UnreturnedItem) => it.borrowDateTime || it.borrowDate || "(날짜 없음)";
   const keyOf = (it: UnreturnedItem) => `${it.sheetType}:${it.rowIndex}`;
 
   function groupBy<T>(items: T[], keyFn: (it: T) => string): { key: string; items: T[] }[] {
@@ -1400,6 +1419,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
   function resetAll() {
     setCart([]); setReqCart([]); setSidCart([]); setSidInput("");
     setActiveTypeInfo(null); setTypeLimitModal(null); setTypeOverflowModal(null);
+    requestDecisionRef.current = null; setRequestRentalModal(null);
     setPurposeGeneral(""); setPurposeScenario("");
     setSelectedReturn({}); setExpanded({}); setReturnSearch("");
     setItemSearch(""); setItemCat(""); setItemSub(""); setReqSearch(""); setReqCat(""); setReqSub("");
@@ -1468,11 +1488,11 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     // 물품 선택을 거쳐 온 자동 신청은 오류·확인 취소 뒤 장바구니로 되돌린다.
     // URL로 직접 들어온 옛 대여 주소(#/borrow/)는 초기 화면으로 돌려보낸다.
     // 확인 모달이 열린 동안에는 사용자가 먼저 내용을 읽고 닫을 수 있게 기다린다.
-    if (hazardModal || typeLimitModal || typeOverflowModal || stockShortfallModal || sidExcludeModal) return;
-    if (cameFromBrowse) onGoPickItems?.(initialSid ? "sid" : undefined) || onBack();
+    if (requestRentalModal || hazardModal || typeLimitModal || typeOverflowModal || stockShortfallModal || sidExcludeModal) return;
+    if (cameFromBrowse && onGoPickItems) onGoPickItems(initialSid ? "sid" : undefined);
     else onBack();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, cameFromBrowse, tcFlow, autoBusy, hazardModal, typeLimitModal, typeOverflowModal, stockShortfallModal, sidExcludeModal]);
+  }, [mode, cameFromBrowse, tcFlow, autoBusy, requestRentalModal, hazardModal, typeLimitModal, typeOverflowModal, stockShortfallModal, sidExcludeModal]);
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -1765,7 +1785,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                 <Spinner size={30} C={C} /> 미반납 목록을 불러오는 중입니다...
               </div>
             ) : unreturned.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>
+              <div className="wms-empty-state" style={{ textAlign: "center", padding: "48px 0", color: C.label, fontSize: "14px" }}>
                 <Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 미반납된 물품이 없습니다.</div>
               </div>
             ) : returnTree.length === 0 ? (
@@ -2393,6 +2413,26 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
       ) : null}
 
       {/* 기타 소속 성함 미입력 경고 모달 */}
+      {requestRentalModal ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 10001, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="request-rental-title" style={{ width: "min(460px, 100%)", maxHeight: "90vh", overflowY: "auto", background: C.card, color: C.text, borderRadius: 18, padding: 24 }}>
+            <h2 id="request-rental-title" style={{ margin: "0 0 4px", fontSize: 19 }}>대여 방식 선택</h2>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: C.label, lineHeight: 1.5 }}>사용 목적에 맞는 대여 방식을 선택해주세요.</p>
+            {requestRentalModal.items.length ? <div style={{ fontSize: 12, color: C.label, background: C.cardSub, borderRadius: 9, padding: "8px 10px", marginBottom: 14, lineHeight: 1.5, overflowWrap: "anywhere" }}>{[...new Set(requestRentalModal.items.map((item) => item.name))].join(", ")}</div> : null}
+            <RentalTermsFields C={C} mode={requestRentalMode} reason={requestRentalReason} dueDate={rentalDueDate} onDueDate={setRentalDueDate} onMode={setRequestRentalMode} onReason={setRequestRentalReason} />
+            <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+              <button onClick={() => { setRequestRentalModal(null); requestDecisionRef.current = null; }} style={{ flex: 1, padding: 13, borderRadius: 11, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 14, fontWeight: 600, cursor: "pointer" }}>취소</button>
+              <button disabled={rentalTermsInvalid} onClick={() => {
+                if (rentalTermsInvalid || !requestRentalMode) return;
+                const pending = requestRentalModal;
+                requestDecisionRef.current = { key: pending.key, mode: requestRentalMode, reason: requestRentalMode !== 'general' ? requestRentalReason.trim() : '', dueDate:requestRentalMode === 'long_term' ? rentalDueDate : '' };
+                setRequestRentalModal(null);
+                void handleBorrowSubmit(pending.partialConfirmed, pending.submitType);
+              }} style={{ flex: 2, padding: 13, borderRadius: 11, border: "none", background: C.accent, color: "#fff", fontSize: 14, fontWeight: 700, opacity: rentalTermsInvalid ? 0.45 : 1, cursor: rentalTermsInvalid ? "not-allowed" : "pointer" }}>대여 신청</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {nameRequiredModal ? (
         <div
           onClick={() => { setNameRequiredModal(false); otherNameInputRef.current?.focus(); }}
@@ -2799,6 +2839,7 @@ function ItemPicker({
                 </div>
 
                 <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                {it.variants?.length ? <div style={{ fontSize: 11, color: C.accentText, overflowWrap: "anywhere" }}>종류: {it.variants.map((variant: any) => variant.name).join(" · ")}</div> : null}
                 <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
                   <StockBadges stock={stock} rented={rented} C={C} />
@@ -3228,6 +3269,7 @@ function ReturnItemCard({
         <div style={{ fontWeight: 800, fontSize: "13px", color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {item.itemLabel || item.name || "(이름 없음)"}
         </div>
+        {scenarioVariantText(item) ? <div style={{ fontSize: 11, color: C.accentText, marginTop: 3 }}>종류: {scenarioVariantText(item)}</div> : null}
         <div style={{ display: "flex", gap: "6px", fontSize: "11px", color: C.label, marginTop: "2px", alignItems: "center" }}>
           <span>{item.itemId || item.id}</span>
           <span>•</span>

@@ -1,18 +1,22 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   ArrowLeft, Search, User, IdCard, Boxes, Fingerprint, ChevronRight,
-  Plus, Minus, X, ShoppingCart, Warehouse, MapPin, Trash2, HandHelping,
-  Building2, MoreHorizontal, RotateCcw, Check, Layers, SlidersHorizontal, Info, Sparkles } from "lucide-react";
+  Plus, Minus, X, ShoppingCart, MapPin, Trash2, HandHelping,
+  Building2, MoreHorizontal, Check, Layers, SlidersHorizontal, Info, ListPlus } from "lucide-react";
 import ImageZoomModal from "./ImageZoomModal";
 import ItemBorrowersModal, { BorrowersTarget } from "./ItemBorrowersModal";
+import MyRentalList, { MyRentalResult } from "./MyRentalList";
+import { ReservationNoticeModal, ReserveItemsCard, reservationTime } from "./ItemReservations";
+import { reservationBadgesForItem } from "../utils/reservationDisplay";
+import { ItemReservation, fetchReservations } from "../utils/borrowApi";
 import { BoxCanvas, SizeViewerModal, dimsLabel, hasDims, SHAPE_LABEL } from "./SizeViewer";
 import {
   ObjectItem, BrowseCartItem,
   padSlot, isKoreanName,
   fetchObjectItems, checkConfigDsRegistered,
-  fetchMyBorrowedItems, fetchWarehouseBorrowedItems,
+  fetchMyBorrowedItems, fetchMyReturnedItems, fetchWarehouseBorrowedItems,
   saveIdentity, loadIdentity,
-  saveBrowseCart, loadBrowseCart,
+  saveBrowseCart, loadBrowseCart, saveReservationCart, loadReservationCart,
   DEMO_OBJECT_ITEMS,
   fetchScenarioDefinition, ScenarioDefinition,
   fetchTableclothItems, TableclothItem, fetchTableclothCategories, TableclothCategory,
@@ -25,17 +29,17 @@ import { locationKey, withMyFloorFirst } from "../utils/tableclothLocation";
 import { getGoogleDriveImageUrl, getThumbImageUrl } from "../utils/drive";
 import HazardConfirmModal, { collectHazardItems, HazardItem } from "./HazardConfirmModal";
 import BorrowerSeatSuggestions from "./BorrowerSeatSuggestions";
-import UnattendedToolBorrowForm from "./UnattendedToolBorrowForm";
-import UnattendedToolReturnForm from "./UnattendedToolReturnForm";
-import { BorrowedTool, fetchMyTools } from "../utils/warehouseManualApi";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
-import { searchScenarioAi, ScenarioAiResult, filterScenarioAiResults } from "../utils/scenarioAiSearch";
-import { scenarioRegularScore, scenarioAiResultActive } from "../utils/scenarioRegularSearch";
+import { parseBulkIds, planBulkAdd } from "../utils/bulkIdCart";
+import { scenarioRegularScore } from "../utils/scenarioRegularSearch";
 
 type Affiliation = "cfgw" | "configds" | "other";
 // 무인 모드에서는 목록 선택 대신 직접 입력·촬영으로 공구를 신청한다.
-type Step = "identity" | "menu" | "scenarioKind" | "scenario" | "tablecloth" | "warehouse" | "toolReturn" | "mylookup" | "sid";
+type Step = "identity" | "menu" | "scenarioKind" | "scenario" | "reservation" | "reservationConfirm" | "tablecloth" | "mylookup" | "sid";
 type Kind = "scenario" | "tablecloth";
+
+/** 종류 고르기 창에 올릴 물품. ID로 한꺼번에 담을 때는 몇 개를 담을지와 적었던 종류 이름을 함께 든다. */
+type VariantAsk = ObjectItem & { askQty?: number; askHint?: string };
 
 interface BrowsePageProps {
   key?: string;
@@ -67,7 +71,10 @@ interface BrowsePageProps {
   isAdmin?: boolean;
   adminDirectBorrow?: boolean;
   adminCart?: BrowseCartItem[];
-  onAdminBack?: (items: BrowseCartItem[]) => void;
+  /** 관리자 직접 대여에서 SID 대여로 담았던 시나리오 번호와 그 외 추가 물품. 화면을 오갈 때 되살린다. */
+  adminSid?: string;
+  adminSidExtras?: BrowseCartItem[];
+  onAdminBack?: (items: BrowseCartItem[], sid?: { sid: string; additionalItems: BrowseCartItem[] }) => void;
   /** 무인 모드 중에는 관리자가 아니면 모든 보관 위치를 숨긴다 — 대여 신청 후 발급되는
    *  QR을 통해서만 위치를 볼 수 있게 하기 위함. */
   unattendedEnabled?: boolean;
@@ -98,7 +105,7 @@ function cacheFor(scriptUrl: string) {
 
 export default function BrowsePage({
   scriptUrl, connected, isLightMode, onBack, showToast, onGoBorrow, onGoTableclothReturn, initialStep = null, purpose = "browse", session = null,
-  isAdmin = false, unattendedEnabled = false, adminDirectBorrow = false, adminCart, onAdminBack, onSeatChange,
+  isAdmin = false, unattendedEnabled = false, adminDirectBorrow = false, adminCart, adminSid, adminSidExtras, onAdminBack, onSeatChange,
 }: BrowsePageProps) {
   // 원격 WMS 데이터를 읽는 로컬 검증 모드에서는 서버 변경 요청을 전부 막는다.
   // 버튼을 미리 비활성화해, 눌렀다가 '대여 신청 오류' 결과 화면으로 가는 일도 없게 한다.
@@ -125,12 +132,13 @@ export default function BrowsePage({
   };
 
   const [step, setStep] = useState<Step>(() => {
-    if (adminDirectBorrow) return "scenario";
+    if (adminDirectBorrow) return initialStep === "scenarioKind" || initialStep === "sid" ? initialStep : "scenario";
     // 내 대여 조회: 로그인해 있으면 그 사번으로 바로 조회하고, 아니면 신원 입력부터 받는다.
     if (purpose === "mylookup") return session ? "mylookup" : "identity";
     // 주소가 #/browse/sid 로 들어온 경우도 SID 단계로 시작한다
     const slug = (typeof window !== "undefined" ? window.location.hash.split("/")[2] : "") || "";
     if (slug === "sid") return "sid";
+    if (slug === "reservation" || slug === "reservationConfirm") return session ? slug : "identity";
     if (initialStep) return initialStep;
     // 로그인해서 들어왔으면 신원을 다시 묻지 않는다. 바로 분야 선택부터 시작한다.
     return session ? "menu" : "identity";
@@ -173,7 +181,12 @@ export default function BrowsePage({
   const openingScenarioTimer = useRef<number | null>(null);
   const [sciErr, setSciErr] = useState("");
 
-  const [sciCart, setSciCart] = useState<BrowseCartItem[]>([]);
+  const reservationFlow = step === "reservation" || step === "reservationConfirm";
+  const objectBrowse = step === "scenario" || step === "reservation";
+  const [borrowCart, setBorrowCart] = useState<BrowseCartItem[]>([]);
+  const [reservationCart, setReservationCart] = useState<BrowseCartItem[]>([]);
+  const sciCart = reservationFlow ? reservationCart : borrowCart;
+  const setSciCart = reservationFlow ? setReservationCart : setBorrowCart;
   useEffect(() => {
     if (adminDirectBorrow && adminCart) setSciCart(adminCart);
   }, [adminDirectBorrow, adminCart]);
@@ -182,11 +195,15 @@ export default function BrowsePage({
   const sidAddingExtraRef = useRef(false);
   sidAddingExtraRef.current = sidAddingExtra;
   // 종류가 나뉜 물품을 담을 때 사진을 보고 고르는 모달
-  const [variantPick, setVariantPick] = useState<ObjectItem | null>(null);
+  const [variantPick, setVariantPick] = useState<VariantAsk | null>(null);
   // "필요 물품 전부 담기"로 종류가 나뉜 물품이 여러 개 걸릴 때 차례로 물어보기 위한 대기열.
   // 예전에는 물품마다 창을 열려고 해서 마지막 하나만 남았고, 하나를 고르면 창이 닫혀
   // 나머지는 담기지 않았다.
-  const [variantQueue, setVariantQueue] = useState<ObjectItem[]>([]);
+  const [variantQueue, setVariantQueue] = useState<VariantAsk[]>([]);
+  // ID를 콤마로 적어 한꺼번에 담는 창. 결과(담은 것·못 담은 이유)는 창 안에 남겨 고쳐 적을 수 있게 한다.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkResult, setBulkResult] = useState<{ added: string[]; reduced: string[]; needVariant: string[]; noStock: string[]; unknown: string[]; invalid: string[] } | null>(null);
 
   /** 지금 창을 닫고, 대기열에 남은 다음 물품을 이어서 물어본다. */
   function advanceVariantQueue() {
@@ -250,7 +267,7 @@ export default function BrowsePage({
   const [qtyNoticeOpen, setQtyNoticeOpen] = useState(false);
   const qtyNoticeShownRef = useRef(false);
   useEffect(() => {
-    if (step !== "scenarioKind" || qtyNoticeShownRef.current) return;
+    if (adminDirectBorrow || step !== "scenarioKind" || qtyNoticeShownRef.current) return;
     qtyNoticeShownRef.current = true;
     setQtyNoticeOpen(true);
   }, [step]);
@@ -303,17 +320,6 @@ export default function BrowsePage({
   const [cartOpen, setCartOpen] = useState<Kind | null>(null);
 
   const [sciSearch, setSciSearch] = useState("");
-  const [sciSearchMode, setSciSearchMode] = useState<"normal" | "ai">("normal");
-  const [sciAi, setSciAi] = useState<{ query: string; busy: boolean; result?: ScenarioAiResult; error?: string } | null>(null);
-  const sciAiController = useRef<AbortController | null>(null);
-  const sciAiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function stopScenarioAi() {
-    sciAiController.current?.abort(); sciAiController.current = null;
-    if (sciAiTimer.current) clearTimeout(sciAiTimer.current);
-    sciAiTimer.current = null;
-  }
-  function clearScenarioAi() { stopScenarioAi(); setSciAi(null); setSciSearchMode("normal"); }
-  useEffect(() => () => stopScenarioAi(), []);
   const [sciCat, setSciCat] = useState("");
   const [sciSub, setSciSub] = useState("");
   const [sciRequestFilter, setSciRequestFilter] = useState<"all" | "normal">(() => {
@@ -332,7 +338,7 @@ export default function BrowsePage({
   const [borrowersTarget, setBorrowersTarget] = useState<BorrowersTarget | null>(null);
   const closeBorrowers = useCallback(() => setBorrowersTarget(null), []);
   const [myLoading, setMyLoading] = useState(false);
-  const [myResult, setMyResult] = useState<{ scenario: any[]; general: any[]; warehouse: any[] } | null>(null);
+  const [myResult, setMyResult] = useState<MyRentalResult | null>(null);
 
   useEffect(() => {
     try { sessionStorage.setItem("wms_scenario_request_filter", sciRequestFilter); } catch { /* 저장소 접근 불가 */ }
@@ -340,59 +346,35 @@ export default function BrowsePage({
 
   const identName = affiliation === "other" ? otherName.trim() : name.trim();
   const identEmp = affiliation === "cfgw" ? empId.trim() : "";
-  useEffect(() => { clearScenarioAi(); }, [sciSearch, sciCat, sciSub, sciRequestFilter, identEmp, scriptUrl]);
+  const [reservations, setReservations] = useState<ItemReservation[]>([]);
+  const [reservationNotice, setReservationNotice] = useState<{ items: ItemReservation[]; proceed: () => void } | null>(null);
+  const reservationSeen = useRef(new Set<number>());
   useEffect(() => {
-    if (step !== "scenario") {
-      stopScenarioAi();
-      setSciAi(prev => prev?.busy ? (prev.result ? { ...prev, busy: false } : null) : prev);
-    }
-  }, [step]);
-  async function runScenarioAi() {
-    const query = sciSearch.trim();
-    if (!query || sciAi?.busy || !connected) return;
-    stopScenarioAi();
-    setSciSearchMode("ai");
-    const controller = new AbortController(); sciAiController.current = controller;
-    sciAiTimer.current = setTimeout(() => controller.abort(), 6000);
-    setSciAi(prev => ({ ...(prev?.query === query ? prev : {}), query, busy: true, error: undefined }));
-    try {
-      const result = await searchScenarioAi(identEmp, query, { category: sciCat, subcategory: sciSub, request: sciRequestFilter }, controller.signal);
-      if (sciAiController.current === controller) setSciAi({ query, busy: false, result });
-    } catch (error: any) {
-      if (sciAiController.current === controller) setSciAi({ query, busy: false, error: error.name === "AbortError" ? "AI 응답이 늦어 검색을 중단했습니다. 일반 검색은 계속 사용할 수 있습니다." : error instanceof TypeError ? "AI 검색에 연결하지 못했습니다. 일반 검색으로 찾아주세요." : error.message });
-    } finally {
-      if (sciAiController.current === controller && sciAiTimer.current) { clearTimeout(sciAiTimer.current); sciAiTimer.current = null; }
-    }
+    if (!connected || !scriptUrl || !session || adminDirectBorrow) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try { const rows = await fetchReservations(scriptUrl); if (!cancelled) setReservations(rows); }
+      catch { /* 제출 시에는 최신 예약을 다시 읽고 실패를 안내한다. */ }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+  }, [connected, scriptUrl, session?.employeeId, adminDirectBorrow]);
+  function warnReservations(ids: string[], proceed: () => void, rows = reservations, repeat = false) {
+    const notices = rows.filter((item) => !item.mine && ids.includes(item.itemId) && (repeat || !reservationSeen.current.has(item.id)));
+    if (!notices.length) { proceed(); return; }
+    setReservationNotice({ items: notices, proceed });
   }
-  const [myTools, setMyTools] = useState<BorrowedTool[]>([]);
-  const [toolsLoading, setToolsLoading] = useState(false);
-  const [toolsError, setToolsError] = useState("");
-  const toolsChecked = useRef("");
-  const toolsLookupId = useRef(0);
-  const canUseTools = !!unattendedEnabled && !adminDirectBorrow && purpose === "browse";
-  const refreshMyTools = useCallback(async () => {
-    if (!canUseTools || !/^\d{4}$/.test(identEmp)) return;
-    const id = ++toolsLookupId.current;
-    setToolsLoading(true); setToolsError("");
-    try { const list = await fetchMyTools(identEmp); if (id === toolsLookupId.current) setMyTools(list); }
-    catch (e: any) { if (id === toolsLookupId.current) setToolsError(e.message); }
-    finally { if (id === toolsLookupId.current) setToolsLoading(false); }
-  }, [canUseTools, identEmp]);
-  // 사번 확인 직후 한 번만 반납 화면을 우선한다. 분야를 다시 고르거나 추가 대여 중에는 강제로 이동하지 않는다.
-  useEffect(() => {
-    if (!canUseTools || step === "identity" || !/^\d{4}$/.test(identEmp) || toolsChecked.current === identEmp) return;
-    const id = ++toolsLookupId.current;
-    let alive = true;
-    setMyTools([]); setToolsLoading(true); setToolsError("");
-    fetchMyTools(identEmp).then(list => {
-      if (!alive || id !== toolsLookupId.current) return;
-      toolsChecked.current = identEmp;
-      setMyTools(list);
-      if (list.length) setStep(current => current === "menu" ? "toolReturn" : current);
-    }).catch(e => { if (alive && id === toolsLookupId.current) { toolsChecked.current = identEmp; setToolsError(e.message); } })
-      .finally(() => { if (alive && id === toolsLookupId.current) setToolsLoading(false); });
-    return () => { alive = false; };
-  }, [canUseTools, identEmp, step === "identity"]);
+  async function beginBorrow(items: BrowseCartItem[] = sciCart, sid = sidBorrowId) {
+    if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
+    try {
+      const rows = await fetchReservations(scriptUrl, false, adminDirectBorrow ? identEmp : undefined);
+      setReservations(rows);
+      warnReservations(items.map((item) => item.id), () => onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind: "scenario", seat: { floor: selFloor, unit: selUnit }, sid, additionalItems: sid ? sidAdditionalItems : undefined, items }), rows);
+    } catch (err: any) { showToast(err.message || "예약 정보를 확인하지 못했습니다. 다시 시도해주세요.", "error"); }
+  }
+  // 공구 대여·반납은 무인 PC(무인 모드인 관리자 PC)에서만 한다. 휴대폰 대여 화면에는 두지 않는다.
 
   // 지난번에 넣은 값을 그대로 되살린다. 확인 단계(계속하기)는 그대로 거치므로,
   // 다른 사람이 쓰던 자리에서 열었더라도 이름을 고쳐 넣으면 된다.
@@ -407,7 +389,10 @@ export default function BrowsePage({
       setSelUnit(session.unit || "");
       // 신원 입력 단계를 건너뛰므로 장바구니도 여기서 불러온다 — 원래는 그 단계에서 했다.
       const eid = session.affiliation === "cfgw" ? session.employeeId : "";
-      if (!adminDirectBorrow) setSciCart(loadBrowseCart(session.name, eid));
+      if (!adminDirectBorrow) {
+        setBorrowCart(loadBrowseCart(session.name, eid));
+        setReservationCart(loadReservationCart(session.name, eid));
+      }
       return;
     }
     const saved = loadIdentity();
@@ -436,8 +421,9 @@ export default function BrowsePage({
 
   useEffect(() => {
     if (adminDirectBorrow || step === "identity" || !identName) return;
-    saveBrowseCart(identName, identEmp, sciCart);
-  }, [sciCart, identName, identEmp, step, adminDirectBorrow]);
+    if (reservationFlow) saveReservationCart(identName, identEmp, reservationCart);
+    else saveBrowseCart(identName, identEmp, borrowCart);
+  }, [borrowCart, reservationCart, identName, identEmp, step, adminDirectBorrow]);
 
   const loadScenario = useCallback(async () => {
     // 그릴 것이 이미 있으면 화면을 비우지 않는다 — 뒤에서 조용히 갈아끼운다.
@@ -489,7 +475,7 @@ export default function BrowsePage({
     // "들어올 때 한 번"을 지키지 않으면 로딩이 끝날 때마다 다시 불러 끝없이 돈다.
     if (refreshedStepRef.current !== step) {
       refreshedStepRef.current = step;
-      if (step === "scenario" || step === "sid") loadScenario();
+      if (objectBrowse || step === "sid") loadScenario();
       if (step === "tablecloth") loadTablecloth();
     }
     // 분야를 고르는 동안 미리 받아둔다. 예전에는 고른 뒤에야 받기 시작해서, 600종이
@@ -510,7 +496,6 @@ export default function BrowsePage({
   const sciSubs = sciCat && sciCatMap[sciCat] ? Array.from<string>(sciCatMap[sciCat]).sort() : [];
 
   const sciFiltered = useMemo(() => {
-    if (scenarioAiResultActive(sciSearchMode, sciAi?.query, sciSearch, !!sciAi?.result)) return filterScenarioAiResults(sciItems, sciAi!.result!.items.map(i => i.id), { category: sciCat, subcategory: sciSub, request: sciRequestFilter });
     const q = sciSearch.trim();
     const scores = new Map<string, number>();
     const filtered = sciItems.filter((it) => {
@@ -535,7 +520,7 @@ export default function BrowsePage({
       }
     };
     return filtered.sort((a, b) => (q ? (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0) : 0) || tieBreak(a, b));
-  }, [sciItems, sciSearch, sciCat, sciSub, sciRequestFilter, effectiveSciSort, hideLocation, sciAi, sciSearchMode]);
+  }, [sciItems, sciSearch, sciCat, sciSub, sciRequestFilter, effectiveSciSort, hideLocation]);
 
   const sciCartCount = sciCart.reduce((n, c) => n + c.quantity, 0);
   const tcCartCount = tcCart.length;
@@ -647,13 +632,19 @@ export default function BrowsePage({
    *  이미 담긴 물품을 하나 더 담는 경우에는 묻지 않는다 — 같은 것을 반복해 물을 이유가 없다. */
   function askThenAdd(it: ObjectItem, add: () => void) {
     const alreadyInCart = sciCart.some((c) => c.id === it.id);
+    if (reservationFlow) {
+      const hazards = alreadyInCart ? [] : collectHazardItems(sciItems as any, [{ id: it.id, name: it.name }]);
+      if (hazards.length) setHazardAsk({items:hazards,onConfirm:add}); else add();
+      return;
+    }
 
     // 종수 한도. 안 갖고 있던 물품을 새로 담을 때만 종수가 는다.
     const max = active?.max ?? 0;
     const exempt = !!active?.exempt;
-    if (!exempt && max > 0 && !alreadyInCart) {
+    if (!reservationFlow && !exempt && max > 0 && !alreadyInCart && it.requestFor === undefined) {
       const heldIds = new Set((active?.items || []).map((x) => padSlot(String(x.id))));
-      const addingIds = new Set(sciCart.map((c) => padSlot(String(c.id))));
+      // Request 물품은 신청 시 대여 방식을 선택한 뒤 한도를 판정한다.
+      const addingIds = new Set(sciCart.filter((c) => sciItems.find((item) => item.id === c.id)?.requestFor === undefined).map((c) => padSlot(String(c.id))));
       addingIds.add(padSlot(String(it.id)));
       let adding = 0;
       for (const id of addingIds) if (!heldIds.has(id)) adding++;
@@ -662,13 +653,13 @@ export default function BrowsePage({
     }
 
     const hazards = alreadyInCart ? [] : collectHazardItems(sciItems as any, [{ id: it.id, name: it.name }]);
-    if (hazards.length > 0) { setHazardAsk({ items: hazards, onConfirm: add }); return; }
-    add();
+    const afterNotice = () => { if (hazards.length > 0) { setHazardAsk({ items: hazards, onConfirm: add }); return; } add(); };
+    warnReservations([it.id], afterNotice);
   }
 
   function addSci(it: ObjectItem) {
     // 일반 대여로 담은 것이 섞이면 특정 시나리오의 신청이라고 할 수 없다. 일반 대여로 보낸다.
-    if (!sidAddingExtraRef.current) setSidBorrowId("");
+    if (!reservationFlow && !sidAddingExtraRef.current) setSidBorrowId("");
     if ((it.stock || 0) < 1) { showToast("재고가 부족하여 담을 수 없습니다. (현재 재고: 0)", "warn"); return; }
     askThenAdd(it, () => {
       // 종류가 나뉜 물품은 어느 종류인지 정해야 담을 수 있다 — 안 그러면 대여 화면에서 막힌다.
@@ -693,6 +684,73 @@ export default function BrowsePage({
         return prev.map((c, i) => i === idx ? { ...c, quantity: c.quantity + 1 } : c);
       });
     }
+  }
+
+  function addSciQty(it: ObjectItem, choice: { variantId?: number; variantName?: string }, qty: number, max: number) {
+    const key = cartKey({ id: it.id, ...choice });
+    const have = sciCart.filter((c) => cartKey(c) === key).reduce((n, c) => n + c.quantity, 0);
+    const add = Math.min(qty, Math.max(0, max - have));
+    if (add <= 0) { showToast(`재고가 부족합니다. (최대 ${max}개)`, "warn"); return 0; }
+    setSciCart((prev) => {
+      const idx = prev.findIndex((c) => cartKey(c) === key);
+      if (idx === -1) return [...prev, { id: it.id, name: it.name, quantity: add, rootSlot: it.rootSlot, ...choice }];
+      return prev.map((c, i) => (i === idx ? { ...c, quantity: Math.min(max, c.quantity + add) } : c));
+    });
+    if (sidAddingExtraRef.current) {
+      setSidAdditionalItems((prev) => {
+        const idx = prev.findIndex((c) => cartKey(c) === key);
+        if (idx === -1) return [...prev, { id: it.id, name: it.name, quantity: add, rootSlot: it.rootSlot, ...choice }];
+        return prev.map((c, i) => i === idx ? { ...c, quantity: c.quantity + add } : c);
+      });
+    }
+    if (add < qty) showToast(`'${it.name}' 재고가 부족해 ${add}개만 담았습니다.`, "warn");
+    return add;
+  }
+
+  /** "101, 102*2, 103/빨강 x3"처럼 적은 ID를 한꺼번에 담는다. 종류를 안 적은 물품은 이어서 종류를 묻는다. */
+  function runBulkAdd() {
+    const { tokens, invalid } = parseBulkIds(bulkText, padSlot);
+    if (!tokens.length) { setBulkResult({ added: [], reduced: [], needVariant: [], noStock: [], unknown: [], invalid }); return; }
+    const plan = planBulkAdd(tokens, sciItems, sciCart, padSlot);
+    const newIds = [...new Set([...plan.add.map((l) => l.item.id), ...plan.needVariant.map((x) => x.item.id)])]
+      .filter((id) => !sciCart.some((c) => c.id === id));
+
+    // 종수 한도는 하나씩 담을 때와 같은 기준으로 본다. 넘으면 아무것도 담지 않고 알린다.
+    const max = active?.max ?? 0;
+    if (!reservationFlow && !active?.exempt && max > 0 && newIds.length) {
+      const heldIds = new Set((active?.items || []).map((x) => padSlot(String(x.id))));
+      const addingIds = new Set([...sciCart.map((c) => c.id), ...newIds]
+        .filter((id) => sciItems.find((item) => item.id === id)?.requestFor === undefined)
+        .map((id) => padSlot(id)));
+      let adding = 0;
+      for (const id of addingIds) if (!heldIds.has(id)) adding++;
+      const current = active?.count ?? 0;
+      if (adding > 0 && current + adding > max) { setLimitAsk({ current, adding, max }); return; }
+    }
+
+    const apply = () => {
+      // 일반 대여로 담은 것이 섞이면 특정 시나리오의 신청이라고 할 수 없다(하나씩 담을 때와 같다).
+      if (!reservationFlow && !sidAddingExtraRef.current) setSidBorrowId("");
+      for (const line of plan.add) addSciQty(line.item as ObjectItem, { variantId: line.variantId, variantName: line.variantName }, line.qty, line.stock);
+      const asks: VariantAsk[] = plan.needVariant.map((x) => ({ ...(x.item as ObjectItem), askQty: x.qty, askHint: x.hint }));
+      if (asks.length) { const [first, ...rest] = asks; setVariantPick(first); setVariantQueue(rest); }
+      const label = (l: { item: { name: string }; variantName?: string }) => l.variantName ? `${l.item.name} · ${l.variantName}` : l.item.name;
+      setBulkResult({
+        added: plan.add.map((l) => `${label(l)} ×${l.qty}`),
+        reduced: plan.add.filter((l) => l.qty < l.requested).map((l) => `${label(l)} (적은 ${l.requested}개 → 재고만큼 ${l.qty}개)`),
+        needVariant: plan.needVariant.map((x) => `${x.item.name} ×${x.qty}${x.hint ? ` ('${x.hint}' 종류를 찾지 못함)` : ""}`),
+        noStock: plan.noStock.map((x) => x.name),
+        unknown: plan.unknown, invalid,
+      });
+      if (!plan.noStock.length && !plan.unknown.length && !invalid.length && !plan.add.some((l) => l.qty < l.requested)) {
+        setBulkOpen(false); setBulkText("");
+        showToast(`${plan.add.length}종을 담았습니다${asks.length ? ` · 종류를 골라야 하는 ${asks.length}건은 이어서 물어봅니다` : ""}.`, "ok");
+      }
+    };
+    // 깨지기 쉬움·화재 위험·request 물품 등 확인이 필요한 것은 하나씩 담을 때처럼 한 번에 모아 묻는다.
+    const hazards = collectHazardItems(sciItems as any, newIds.map((id) => ({ id, name: sciItems.find((o) => o.id === id)?.name || id })));
+    if (hazards.length) { setHazardAsk({ items: hazards, onConfirm: apply }); return; }
+    apply();
   }
 
   /** 시나리오 장바구니에 한 줄을 필요 수량으로 맞춰 넣는다. 여러 번 넣어도 결과가 같다. */
@@ -804,10 +862,11 @@ export default function BrowsePage({
     // 올 때마다 이름을 다시 적어야 했다.
     if (!adminDirectBorrow) {
       saveIdentity({ name: nm, employeeId: eid, affiliation, floor: selFloor, unit: selUnit });
-      setSciCart(loadBrowseCart(nm, eid));
+      setBorrowCart(loadBrowseCart(nm, eid));
+      setReservationCart(loadReservationCart(nm, eid));
     }
     if (purpose === "mylookup") { setMyResult(null); setStep("mylookup"); runMyLookup(); }
-    else setStep("menu");
+    else setStep(initialStep === "reservation" ? "reservation" : "menu");
   }
 
   // 로그인해서 내 대여 조회로 들어오면 신원 칸이 채워지는 대로 한 번 조회한다.
@@ -824,6 +883,13 @@ export default function BrowsePage({
   const [sidBorrowId, setSidBorrowId] = useState("");
   const [sidLoading, setSidLoading] = useState(false);
   const [sidResult, setSidResult] = useState<ScenarioDefinition | null>(null);
+  // 관리자 직접 대여는 이 화면을 닫았다 다시 열 수 있다. 그때도 SID 대여였다는 사실과 추가 물품을 잃지 않는다.
+  useEffect(() => {
+    if (!adminDirectBorrow) return;
+    setSidBorrowId(adminSid || "");
+    setSidAdditionalItems(adminSidExtras || []);
+    if (adminSid) setSidInput(adminSid);
+  }, [adminDirectBorrow, adminSid, adminSidExtras]);
 
   async function runSidLookup() {
     const sid = sidInput.trim();
@@ -845,9 +911,10 @@ export default function BrowsePage({
     setMyLoading(true);
     try {
       if (connected && scriptUrl) {
-        const [sc, wh] = await Promise.all([
+        const [sc, wh, returned] = await Promise.all([
           fetchMyBorrowedItems(scriptUrl, identName, identEmp, affiliation),
           fetchWarehouseBorrowedItems(scriptUrl, identName),
+          fetchMyReturnedItems(scriptUrl, identName, identEmp, affiliation),
         ]);
         // 테이블 기준으로 분리: SID대여(scenario) vs 일반대여(general)
         const scenarioOnly = (sc || []).filter((it: any) => it.sheetType === "scenario");
@@ -856,11 +923,11 @@ export default function BrowsePage({
         const filteredWh = (wh || []).filter((it: any) => {
           const u = String(it.user || it.borrowerName || "").trim().toLowerCase();
           const target = identName.trim().toLowerCase();
-          return u === target && u !== "";
+          return identEmp && it.employeeId ? String(it.employeeId) === identEmp : u === target && u !== "";
         });
-        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: filteredWh });
+        setMyResult({ scenario: scenarioOnly, general: generalOnly, warehouse: filteredWh, returned });
       } else {
-        setMyResult({ scenario: [], general: [], warehouse: [] });
+        setMyResult({ scenario: [], general: [], warehouse: [], returned: [] });
       }
     } catch (e: any) { showToast(`조회 중 오류: ${e.message}`, "error"); }
     finally { setMyLoading(false); }
@@ -907,12 +974,17 @@ export default function BrowsePage({
 
   function topBack() {
     if (adminDirectBorrow) {
-      if (onAdminBack) onAdminBack(sciCart);
+      // SID / 일반 대여를 고르는 화면부터 열었다면 그 화면으로 한 단계씩 돌아간다.
+      if (step === "scenario" && sidAddingExtra) { setSidAddingExtra(false); return setStep("sid"); }
+      if ((step === "sid" || step === "scenario") && initialStep === "scenarioKind") return setStep("scenarioKind");
+      if (onAdminBack) onAdminBack(sciCart, { sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : [] });
       else onBack();
       return;
     }
     if (step === "identity") return onBack();
     if (step === "menu") return session ? onBack() : setStep("identity");
+    if (step === "reservationConfirm") return setStep("reservation");
+    if (reservationFlow) return initialStep === "reservation" ? onBack() : setStep("menu");
     // 시나리오 계열은 한 단계 위가 "대여 방식 고르기"다.
     if (step === "scenarioKind") return adminDirectBorrow ? onBack() : setStep("menu");
     if (step === "scenario") {
@@ -926,20 +998,18 @@ export default function BrowsePage({
     setStep("menu");
   }
 
-  const headerTitle = step === "scenarioKind" ? "시나리오 물품 대여"
+  const headerTitle = reservationFlow ? "예약 대여" : step === "scenarioKind" ? "시나리오 물품 대여"
     : step === "scenario" ? (sidAddingExtra ? "추가 물품 담기" : "시나리오 물품 대여")
     : step === "tablecloth" ? "테이블보 대여"
-    : step === "warehouse" ? "공구 대여"
-    : step === "toolReturn" ? "공구 반납"
     : step === "mylookup" ? "내 대여 조회"
-    : step === "sid" ? "SID 열람" : "열람 조회";
+    : step === "sid" ? "SID 열람" : "대여";
 
   /* ── URL 해시로 열람 단계 세분화 (#/browse/<단계>) ── */
   const stepRef = useRef(step);
   stepRef.current = step;
 
   // 슬라이딩 방향 추적 (렌더 중 동기 계산)
-  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenarioKind: 2, scenario: 3, tablecloth: 2, warehouse: 2, toolReturn: 2, mylookup: 2, sid: 3 };
+  const STEP_ORDER: Record<string, number> = { identity: 0, menu: 1, scenarioKind: 2, scenario: 3, reservation: 2, reservationConfirm: 3, tablecloth: 2, mylookup: 2, sid: 3 };
   const prevStepOrderRef = useRef(STEP_ORDER[step] ?? 0);
   const slideDirRef = useRef<"forward" | "back">("forward");
   const curStepOrder = STEP_ORDER[step] ?? 0;
@@ -968,7 +1038,7 @@ export default function BrowsePage({
       const base = parts[1] || "";
       const slug = parts[2] || "";
       if (base !== "browse" && base !== "mylookup") { onBack(); return; }
-      const valid: Step[] = ["identity", "menu", "scenarioKind", "scenario", "tablecloth", "warehouse", "toolReturn", "mylookup", "sid"];
+      const valid: Step[] = ["identity", "menu", "scenarioKind", "scenario", "reservation", "reservationConfirm", "tablecloth", "mylookup", "sid"];
       if (valid.includes(slug as Step) && slug !== stepRef.current) {
         suppressBrowseHash.current = true;
         setStep(slug as Step);
@@ -1048,12 +1118,11 @@ export default function BrowsePage({
         .bsp-least-list::-webkit-scrollbar-track { background: transparent; }
       `}</style>
 
-      <div ref={stickyHeaderRef} style={{ display: "flex", flexWrap: step === "toolReturn" ? "wrap" : undefined, alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
+      <div ref={stickyHeaderRef} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, position: "sticky", top: 0, zIndex: 20 }}>
         <button onClick={topBack} style={{ display: "flex", alignItems: "center", gap: "6px", padding: "8px 14px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, color: C.label, cursor: "pointer", fontSize: "13px", fontWeight: 600 }}>
           <ArrowLeft size={15} /> {step === "identity" ? "메인으로" : "이전"}
         </button>
         <h1 style={{ fontSize: "17px", fontWeight: 800, margin: 0, flex: 1 }}>{headerTitle}</h1>
-        {step === "toolReturn" && canUseTools && <button onClick={() => setStep("warehouse")} style={{ padding: "9px 12px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.accent, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>공구 추가 대여하기</button>}
         {step !== "identity" ? (
           <span style={{ fontSize: "12px", color: C.label, fontWeight: 600 }}>
             {identName}{identEmp ? ` · ${identEmp}` : ` · ${affiliation === "configds" ? "ConfigDS" : "기타"}`}
@@ -1068,7 +1137,7 @@ export default function BrowsePage({
           한 덩어리로 묶어 머리 바로 아래에 붙인다. */}
       <div ref={stickyStatusRef} style={{ position: "sticky", top: stickyHeaderHeight, zIndex: 19 }}>
 
-      {hideLocation && step !== "identity" && step !== "warehouse" && step !== "toolReturn" ? (
+      {hideLocation && step !== "identity" ? (
         <div style={{ padding: "9px 20px", background: C.warnSoft, color: C.warn, fontSize: "12px", fontWeight: 700, textAlign: "center" }}>
           🔒 무인 모드 중에는 시나리오 물품의 보관 위치가 표시되지 않습니다. 신청 후 무인 PC에서 사번으로 로그인하면 대여 확인 목록에 위치가 나옵니다.
         </div>
@@ -1076,7 +1145,7 @@ export default function BrowsePage({
 
       {/* 지금 몇 종을 빌리고 있는지. 한도에 가까워지면 색이 바뀐다 —
           담을 만큼 담은 뒤 신청 단계에서 막히는 일을 줄이려는 것이다. */}
-      {purpose === "browse" && step !== "warehouse" && step !== "toolReturn" && (active || activeLoading) ? (() => {
+      {purpose === "browse" && (active || activeLoading) ? (() => {
         const count = active?.count ?? 0;
         const max = active?.max ?? 0;
         const exempt = !!active?.exempt;
@@ -1108,6 +1177,7 @@ export default function BrowsePage({
                   <span style={{ color: "#fff", background: C.error, borderRadius: "999px", padding: "3px 10px", fontWeight: 800 }}>
                     ⚠ 페널티 {active.penalty.max}종 제한
                     {active.penalty.reason ? ` · ${active.penalty.reason}` : ""}
+                    {active.penalty.items ? ` · 물품: ${active.penalty.items}` : ""}
                     {active.penalty.until ? ` · ${active.penalty.until}까지` : ""}
                   </span>
                 ) : null}
@@ -1118,7 +1188,7 @@ export default function BrowsePage({
         );
       })() : null}
 
-      {(step === "scenario" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
+      {(objectBrowse || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
         // SID 대여도 시나리오 장바구니에 담는다 — 일반 대여와 같은 장바구니다.
         const kind: Kind = step === "tablecloth" ? "tablecloth" : "scenario";
         const n = kind === "scenario" ? sciCartCount : tcCartCount;
@@ -1133,7 +1203,7 @@ export default function BrowsePage({
           >
             <ShoppingCart size={17} style={{ color: n > 0 ? C.accentText : C.label, flexShrink: 0 }} />
             <span style={{ fontSize: "13px", fontWeight: 800, color: C.text, flexShrink: 0 }}>
-              장바구니 <span style={{ color: n > 0 ? C.accentText : C.label }}>{n}</span>
+              {reservationFlow ? "예약 물품" : "장바구니"} <span style={{ color: n > 0 ? C.accentText : C.label }}>{n}</span>
             </span>
 
             {/* 담긴 물품. 이름만 보여주던 알약 모양이었는데, 시나리오 물품은 이름만으로
@@ -1206,7 +1276,7 @@ export default function BrowsePage({
               onClick={() => {
                 if (n === 0) return;
                 if (!window.confirm("담은 물품을 전부 비울까요?")) return;
-                if (kind === "scenario") { setSciCart([]); setSidBorrowId(""); }
+                if (kind === "scenario") { setSciCart([]); if (!reservationFlow) setSidBorrowId(""); }
                 else setTcCart([]);
               }}
               disabled={n === 0}
@@ -1226,11 +1296,11 @@ export default function BrowsePage({
       </div>
 
       <div style={{
-        maxWidth: step === "scenario" || step === "tablecloth" ? "1560px" : step === "toolReturn" || step === "warehouse" ? "900px" : "620px",
+        maxWidth: objectBrowse || step === "tablecloth" ? "1560px" : "620px",
         margin: "0 auto",
         // 물품 목록에서는 장바구니 바 바로 아래부터 필터 배경이 시작되어야 한다.
         // 공통 24px 상단 패딩이 남아 있으면 두 고정 영역 사이가 벌어진 것처럼 보인다.
-        padding: step === "scenario" || step === "tablecloth"
+        padding: objectBrowse || step === "tablecloth"
           ? "0 16px 120px"
           : "24px 16px 120px",
       }}>
@@ -1246,12 +1316,6 @@ export default function BrowsePage({
             }} />
         ) : null}
 
-        <UnattendedToolBorrowForm active={step === "warehouse" && !adminDirectBorrow && purpose === "browse"}
-          enabled={!!unattendedEnabled} employeeId={identEmp} name={identName} floors={seatMap}
-          floorsLoaded={seatMapLoaded} isLightMode={isLightMode} onSubmitted={() => void refreshMyTools()} />
-        <UnattendedToolReturnForm active={step === "toolReturn" && !adminDirectBorrow && purpose === "browse"}
-          enabled={!!unattendedEnabled} employeeId={identEmp} items={myTools} isLightMode={isLightMode} onRefresh={() => void refreshMyTools()} />
-        {(step === "warehouse" || step === "toolReturn") && !unattendedEnabled && <p role="alert" style={{ color: C.error }}>무인 모드가 종료되었습니다. 현재 작성 내용은 유지되지만 직접 신청·반납할 수 없습니다.</p>}
         <div key={step} className={slideDir === "forward" ? "step-forward" : "step-back"}>
         {step === "identity" ? (
           <div>
@@ -1346,8 +1410,6 @@ export default function BrowsePage({
 
         {/* 물품 목록이 아직 안 왔으면 고르는 칸을 내보내지 않는다. 눌러도 반응이 없는 화면을
             보여주느니, 준비될 때까지 기다렸다가 한 번에 보여주는 편이 낫다. */}
-        {canUseTools && (step === "menu" || step === "toolReturn") && toolsLoading && <p style={{ color: C.label, textAlign: "center" }}>공구 대여 내역 확인 중…</p>}
-        {canUseTools && (step === "menu" || step === "toolReturn") && toolsError && <div role="alert" style={{ color: C.error, padding: 12 }}>{toolsError} <button onClick={() => void refreshMyTools()}>다시 확인</button></div>}
 
         {step === "menu" && !sciLoaded && !unattendedEnabled ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}>
@@ -1356,11 +1418,9 @@ export default function BrowsePage({
           </div>
         ) : null}
 
-        {step === "menu" && !toolsLoading && (sciLoaded || unattendedEnabled) ? (
+        {step === "menu" && (sciLoaded || unattendedEnabled) ? (
           <div className="bp-grid-in" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
             {[
-              ...(canUseTools && myTools.length ? [{ key: "toolReturn" as const, icon: <RotateCcw size={22} />, color: C.success, bg: C.successSoft, title: "공구 반납", sub: `대여 중인 공구 ${myTools.length}종을 선택하고 사진을 찍어 반납합니다` }] : []),
-              ...(unattendedEnabled && !adminDirectBorrow && purpose === "browse" ? [{ key: "warehouse" as const, icon: <Warehouse size={22} />, color: C.success, bg: C.successSoft, title: "공구 대여", sub: "사용할 층과 물품 이름을 입력하고 사진을 찍어 신청합니다" }] : []),
               { key: "scenarioKind" as const, icon: <Boxes size={22} />, color: C.accentText, bg: C.accentSoft, title: "시나리오 물품 대여", sub: "SID 대여와 일반 대여 중 하나를 고른 뒤 물품을 담습니다" },
               { key: "tablecloth" as const, icon: <Layers size={22} />, color: C.warn, bg: C.warnSoft, title: "테이블보 대여", sub: "무늬와 보관 층으로 천을 찾아 장바구니에 담습니다" },
               // 테이블보만 반납이 여기에 있다 — 담당자를 거치지 않고 본인이 직접 돌려놓기 때문에,
@@ -1424,15 +1484,16 @@ export default function BrowsePage({
           </div>
         ) : null}
 
-        {step === "scenario" ? (
+        {step === "reservationConfirm" ? <ReserveItemsCard C={C} scriptUrl={scriptUrl} items={reservationCart} inventory={sciItems} floor={selFloor} unit={selUnit} onClose={() => setStep("reservation")} onSaved={() => {
+          setReservationCart([]); saveReservationCart(identName, identEmp, []);
+          showToast("예약했습니다. 내 대여 조회에서 예약 물품을 확인하세요.", "ok");
+          setStep("mylookup"); void runMyLookup();
+          void fetchReservations(scriptUrl).then(setReservations).catch(() => {});
+        }} /> : null}
+        {step === "reservation" ? <p style={{ fontSize: 13, lineHeight: 1.7, color: C.text, padding: "12px 16px", background: C.cardSub, borderRadius: 12 }}><strong>예약할 물품을 선택해주세요.</strong><br />‘예약 신청하기’를 누르면 별도의 예약 확인 카드에서 <strong>대여 예정 시간</strong>을 입력할 수 있습니다.</p> : null}
+        {objectBrowse ? (
           <ItemGrid C={C} Spinner={Spinner} loaded={sciLoaded} loading={sciLoading} count={sciFiltered.length} total={sciItems.length} error={sciErr} onRetry={() => { setSciErr(""); loadScenario(); }} stickyTop={stickyHeaderHeight + stickyStatusHeight}
-            notice={sciAi ? <div role="status" style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", marginBottom: 14, borderRadius: 10, background: sciAi.error ? C.warnSoft : C.accentSoft, color: C.text, fontSize: 13, lineHeight: 1.6 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <strong>{sciAi.busy ? "AI로 관련 물품을 찾고 있습니다…" : sciAi.error ? "일반 검색을 계속 사용할 수 있습니다" : `${sciAi.result?.mode === "ai" ? "AI" : "이름·유사어"} 검색 결과 · 관련도순`}</strong>
-                <div style={{ fontSize: 12 }}>{sciAi.error || (sciAi.busy ? "기존 장바구니와 입력 내용은 유지됩니다." : `${sciAi.result?.message} 현재 선택한 필터가 적용됩니다.`)}</div>
-              </div>
-              <button type="button" onClick={clearScenarioAi} style={{ border: 0, background: "transparent", color: C.accent, cursor: "pointer", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>{sciAi.busy ? "검색 취소" : "일반 검색으로"}</button>
-            </div> : sciSearch.trim() ? <div role="status" style={{ fontSize: 12, color: C.label, marginBottom: 14, lineHeight: 1.6 }}>일반 검색 · 이름·ID{hideLocation ? "" : "·위치"} 일치순 · AI 검색은 버튼을 누를 때만 사용합니다.</div> : null}
+            notice={sciSearch.trim() ? <div role="status" style={{ fontSize: 12, color: C.label, marginBottom: 14, lineHeight: 1.6 }}>이름·ID{hideLocation ? "" : "·위치"} 일치순으로 표시합니다.</div> : null}
             filterRow={
               <>
                 <button type="button" onClick={() => setSciFiltersOpen((v) => !v)} style={{ ...inputStyle, width: "auto", padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px", fontWeight: 800, color: C.accentText, borderColor: sciFiltersOpen || sciCat || sciSub || sciSort !== "id_desc" ? C.accent : C.border, background: sciFiltersOpen || sciCat || sciSub || sciSort !== "id_desc" ? C.accentSoft : C.card, whiteSpace: "nowrap" }}>
@@ -1440,9 +1501,12 @@ export default function BrowsePage({
                 </button>
                 <div style={{ position: "relative", flex: "2 1 260px", minWidth: 0, display: "flex", border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden", background: C.card }}>
                   <Search size={15} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: C.label }} />
-                  <input aria-label="시나리오 물품 검색" maxLength={150} value={sciSearch} onChange={(e) => { clearScenarioAi(); setSciSearch(e.target.value); }} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); clearScenarioAi(); } }} placeholder={hideLocation ? "ID · 물품명으로 검색..." : "ID · 물품명 · 위치로 검색..."} style={{ ...inputStyle, border: 0, borderRadius: 0, flex: 1, minWidth: 0, padding: "11px 12px 11px 36px", fontSize: "14px" }} />
-                  <button type="button" onClick={() => void runScenarioAi()} disabled={!sciSearch.trim() || !!sciAi?.busy || !connected || (!identEmp && !isAdmin)} title="선택사항: 이름이 다르거나 비슷한 물품을 찾을 때 사용하세요" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "10px 12px", border: 0, borderLeft: `1px solid ${C.border}`, background: C.card, color: C.accent, fontSize: 13, fontWeight: 800, whiteSpace: "nowrap", cursor: "pointer", opacity: !sciSearch.trim() || sciAi?.busy || !connected || (!identEmp && !isAdmin) ? .5 : 1 }}><Sparkles size={15} /> {sciAi?.busy ? "검색 중…" : "AI 검색"}</button>
+                  <input aria-label="시나리오 물품 검색" maxLength={150} value={sciSearch} onChange={(e) => setSciSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") e.preventDefault(); }} placeholder={hideLocation ? "ID · 물품명으로 검색..." : "ID · 물품명 · 위치로 검색..."} style={{ ...inputStyle, border: 0, borderRadius: 0, flex: 1, minWidth: 0, padding: "11px 12px 11px 36px", fontSize: "14px" }} />
                 </div>
+                <button type="button" onClick={() => { setBulkResult(null); setBulkOpen(true); }} disabled={!sciLoaded} title="물품 ID를 콤마로 적어 한꺼번에 담기"
+                  style={{ ...inputStyle, width: "auto", padding: "10px 14px", display: "inline-flex", alignItems: "center", gap: "6px", cursor: sciLoaded ? "pointer" : "default", fontSize: "13px", fontWeight: 800, color: C.accentText, whiteSpace: "nowrap", opacity: sciLoaded ? 1 : 0.5 }}>
+                  <ListPlus size={15} /> ID로 담기
+                </button>
                 <div aria-label="물품 구분" style={{ display: "flex", alignItems: "center", gap: "10px", minHeight: "42px", padding: "0 12px", borderRadius: "10px", border: `1px solid ${C.border}`, background: C.card, whiteSpace: "nowrap" }}>
                   <label style={{ display: "inline-flex", alignItems: "center", gap: "6px", cursor: "pointer", color: sciRequestFilter !== "normal" ? C.accentText : C.label, fontSize: "12.5px", fontWeight: 800 }}>
                     <input type="checkbox" checked={sciRequestFilter === "all"} onChange={(e) => setSciRequestFilter(e.target.checked ? "all" : "normal")} style={{ width: 15, height: 15, margin: 0, accentColor: C.accent }} />
@@ -1469,7 +1533,7 @@ export default function BrowsePage({
                       <SidebarLink active={sciCat === category} onClick={() => { setSciCat(category); setSciSub(""); }} C={C}>{category}</SidebarLink>
                       {sciCat === category && sciSubs.length ? (
                         <div style={{ margin: "2px 0 5px 10px", paddingLeft: "7px", borderLeft: `2px solid ${C.border}`, display: "flex", flexDirection: "column", gap: "1px" }}>
-                          {sciSubs.map((subcategory) => <SidebarLink key={subcategory} active={sciSub === subcategory} onClick={() => setSciSub(subcategory)} C={C} nested>{subcategory}</SidebarLink>)}
+                          {sciSubs.map((subcategory) => <React.Fragment key={subcategory}><SidebarLink active={sciSub === subcategory} onClick={() => setSciSub(subcategory)} C={C} nested>{subcategory}</SidebarLink></React.Fragment>)}
                         </div>
                       ) : null}
                     </React.Fragment>
@@ -1483,9 +1547,11 @@ export default function BrowsePage({
               const inCart = myLines.length ? { quantity: myLines.reduce((n, c) => n + c.quantity, 0) } : undefined;
               const out = (it.stock || 0) < 1;
               return (
-                <GridCard key={it.id} C={C} inCart={!!inCart} out={out} image={it.image} onImage={() => it.image && setModalUrl(getGoogleDriveImageUrl(it.image))}
+                <GridCard key={it.id} C={C} inCart={!!inCart} out={out} image={it.image} onCard={reservationFlow ? undefined : () => warnReservations([it.id], () => {}, reservations, true)} onImage={() => reservationFlow ? it.image && setModalUrl(getGoogleDriveImageUrl(it.image)) : warnReservations([it.id], () => it.image && setModalUrl(getGoogleDriveImageUrl(it.image)), reservations, true)}
                   title={it.name} idText={`ID: ${it.id}`}
                   badges={<>
+                    {reservationBadgesForItem(it.id, it.stock, reservations).map((item) => <span key={item.id} style={{ fontSize: 11, width: "100%", color: C.warn, fontWeight: 700 }}>🕘 {reservationTime(item.startsAt)}부터 예약{item.mine ? " (내 예약)" : ""}</span>)}
+                    {it.variants?.length ? <span style={{ fontSize: 11, color: C.accentText, width: "100%", overflowWrap: "anywhere" }}>종류: {it.variants.map((variant) => variant.name).join(" · ")}</span> : null}
                     {it.category ? <Chip C={C} text={it.category} tone="accent" /> : null}
                     {/* 특정 업체 request용 / 개인 물품인지는 담기 전에 알아야 한다 —
                         대여 신청 화면에는 이미 뜨는데 열람에는 없어서 여기서만 모르고 담게 됐다.
@@ -1514,7 +1580,7 @@ export default function BrowsePage({
                   onAdd={() => addSci(it)}
                   onBorrowers={() => setBorrowersTarget({ id: it.id, name: it.name, category: "scenario" })}
                   onMinus={() => chgSci(sciCart.findIndex((c) => c.id === it.id), -1)}
-                  onPlus={() => (it.variants?.length ? setVariantPick(it) : chgSci(sciCart.findIndex((c) => c.id === it.id), 1))}
+                  onPlus={() => { const add = () => (it.variants?.length ? setVariantPick(it) : chgSci(sciCart.findIndex((c) => c.id === it.id), 1)); if (reservationFlow) add(); else warnReservations([it.id], add); }}
                 />
               );
             })}
@@ -1601,6 +1667,7 @@ export default function BrowsePage({
                             : <Boxes size={26} style={{ color: C.label, opacity: 0.45 }} />}
                         </div>
                         <div title={it.name} style={{ fontSize: "13px", fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.name}</div>
+                        {obj?.variants?.length ? <div style={{ fontSize: 11, color: C.accentText, overflowWrap: "anywhere" }}>종류: {obj.variants.map((variant) => variant.name).join(" · ")}</div> : null}
                         <div style={{ fontSize: "10.5px", color: C.label, fontFamily: "monospace" }}>{it.id}</div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: "11px" }}>
                           <span style={{ fontFamily: "monospace", fontWeight: 700, color: C.warn }}>
@@ -1767,45 +1834,16 @@ export default function BrowsePage({
 
         {step === "mylookup" ? (
           <div>
-            {myLoading || !myResult ? (
+            {!myResult ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "64px 0", color: C.label }}><Spinner size={30} /> 대여 내역을 불러오는 중입니다...</div>
             ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-                  <span style={{ fontSize: "14px", fontWeight: 700 }}>{identName}님이 대여 중인 물품</span>
-                  <button onClick={runMyLookup} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", color: C.accentText, background: "none", border: "none", cursor: "pointer", fontWeight: 600 }}><RotateCcw size={12} /> 새로고침</button>
-                </div>
-                {myResult.scenario.length === 0 && myResult.general.length === 0 && myResult.warehouse.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "48px 0", color: C.label }}><Check size={36} style={{ color: C.border, marginBottom: "8px" }} /><div>현재 대여 중인 물품이 없습니다.</div></div>
-                ) : (
-                  <>
-                    {myResult.scenario.length ? (
-                      <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "12px 0 8px" }}>시나리오 물품 (SID 대여)</div>
-                        {myResult.scenario.map((item: any, i: number) => (
-                          <MyRow key={`s${i}`} C={C} icon={<Fingerprint size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.scenarioId ? ` · ${item.scenarioId}` : ""}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
-                        ))}
-                      </>
-                    ) : null}
-                    {myResult.general.length ? (
-                      <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.accentText, margin: "16px 0 8px" }}>일반 대여</div>
-                        {myResult.general.map((item: any, i: number) => (
-                          <MyRow key={`g${i}`} C={C} icon={<Boxes size={17} />} tone="accent" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}${item.generalOption ? ` · ${item.generalOption}` : ""}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
-                        ))}
-                      </>
-                    ) : null}
-                    {myResult.warehouse.length ? (
-                      <>
-                        <div style={{ fontSize: "12px", fontWeight: 700, color: C.success, margin: "16px 0 8px" }}>COS 물품</div>
-                        {myResult.warehouse.map((item: any, i: number) => (
-                          <MyRow key={`w${i}`} C={C} icon={<Warehouse size={17} />} tone="success" label={item.itemLabel} sub={`대여일: ${item.borrowDate || "-"}`} image={item.image} onImage={() => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))} onDetails={() => setDetailItem(item)} />
-                        ))}
-                      </>
-                    ) : null}
-                  </>
-                )}
-              </>
+              <MyRentalList
+                C={C} result={myResult} name={identName} employeeId={identEmp} loading={myLoading} onRefresh={runMyLookup}
+                onImage={(item) => item.image && setModalUrl(getGoogleDriveImageUrl(item.image))}
+                onDetails={setDetailItem} showToast={showToast}
+                reservationUrl={connected && session ? scriptUrl : undefined}
+                onBorrowReservation={(item) => { void beginBorrow([{ id: item.itemId, name: item.itemName, quantity: item.quantity, variantId: item.variantId, variantName: item.variantName, reservationId: item.id }], ""); }}
+              />
             )}
           </div>
         ) : null}
@@ -1816,7 +1854,7 @@ export default function BrowsePage({
 
       {/* 일반 물품 목록은 처음에 사진·필터·재고를 함께 그려 브라우저가 잠깐 바쁠 수 있다.
           이 시간에는 이미 목록 뒤에 들어와 있고, 흐린 오버레이만 3초 보인다. */}
-      {openingScenario && step === "scenario" ? (
+      {openingScenario && objectBrowse ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.24)", backdropFilter: "blur(5px)", WebkitBackdropFilter: "blur(5px)" }}>
           <div style={{ minWidth: "220px", padding: "24px 28px", borderRadius: "18px", background: C.card, border: `1px solid ${C.border}`, boxShadow: "0 18px 48px rgba(0,0,0,0.28)", display: "flex", flexDirection: "column", alignItems: "center", gap: "13px", color: C.text }}>
             <Spinner size={32} />
@@ -1829,7 +1867,7 @@ export default function BrowsePage({
       {/* 다음 단계로 넘어가는 단추. 예전에는 장바구니 창을 열어야만 보였다 —
           담고 나서 무엇을 눌러야 할지 몰라 창을 여닫는 일이 잦았다.
           화면 오른쪽 아래에 띄워 늘 보이게 한다. 담은 게 없으면 나타나지 않는다. */}
-      {(step === "scenario" || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
+      {(objectBrowse || step === "tablecloth" || (step === "sid" && initialStep !== "sid")) ? (() => {
         const kind: Kind = step === "tablecloth" ? "tablecloth" : "scenario";
         const n = kind === "scenario" ? sciCartCount : tcCartCount;
         if (n === 0) return null;
@@ -1844,7 +1882,8 @@ export default function BrowsePage({
             onClick={() => {
               if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
               if (kind === "tablecloth") { setTcConfirmOpen(true); return; }
-              onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : undefined, items: sciCart });
+              if (reservationFlow) { setStep("reservationConfirm"); return; }
+              void beginBorrow();
             }}
             disabled={remoteReadonly}
             style={{
@@ -1856,7 +1895,7 @@ export default function BrowsePage({
             }}
           >
             <HandHelping size={18} />
-            {remoteReadonly ? "읽기 전용 테스트" : "대여 신청하기"}
+            {remoteReadonly ? "읽기 전용 테스트" : reservationFlow ? "예약 신청하기" : "대여 신청하기"}
             <span style={{
               minWidth: 24, background: "#fff", color: C.accent, borderRadius: "999px",
               padding: "2px 9px", fontSize: "13px", fontWeight: 800, textAlign: "center",
@@ -1872,7 +1911,7 @@ export default function BrowsePage({
             <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "18px 20px", borderBottom: `1px solid ${C.border}` }}>
               <ShoppingCart size={18} style={{ color: C.accentText }} />
               <h2 style={{ flex: 1, fontSize: "16px", fontWeight: 800, margin: 0 }}>
-                {cartOpen === "scenario" ? "시나리오" : "테이블보"} 장바구니 ({cartOpen === "scenario" ? sciCartCount : tcCartCount}{cartOpen === "tablecloth" ? "장" : "개"})
+                {reservationFlow ? "예약 물품" : `${cartOpen === "scenario" ? "시나리오" : "테이블보"} 장바구니`} ({cartOpen === "scenario" ? sciCartCount : tcCartCount}{cartOpen === "tablecloth" ? "장" : "개"})
               </h2>
               <button onClick={() => setCartOpen(null)} style={{ background: "none", border: "none", color: C.label, cursor: "pointer" }}><X size={20} /></button>
             </div>
@@ -1928,12 +1967,13 @@ export default function BrowsePage({
                       onClick={() => {
                         if (remoteReadonly) { showToast("원격 읽기 전용 테스트 모드에서는 대여 신청을 실행할 수 없습니다.", "info"); return; }
                         if (cartOpen === "tablecloth") { setCartOpen(null); setTcConfirmOpen(true); return; }
-                        onGoBorrow({ identity: { name: identName, employeeId: identEmp, affiliation }, kind: cartOpen, seat: { floor: selFloor, unit: selUnit }, sid: sidBorrowId, additionalItems: sidBorrowId ? sidAdditionalItems : undefined, items: sciCart });
+                        if (reservationFlow) { setCartOpen(null); setStep("reservationConfirm"); return; }
+                        void beginBorrow();
                       }}
                       disabled={empty || remoteReadonly}
                       style={{ ...primaryBtn, opacity: empty || remoteReadonly ? 0.5 : 1 }}
                     >
-                      <HandHelping size={15} /> {remoteReadonly ? "읽기 전용 테스트" : "대여 신청하기"}
+                      <HandHelping size={15} /> {remoteReadonly ? "읽기 전용 테스트" : reservationFlow ? "예약 신청하기" : "대여 신청하기"}
                     </button>
                   </>
                 );
@@ -2053,6 +2093,52 @@ export default function BrowsePage({
         </div>
       ) : null}
 
+      {bulkOpen ? (
+        <div onClick={() => setBulkOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 990, padding: "16px" }}>
+          <div role="dialog" aria-label="ID로 한꺼번에 담기" onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: `1.5px solid ${C.border}`, borderRadius: "16px", padding: "18px", width: "min(480px, 100%)", maxHeight: "85vh", overflowY: "auto", color: C.text }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+              <ListPlus size={17} style={{ color: C.accentText }} />
+              <div style={{ flex: 1, fontSize: "15px", fontWeight: 800 }}>ID로 한꺼번에 담기</div>
+              <button type="button" aria-label="닫기" onClick={() => setBulkOpen(false)} style={{ border: 0, background: "transparent", color: C.label, cursor: "pointer", padding: 4 }}><X size={16} /></button>
+            </div>
+            <div style={{ fontSize: "12px", color: C.label, lineHeight: 1.75, marginBottom: "10px" }}>
+              물품 ID를 콤마(,)나 줄바꿈으로 나눠 적으세요. 앞의 0은 빼도 됩니다.<br />
+              수량은 <b style={{ color: C.text }}>*2</b> · <b style={{ color: C.text }}>x2</b> · <b style={{ color: C.text }}>2개</b>, 종류는 <b style={{ color: C.text }}>/이름</b> 또는 <b style={{ color: C.text }}>(이름)</b>으로 적습니다.<br />
+              예) <code style={{ color: C.text }}>101, 102*2, 103/빨강 x3</code>
+            </div>
+            <textarea autoFocus aria-label="담을 물품 ID 목록" value={bulkText} onChange={(e) => setBulkText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runBulkAdd(); } }}
+              rows={4} placeholder="101, 102*2, 103/빨강 x3" style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit", fontSize: "14px", lineHeight: 1.6 }} />
+            <div style={{ fontSize: "11.5px", color: C.label, margin: "6px 0 12px", lineHeight: 1.6 }}>종류를 안 적은 물품은 담은 뒤 종류를 차례로 묻습니다. 재고보다 많이 적으면 재고만큼만 담습니다.</div>
+            {bulkResult ? (
+              <div role="status" style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px", fontSize: "12.5px", lineHeight: 1.6 }}>
+                {([
+                  ["담았습니다", bulkResult.added, C.success],
+                  ["재고만큼 줄여 담음", bulkResult.reduced, C.warn],
+                  ["종류를 골라야 함 · 이어서 물어봅니다", bulkResult.needVariant, C.accentText],
+                  ["재고가 없어 못 담음", bulkResult.noStock, C.error],
+                  ["목록에 없는 ID", bulkResult.unknown, C.error],
+                  ["형식을 알 수 없음", bulkResult.invalid, C.error],
+                ] as [string, string[], string][]).filter(([, list]) => list.length).map(([title, list, color]) => (
+                  <div key={title} style={{ padding: "8px 10px", borderRadius: "10px", background: C.cardSub, border: `1px solid ${C.border}` }}>
+                    <b style={{ color }}>{title} · {list.length}건</b>
+                    <div style={{ color: C.text, overflowWrap: "anywhere" }}>{list.join(", ")}</div>
+                  </div>
+                ))}
+                {!bulkResult.added.length && !bulkResult.needVariant.length && !bulkResult.noStock.length && !bulkResult.unknown.length && !bulkResult.invalid.length
+                  ? <div style={{ color: C.label }}>담을 ID를 적어주세요.</div> : null}
+              </div>
+            ) : null}
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button type="button" onClick={() => setBulkOpen(false)} style={secondaryBtn}>닫기</button>
+              <button type="button" disabled={!bulkText.trim()} onClick={runBulkAdd} style={{ ...primaryBtn, opacity: bulkText.trim() ? 1 : 0.5, cursor: bulkText.trim() ? "pointer" : "default" }}>
+                <ShoppingCart size={16} /> 장바구니에 담기
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* 종류 선택 — 종류가 나뉜 물품을 담을 때만 뜬다.
           여기서 고른 종류가 장바구니에 그대로 저장돼 대여 화면까지 이어진다. */}
       {variantPick ? (
@@ -2073,7 +2159,10 @@ export default function BrowsePage({
                 </span>
               ) : null}
             </div>
-            <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>{variantPick.name}</div>
+            <div style={{ fontSize: "12px", color: C.label, marginBottom: "10px" }}>
+              {variantPick.name}{(variantPick.askQty || 1) > 1 ? <b style={{ color: C.accentText }}> · {variantPick.askQty}개 담기</b> : null}
+              {variantPick.askHint ? <span style={{ display: "block", marginTop: "3px", color: C.warn }}>'{variantPick.askHint}' 종류를 찾지 못했습니다. 아래에서 골라주세요.</span> : null}
+            </div>
             {variantQueue.length > 0 ? (
               <button
                 onClick={advanceVariantQueue}
@@ -2094,7 +2183,9 @@ export default function BrowsePage({
                     key={v.id}
                     onClick={() => {
                       if (out) { setBorrowersTarget({ id: variantPick.id, name: `${variantPick.name} · ${v.name}`, category: "scenario", variantId: v.id }); return; }
-                      addSciLine(variantPick, { variantId: v.id, variantName: v.name }, v.stock); advanceVariantQueue();
+                      if ((variantPick.askQty || 1) > 1) addSciQty(variantPick, { variantId: v.id, variantName: v.name }, variantPick.askQty || 1, v.stock);
+                      else addSciLine(variantPick, { variantId: v.id, variantName: v.name }, v.stock);
+                      advanceVariantQueue();
                     }}
                     style={{
                       display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px",
@@ -2139,12 +2230,16 @@ export default function BrowsePage({
 
 
       <ImageZoomModal url={modalUrl} onClose={() => setModalUrl("")} />
+      {reservationNotice ? <ReservationNoticeModal C={C} scriptUrl={scriptUrl} employeeId={adminDirectBorrow ? identEmp : undefined} items={reservationNotice.items} onCancel={() => setReservationNotice(null)} onConfirm={() => {
+        const notice = reservationNotice;
+        notice.items.forEach((item) => reservationSeen.current.add(item.id));
+        setReservationNotice(null); notice.proceed();
+      }} /> : null}
       {borrowersTarget ? <ItemBorrowersModal key={`${borrowersTarget.category}:${borrowersTarget.id}:${borrowersTarget.variantId ?? ""}`} target={borrowersTarget} scriptUrl={connected ? scriptUrl : ""} C={C} onClose={closeBorrowers} /> : null}
 
     </div>
   );
 }
-
 function Chip({ C, icon, text, tone }: { C: any; icon?: React.ReactNode; text: string; tone: "warn" | "accent" }) {
   const color = tone === "warn" ? C.warn : C.accentText;
   const bg = tone === "warn" ? C.warnSoft : C.accentSoft;
@@ -2216,9 +2311,9 @@ function ItemGrid({ C, Spinner, loaded, loading, count, total, filterRow, sideba
   );
 }
 
-function GridCard({ C, inCart, out, image, onImage, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus, onSize, onBorrowers }: any) {
+function GridCard({ C, inCart, out, image, onImage, onCard, title, idText, badges, stock, rented, qty, onAdd, onMinus, onPlus, onSize, onBorrowers }: any) {
   return (
-    <div onClick={out ? onBorrowers : undefined} style={{
+    <div onClick={out ? onBorrowers : onCard} style={{
       border: `1px solid ${inCart ? C.accent : C.border}`, background: C.card, borderRadius: "16px", overflow: "hidden", display: "flex", flexDirection: "column",
       boxShadow: inCart ? "0 8px 20px -8px rgba(37, 99, 235,0.4)" : "0 2px 4px rgba(0,0,0,0.04)", transition: "all 0.2s", opacity: out ? 0.6 : 1,
       // 수백 개 카드 중 화면 밖의 카드는 실제로 스크롤될 때만 레이아웃·페인트한다.
@@ -2297,7 +2392,7 @@ function CartRow({ C, name, variant, sub, qty, onMinus, onPlus, onRemove }: any)
 }
 
 function EmptyCart({ C }: { C: any }) {
-  return <div style={{ textAlign: "center", color: C.label, fontSize: "13px", padding: "48px 0" }}><ShoppingCart size={32} style={{ color: C.border, marginBottom: "8px" }} /><div>장바구니가 비어 있습니다.</div></div>;
+  return <div className="wms-empty-state" style={{ textAlign: "center", color: C.label, fontSize: "13px", padding: "48px 0" }}><ShoppingCart size={32} style={{ color: C.border, marginBottom: "8px" }} /><div>장바구니가 비어 있습니다.</div></div>;
 }
 
 function ReadonlyObjectDetailsModal({ item, onClose, onImage, C }: { item: any; onClose: () => void; onImage: (url: string) => void; C: any }) {
@@ -2373,28 +2468,6 @@ function ReadonlyObjectDetailsModal({ item, onClose, onImage, C }: { item: any; 
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function MyRow({ C, icon, tone, label, sub, image, onImage, onDetails }: any) {
-  const color = tone === "success" ? C.success : C.accentText;
-  const bg = tone === "success" ? C.successSoft : C.accentSoft;
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "13px", border: `1px solid ${C.border}`, borderRadius: "12px", marginBottom: "8px", background: C.card }}>
-      <div
-        onClick={image ? onImage : undefined}
-        style={{ flex: "0 0 40px", width: 40, height: 40, borderRadius: "10px", overflow: "hidden", background: bg, color, display: "flex", alignItems: "center", justifyContent: "center", cursor: image ? "zoom-in" : "default" }}
-      >
-        {image ? <img src={getThumbImageUrl(image)} alt="" loading="lazy" decoding="async" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : icon}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: "13px", wordBreak: "break-word" }}>{label}</div>
-        <div style={{ fontSize: "11px", color: C.label, marginTop: "2px" }}>{sub}</div>
-      </div>
-      <button onClick={onDetails} style={{ display: "inline-flex", alignItems: "center", gap: "5px", flexShrink: 0, padding: "7px 10px", borderRadius: "8px", border: `1px solid ${C.border}`, background: C.cardSub, color: C.accentText, cursor: "pointer", fontSize: "11px", fontWeight: 800 }}>
-        <Info size={12} /> 상세 정보
-      </button>
     </div>
   );
 }

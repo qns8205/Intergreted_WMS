@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { ClipboardList, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint } from "lucide-react";
+import { ClipboardList, PackageOpen, Settings, ShieldAlert, PackageCheck, Link as LinkIcon, RefreshCw, CheckCircle, AlertTriangle, HelpCircle, ChevronDown, ChevronUp, Fingerprint, Handshake, CalendarClock } from "lucide-react";
 import { fetchNotices, fetchPenalties, fetchPenaltyDetail, fetchActiveItemTypeCount, NoticeData, PenaltyEntry, PenaltyDetailEntry, BorrowLock, ActiveItemTypeInfo } from "../utils/borrowApi";
 
 // "2026-10-03 13:01:40" → "10/03 13:01"
@@ -83,7 +83,7 @@ function usePenalties(scriptUrl: string, connected: boolean) {
 }
 
 interface LandingPageProps {
-  onNavigate: (view: "borrow" | "browse" | "mylookup" | "sid" | "login" | "admin") => void;
+  onNavigate: (view: "borrow" | "browse" | "reservation" | "transfer" | "mylookup" | "sid" | "login" | "admin") => void;
   isLightMode: boolean;
   isMobile?: boolean;
   scriptUrl: string;
@@ -371,7 +371,7 @@ export default function LandingPage({
                   >
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontWeight: 800, color: isLightMode ? "#b91c1c" : "#fca5a5" }}>{p.name}</span>
-                      {" - "}{p.max}종류{" - "}{p.reason || "사유 없음"}{" - "}{p.until ? p.until.slice(0, 10) : "해제 시까지"}
+                      {" - "}{p.max}종류{" - "}{p.reason || "사유 없음"}{p.items ? ` (물품: ${p.items})` : ""}{" - "}{p.until ? p.until.slice(0, 10) : "해제 시까지"}
                     </span>
                     <span style={{ flexShrink: 0, fontSize: "11px", fontWeight: 800, color: isLightMode ? "#c2410c" : "#fdba74", whiteSpace: "nowrap" }}>자세히 ›</span>
                   </button>
@@ -699,6 +699,7 @@ export default function LandingPage({
                           <span style={{ marginLeft: "auto", fontSize: "11.5px", fontWeight: 800, color: red }}>{d.max}종류 · {d.until ? `${d.until.slice(0, 10)} 해제` : "해제 시까지"}</span>
                         </div>
                         <div style={{ fontSize: "13px", lineHeight: 1.7, fontWeight: 700 }}>{d.reason || "사유 없음"}</div>
+                        {d.items ? <div style={{ fontSize: "12.5px", lineHeight: 1.6, marginTop: "2px" }}>물품: <b>{d.items}</b></div> : null}
                         {d.links?.length ? (
                           <div style={{ marginTop: "8px", paddingTop: "8px", borderTop: `1px dashed ${line}`, display: "flex", flexDirection: "column", gap: "6px" }}>
                             <div style={{ fontSize: "11.5px", fontWeight: 800, color: dim }}>원인이 된 대여·반납</div>
@@ -783,6 +784,22 @@ export default function LandingPage({
             // 제목 뒤에 "하기"를 붙이면 "대여 하기"처럼 띄어쓰기가 어색해진다. 카드마다 따로 적는다.
             cta: "대여하기",
             desc: "시나리오 물품과 테이블보를 보고 장바구니에 담아 대여합니다.",
+          },
+          {
+            key: "reservation" as const,
+            icon: <CalendarClock size={24} />,
+            title: "예약 대여",
+            cta: "예약하기",
+            desc: "시나리오 물품을 선택하고 대여 예정 시간을 예약합니다.",
+          },
+          {
+            // 대여의 한 갈래가 아니라 따로 둔다. 이미 들고 있는 물품을 다른 사람에게 넘기는 일이라
+            // 내 대여 조회 바로 위에 둔다.
+            key: "transfer" as const,
+            icon: <Handshake size={24} />,
+            title: "양도",
+            cta: "양도하기",
+            desc: "내가 대여 중인 물품을 다른 사람에게 넘깁니다.",
           },
           {
             key: "mylookup" as const,

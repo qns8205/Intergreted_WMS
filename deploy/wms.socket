@@ -1,0 +1,12 @@
+[Unit]
+Description=WMS LAN-only HTTPS standard port
+
+[Socket]
+ListenStream=192.168.100.152:443
+FreeBind=yes
+FileDescriptorName=wms-https
+Service=wms.service
+Accept=no
+
+[Install]
+WantedBy=sockets.target

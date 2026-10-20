@@ -14,6 +14,7 @@ import { countDistinctItemTypes } from "../utils/itemTypeCount";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import RegisteredUserPicker from "./RegisteredUserPicker";
 import BrowsePage from "./BrowsePage";
+import RentalTermsFields, {RentalMode} from './RentalTermsFields';
 
 interface Props {
   scriptUrl: string;
@@ -31,6 +32,7 @@ type WarehouseLine = { kind: "warehouse"; rowIndex: number; name: string; quanti
 type CartLine = ScenarioLine | WarehouseLine;
 
 const lineKey = (line: CartLine) => line.kind === "scenario" ? `s:${line.id}:${line.variantId || ""}` : `w:${line.rowIndex}`;
+const extraKey = (item: { id: string; variantId?: number }) => `s:${item.id}:${item.variantId || ""}`;
 const uniq = (values: (string | undefined)[]) => [...new Set(values.map((v) => String(v || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
 
 export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMode, isActive, onClose, onCompleted, showToast }: Props) {
@@ -74,10 +76,17 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
   const [inStockOnly, setInStockOnly] = useState(true);
   const [variantPick, setVariantPick] = useState<ScenarioObjectAdmin | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  // SID 대여로 담았으면 그 시나리오 번호와, SID 필요 물품 외에 "추가 물품 담기"로 더 담은 것.
+  const [sid, setSid] = useState("");
+  const [sidExtras, setSidExtras] = useState<BrowseCartItem[]>([]);
   const browseCart = useMemo<BrowseCartItem[]>(() => cart.filter((line): line is ScenarioLine => line.kind === "scenario")
     .map(({ id, name, quantity, location, variantId, variantName }) => ({ id, name, quantity, rootSlot: location, variantId, variantName })), [cart]);
   const cartTypeCount = useMemo(() => countDistinctItemTypes(cart), [cart]);
   const [purpose, setPurpose] = useState("");
+  const [rentalMode,setRentalMode]=useState<RentalMode|null>(null);
+  const [rentalReason,setRentalReason]=useState('');
+  const [rentalDueDate,setRentalDueDate]=useState('');
+  const rentalInvalid=category==='scenario' && (!rentalMode || (rentalMode!=='general' && !rentalReason.trim()) || (rentalMode==='long_term' && (!rentalDueDate || rentalDueDate<new Date(Date.now()+9*3600000).toISOString().slice(0,10))));
   const [submitting, setSubmitting] = useState(false);
   const [preview, setPreview] = useState<{ src: string; name: string } | null>(null);
   useVersionWorkGuard("admin-direct-borrow", (step !== "category" && step !== "done") || submitting, "관리자 대리 신청 중");
@@ -101,7 +110,10 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
       setSeatRecommendations([]);
       setSeatRecommendationsError("");
       setCart([]);
+      setSid("");
+      setSidExtras([]);
       setPurpose("");
+      setRentalMode(null);setRentalReason('');setRentalDueDate('');
       setSearch("");
       setFilterA("");
       setFilterB("");
@@ -178,10 +190,10 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
   const filteredScenario = useMemo(() => scenarioItems.filter((it) => (!search.trim() || smartMatch([it.name, it.id, it.rootSlot, it.category, it.subcategory, it.sector, it.requestFor], search)) && (!filterA || it.category === filterA) && (!filterB || it.subcategory === filterB) && (!filterC || it.sector === filterC) && (requestFilter === "all" || (requestFilter === "request" ? it.requestFor !== undefined : it.requestFor === undefined)) && (!inStockOnly || Number(it.stock) > 0)).slice(0, 100), [scenarioItems, search, filterA, filterB, filterC, requestFilter, inStockOnly]);
   const filteredWarehouse = useMemo(() => warehouseItems.filter((it) => { const stock = Number(it.stock); return (!search.trim() || smartMatch([it.name, it.location, it.spec, it.keywords, it.manager], search)) && (!filterA || it.location?.split("-")[0] === filterA) && (!filterB || it.manager === filterB) && (!filterC || it.spec === filterC) && (!inStockOnly || (Number.isFinite(stock) && stock > 0)); }).slice(0, 100), [warehouseItems, search, filterA, filterB, filterC, inStockOnly]);
 
-  function chooseCategory(next: Category) { setCategory(next); setCart([]); setSearch(""); setFilterA(""); setFilterB(""); setFilterC(""); setVariantPick(null); setStep("identity"); }
+  function chooseCategory(next: Category) { setCategory(next); setCart([]); setSid(""); setSidExtras([]); setSearch(""); setFilterA(""); setFilterB(""); setFilterC(""); setVariantPick(null); setStep("identity"); }
   function goBack() {
     if (submitting) return;
-    if (step === "identity") { setCategory(null); setCart([]); setStep("category"); }
+    if (step === "identity") { setCategory(null); setCart([]); setSid(""); setSidExtras([]); setStep("category"); }
     else if (step === "items") setStep("identity");
     else if (step === "confirm") setStep("items");
   }
@@ -208,19 +220,43 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
     setCart((prev) => prev.map((line) => line.kind === "warehouse" && lineKey(line) === key ? { ...line, action: line.isConsumable ? "소모" : action } : line));
   }
   async function submit() {
-    if (!category || !cart.length || submitting) return; setSubmitting(true);
+    if (!category || !cart.length || submitting || rentalInvalid) return; setSubmitting(true);
     try {
       if (category === "scenario") {
         const version = await fetchBorrowAppVersion(scriptUrl).catch(() => ""); const lines = cart as ScenarioLine[];
-        const res = await postRecordBorrow(scriptUrl, [{ itemType: "general", borrowerName: name.trim(), affiliation: "cfgw", employeeId: employeeId.trim(), borrowDate: nowString(), borrowPurpose: purpose.trim() || "대여 신청", borrowedItems: lines.map((x) => ({ id: x.id, name: x.name, quantity: x.quantity, variantId: x.variantId })), generalOption: "일반 대여", floor, unit }], version);
+        const base = { borrowerName: name.trim(), affiliation: "cfgw", employeeId: employeeId.trim(), borrowDate: nowString(), borrowPurpose: purpose.trim() || "대여 신청", floor, unit,
+          rentalTerms:{mode:rentalMode!,reason:rentalMode==='general'?'':rentalReason.trim(),dueDate:rentalMode==='long_term'?rentalDueDate:''},
+          requestRental:{mode:rentalMode==='general'?'general' as const:'request' as const,reason:rentalMode==='general'?'':rentalReason.trim()} };
+        const { required, additional } = splitSidCart(lines);
+        const entry = sid
+          ? { ...base, itemType: "scenario" as const, scenarioId: sid, requiredObjects: required, additionalItems: additional }
+          : { ...base, itemType: "general" as const, borrowedItems: lines.map((x) => ({ id: x.id, name: x.name, quantity: x.quantity, variantId: x.variantId })), generalOption: "일반 대여" };
+        const res = await postRecordBorrow(scriptUrl, [entry], version);
         if (!res.success) throw new Error(res.message || "시나리오 물품 대여 처리 실패");
       } else {
         const res = await postWarehouseRentBulk(scriptUrl, (cart as WarehouseLine[]).map((x) => ({ type: x.action, itemId: x.rowIndex, resolveLoan: false, location: x.location, name: x.name, qty: x.quantity, user: name.trim(), employeeId: employeeId.trim(), note: purpose.trim() || `관리자 직접 ${x.action}` })));
         if (!res.success) throw new Error(res.error || "COS 물품 대여 처리 실패");
       }
-      showToast(`${name.trim()}님의 ${category === "warehouse" ? "대여 / 소모 처리" : "대여 신청"}가 완료되었습니다.`, "ok"); onCompleted?.(); setStep("done");
+      showToast(`${name.trim()}님의 ${category === "warehouse" ? "대여 / 소모 처리" : sid ? `${sid} SID 대여 신청` : "대여 신청"}가 완료되었습니다.`, "ok"); onCompleted?.(); setStep("done");
     } catch (e: any) { showToast(e.message || "대여 신청 처리에 실패했습니다.", "error"); } finally { setSubmitting(false); }
   }
+
+  /** 장바구니 한 줄을 SID 필요 물품과 추가 물품으로 나눈다. 추가로 담은 수량만큼은 추가 물품,
+   *  나머지는 SID 필요 물품이다(확인 화면에서 수량을 줄였으면 추가 수량도 그만큼까지만 센다). */
+  function splitSidCart(lines: ScenarioLine[]) {
+    const extra = new Map<string, number>();
+    for (const x of sidExtras) extra.set(extraKey(x), (extra.get(extraKey(x)) || 0) + (Number(x.quantity) || 0));
+    const required: { id: string; name: string; quantity: number; variantId?: number }[] = [];
+    const additional: typeof required = [];
+    for (const line of lines) {
+      const extraQty = Math.min(line.quantity, extra.get(lineKey(line)) || 0);
+      const item = { id: line.id, name: line.name, variantId: line.variantId };
+      if (line.quantity - extraQty > 0) required.push({ ...item, quantity: line.quantity - extraQty });
+      if (extraQty > 0) additional.push({ ...item, quantity: extraQty });
+    }
+    return { required, additional };
+  }
+  const sidSplit = sid && category === "scenario" ? splitSidCart(cart.filter((x): x is ScenarioLine => x.kind === "scenario")) : null;
 
   const imgOf = (line: CartLine) => line.kind === "scenario" ? line.image : line.photo;
   const applicationLabel = category === "warehouse" ? "COS 물품 대여 / 소모" : "대여 신청";
@@ -238,13 +274,16 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
   return <>
     {category === "scenario" && (step === "items" || step === "confirm") ? <div style={{ height: "100%", overflowY: "auto", display: step === "items" ? "block" : "none" }}>
       <BrowsePage scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode}
-        showToast={showToast} isAdmin adminDirectBorrow adminCart={browseCart} initialStep="scenario"
+        showToast={showToast} isAdmin adminDirectBorrow adminCart={browseCart} initialStep="scenarioKind"
+        adminSid={sid} adminSidExtras={sidExtras}
         session={{ name, employeeId, affiliation: "cfgw", floor: floors.find((f) => f.id === floor)?.name || floor, unit }}
         onBack={() => setStep("identity")}
-        onAdminBack={(items) => { acceptScenarioCart(items); setStep("identity"); }}
-        onGoBorrow={({ items }) => {
+        onAdminBack={(items, sidInfo) => { acceptScenarioCart(items); setSid(sidInfo?.sid || ""); setSidExtras(sidInfo?.additionalItems || []); setStep("identity"); }}
+        onGoBorrow={({ items, sid: pickedSid, additionalItems }) => {
           if (!items?.length) { showToast("대여할 물품을 담아주세요.", "warn"); return; }
           acceptScenarioCart(items);
+          setSid(pickedSid || "");
+          setSidExtras(pickedSid ? additionalItems || [] : []);
           setStep("confirm");
         }} />
     </div> : null}
@@ -276,7 +315,7 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
         </div></div> : null}
 
         {step === "identity" ? <div><div style={{ marginBottom: 20, padding: "14px 16px", background: C.accentSoft, borderRadius: 12, borderLeft: `4px solid ${C.accent}`, fontSize: 13, lineHeight: 1.6 }}>{category === "warehouse" ? "사용자 이름을 선택해주세요. COS 물품은 좌석 위치 없이 대여 또는 소모할 수 있습니다." : "대여자 이름을 검색해 선택하면 등록된 사번이 자동으로 연결됩니다. 좌석은 일반 대여 신청과 동일하게 필수입니다."}</div>
-          <label style={label}>{category === "warehouse" ? "사용자 이름" : "대여자 이름"}</label><div style={{ marginBottom: 20 }}><RegisteredUserPicker scriptUrl={scriptUrl} name={name} employeeId={employeeId} onChange={(nextName, nextId) => { setName(nextName); setEmployeeId(nextId); setFloor(""); setUnit(""); setCart([]); }} isLightMode={isLightMode} placeholder="이름을 검색한 뒤 명부에서 선택" /></div>
+          <label style={label}>{category === "warehouse" ? "사용자 이름" : "대여자 이름"}</label><div style={{ marginBottom: 20 }}><RegisteredUserPicker scriptUrl={scriptUrl} name={name} employeeId={employeeId} onChange={(nextName, nextId) => { setName(nextName); setEmployeeId(nextId); setFloor(""); setUnit(""); setCart([]); setSid(""); setSidExtras([]); }} isLightMode={isLightMode} placeholder="이름을 검색한 뒤 명부에서 선택" /></div>
           {category === "scenario" ? <><div style={{ marginBottom: 20, padding: "14px 16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.cardSub }}>
             <label style={label}>자주 사용하는 유닛</label>
             {!employeeId ? <p style={{ color: C.label, fontSize: 13, margin: 0 }}>이름을 검색한 뒤 명부에서 선택하면 자주 사용한 유닛을 추천합니다.</p>
@@ -311,9 +350,9 @@ export default function AdminDirectBorrowPage({ scriptUrl, connected, isLightMod
           {loading ? <div style={{ textAlign: "center", padding: 64, color: C.label }}>물품 목록을 불러오는 중입니다...</div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 16 }}>{category === "scenario" ? filteredScenario.map((it) => <ScenarioCard key={it.id} item={it} C={C} cart={cart} openVariant={() => setVariantPick(it)} add={addScenario} changeQty={changeQty} openImage={openImage} />) : filteredWarehouse.map((it) => <WarehouseCard key={it.rowIndex} item={it} C={C} cart={cart} add={addWarehouse} changeQty={changeQty} changeAction={changeAction} openImage={openImage} />)}</div>}
         </div> : null}
 
-        {step === "confirm" ? <div><div style={{ marginBottom: 20, padding: "14px 16px", background: C.accentSoft, borderRadius: 12, borderLeft: `4px solid ${C.accent}`, fontSize: 13, lineHeight: 1.6 }}><b>{name}</b>님 명의로 아래 물품을 신청합니다.{category === "warehouse" ? <div style={{ marginTop: 8, color: C.label }}>대여는 반납 대상이며, 소모는 재고만 차감하고 대여 확인·반납 목록에 표시하지 않습니다.</div> : null}</div>{cart.map((line) => <CartRow key={lineKey(line)} C={C} line={line} changeQty={changeQty} changeAction={changeAction} />)}<label style={{ ...label, marginTop: 20 }}>{category === "warehouse" ? "사용 목적 / 메모" : "대여 목적 / 메모"}</label><textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="선택 입력" style={{ ...input, resize: "vertical", marginBottom: 20 }} /><div style={{ display: "flex", gap: 10 }}><button onClick={goBack} style={secondary}>이전</button><button disabled={submitting || !cart.length} onClick={submit} style={{ ...primary, background: C.success, opacity: submitting ? .7 : 1 }}><Check size={15} />{submitting ? "처리 중..." : category === "warehouse" ? "대여 / 소모 처리하기" : "대여 신청하기"}</button></div></div> : null}
+        {step === "confirm" ? <div><div style={{ marginBottom: 20, padding: "14px 16px", background: C.accentSoft, borderRadius: 12, borderLeft: `4px solid ${C.accent}`, fontSize: 13, lineHeight: 1.6 }}><b>{name}</b>님 명의로 아래 물품을 신청합니다.{sidSplit ? <div style={{ marginTop: 8 }}><b>SID 대여 · {sid}</b><span style={{ color: C.label }}> — 필요 물품 {sidSplit.required.length}종{sidSplit.additional.length ? ` · 추가 물품 ${sidSplit.additional.length}종` : ""}</span></div> : category === "scenario" ? <div style={{ marginTop: 8, color: C.label }}>일반 대여로 신청합니다.</div> : null}{category === "warehouse" ? <div style={{ marginTop: 8, color: C.label }}>대여는 반납 대상이며, 소모는 재고만 차감하고 대여 확인·반납 목록에 표시하지 않습니다.</div> : null}</div>{cart.map((line) => <CartRow key={lineKey(line)} C={C} line={line} changeQty={changeQty} changeAction={changeAction} />)}<label style={{ ...label, marginTop: 20 }}>{category === "warehouse" ? "사용 목적 / 메모" : "대여 목적 / 메모"}</label><textarea value={purpose} onChange={(e) => setPurpose(e.target.value)} rows={3} placeholder="선택 입력" style={{ ...input, resize: "vertical", marginBottom: 20 }} />{category==='scenario' ? <div style={{marginBottom:20}}><RentalTermsFields C={C} mode={rentalMode} reason={rentalReason} dueDate={rentalDueDate} onMode={setRentalMode} onReason={setRentalReason} onDueDate={setRentalDueDate} disabled={submitting}/></div> : null}<div style={{ display: "flex", gap: 10 }}><button onClick={goBack} style={secondary}>이전</button><button disabled={submitting || !cart.length || rentalInvalid} onClick={submit} style={{ ...primary, background: C.success, opacity: submitting ? .7 : 1 }}><Check size={15} />{submitting ? "처리 중..." : category === "warehouse" ? "대여 / 소모 처리하기" : "대여 신청하기"}</button></div></div> : null}
 
-        {step === "done" ? <div style={{ textAlign: "center" }}><CheckCircle2 size={58} style={{ color: C.success, marginBottom: 14 }} /><h2 style={{ margin: "0 0 8px", fontSize: 22 }}>{applicationLabel} 완료</h2><p style={{ margin: "0 0 22px", color: C.label, fontSize: 13, lineHeight: 1.6 }}><b style={{ color: C.text }}>{name}</b> · 사번 {employeeId}{category === "scenario" ? <><br />{floor} · {unit}</> : null}</p><div style={{ textAlign: "left", marginBottom: 20 }}>{cart.map((line) => <div key={lineKey(line)} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "11px 13px", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}><span>{line.name}{line.variantName ? ` · ${line.variantName}` : ""}</span><b>{line.quantity}개{line.kind === "warehouse" ? ` · ${line.action}` : ""}</b></div>)}</div>{category === "warehouse" ? <p style={{ margin: "0 0 20px", fontSize: 13, lineHeight: 1.6, color: C.label }}>대여·소모 수량을 재고에 반영했습니다. 소모한 물품은 반납 대상에 포함되지 않습니다.</p> : null}<button onClick={onClose} style={{ ...primary, width: "100%" }}>대여 확인으로 돌아가기</button></div> : null}
+        {step === "done" ? <div className="wms-empty-state" style={{ textAlign: "center" }}><CheckCircle2 size={58} style={{ color: C.success, marginBottom: 14 }} /><h2 style={{ margin: "0 0 8px", fontSize: 22 }}>{applicationLabel} 완료</h2><p style={{ margin: "0 0 22px", color: C.label, fontSize: 13, lineHeight: 1.6 }}><b style={{ color: C.text }}>{name}</b> · 사번 {employeeId}{category === "scenario" ? <><br />{floor} · {unit}{sid ? ` · SID ${sid}` : ""}</> : null}</p><div style={{ textAlign: "left", marginBottom: 20 }}>{cart.map((line) => <div key={lineKey(line)} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "11px 13px", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}><span>{line.name}{line.variantName ? ` · ${line.variantName}` : ""}</span><b>{line.quantity}개{line.kind === "warehouse" ? ` · ${line.action}` : ""}</b></div>)}</div>{category === "warehouse" ? <p style={{ margin: "0 0 20px", fontSize: 13, lineHeight: 1.6, color: C.label }}>대여·소모 수량을 재고에 반영했습니다. 소모한 물품은 반납 대상에 포함되지 않습니다.</p> : null}<button onClick={onClose} style={{ ...primary, width: "100%" }}>대여 확인으로 돌아가기</button></div> : null}
       </div>
     </div>
     {variantPick ? <div onClick={() => setVariantPick(null)} style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}><div onClick={(e) => e.stopPropagation()} style={{ width: "min(420px,100%)", maxHeight: "80vh", overflowY: "auto", padding: 18, borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.card }}><div style={{ fontSize: 15, fontWeight: 800 }}>어떤 종류를 담으시나요?</div><div style={{ fontSize: 12, color: C.label, margin: "3px 0 12px" }}>{variantPick.name}</div><div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{(variantPick.variants || []).map((v) => { const taken = cart.filter((x) => x.kind === "scenario" && x.id === variantPick.id && x.variantId === v.id).reduce((n, x) => n + x.quantity, 0); const out = v.stock <= 0; return <button key={v.id} disabled={out} onClick={() => { addScenario(variantPick, v); setVariantPick(null); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 11, border: `1.5px solid ${C.border}`, background: C.cardSub, color: out ? C.label : C.text, cursor: out ? "not-allowed" : "pointer", textAlign: "left", opacity: out ? .55 : 1 }}><span onClick={(e) => { if (v.image || variantPick.image) { e.stopPropagation(); openImage(v.image || variantPick.image, `${variantPick.name} · ${v.name}`); } }} style={{ width: 48, height: 48, flexShrink: 0, borderRadius: 9, overflow: "hidden", background: C.card, display: "grid", placeItems: "center", cursor: v.image || variantPick.image ? "zoom-in" : "default" }}>{v.image || variantPick.image ? <img src={getThumbImageUrl(v.image || variantPick.image)} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Boxes size={18} color={C.label} />}</span><span style={{ flex: 1, minWidth: 0 }}><b style={{ display: "block", fontSize: 13 }}>{v.name}{taken ? ` · 담김 ${taken}개` : ""}</b><span style={{ display: "block", marginTop: 2, fontSize: 11.5, color: C.label }}>{out ? "재고 없음" : `재고 ${v.stock}개`}</span></span></button>; })}</div><button onClick={() => setVariantPick(null)} style={{ marginTop: 14, width: "100%", padding: 11, borderRadius: 10, border: `1px solid ${C.border}`, background: "transparent", color: C.label, cursor: "pointer", fontSize: 12.5, fontWeight: 700 }}>닫기</button></div></div> : null}

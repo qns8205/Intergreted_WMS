@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS warehouse_items (
   archived TEXT
 );
 
+CREATE TABLE IF NOT EXISTS borrower_sessions (
+  token_hash TEXT PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  last_seen_ms INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sid_rentals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   borrower_name TEXT,
@@ -312,6 +318,67 @@ CREATE TABLE IF NOT EXISTS penalties (
   expires_at TEXT
 );
 
+-- 사진을 기준으로 변형 승인과 사용 중 파손 신고를 추적한다. 신고 자체는 재고를 바꾸지 않는다.
+CREATE TABLE IF NOT EXISTS object_reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK(kind IN ('modification','damage')),
+  sheet_type TEXT NOT NULL,
+  rental_row_id INTEGER NOT NULL,
+  employee_id TEXT NOT NULL,
+  borrower_name TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  item_name TEXT NOT NULL,
+  variant_id INTEGER,
+  quantity INTEGER NOT NULL,
+  consumed_qty INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL,
+  plan TEXT NOT NULL DEFAULT '',
+  baseline_image TEXT,
+  image_path TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  completion_image TEXT,
+  completion_note TEXT,
+  review_note TEXT,
+  reviewed_by TEXT,
+  reviewed_at TEXT,
+  registration_kind TEXT,
+  target_item_id TEXT,
+  target_variant_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_object_reports_pending ON object_reports(status,kind);
+CREATE INDEX IF NOT EXISTS idx_object_reports_rental ON object_reports(sheet_type,rental_row_id,kind);
+CREATE TABLE IF NOT EXISTS object_report_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  report_id INTEGER NOT NULL,
+  occurred_at TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  note TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS damage_return_operations (
+  client_id TEXT PRIMARY KEY,
+  result_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS damage_return_decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation_id TEXT NOT NULL,
+  sheet_type TEXT NOT NULL,
+  rental_row_id INTEGER NOT NULL,
+  employee_id TEXT,
+  borrower_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  reported_qty INTEGER NOT NULL,
+  exempt INTEGER NOT NULL DEFAULT 0,
+  exemption_reason TEXT,
+  penalty_id INTEGER,
+  occurred_at TEXT NOT NULL,
+  manager TEXT NOT NULL,
+  UNIQUE(operation_id,sheet_type,rental_row_id)
+);
+
 -- 페널티가 어느 대여·반납 기록의 어느 물품 때문에 생겼는지(관리자가 등록할 때 고른다).
 -- 물품·신청 정보는 연결한 시점의 값을 두고, 대여·반납 상태는 원본 줄(sheet_type/row_id)에서 읽는다.
 CREATE TABLE IF NOT EXISTS penalty_links (
@@ -373,6 +440,31 @@ CREATE TABLE IF NOT EXISTS unattended_pickup_photos (
   items_json TEXT
 );
 
+-- 사진이 도착한 뒤 장부 처리가 실패해도 증빙·동일 요청 번호와 오류를 잃지 않는다.
+-- completed는 실제 장부 갱신과 같은 트랜잭션에서만 기록한다.
+CREATE TABLE IF NOT EXISTS unattended_operations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL UNIQUE,
+  operation TEXT NOT NULL,
+  employee_id TEXT NOT NULL,
+  borrower_name TEXT,
+  fingerprint TEXT NOT NULL,
+  items_json TEXT NOT NULL,
+  photo_validated INTEGER NOT NULL DEFAULT 0,
+  image_path TEXT,
+  damage_image_path TEXT,
+  status TEXT NOT NULL DEFAULT 'processing',
+  received_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  result_json TEXT,
+  last_error TEXT,
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  reviewer TEXT,
+  review_note TEXT,
+  reviewed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_unattended_operations_review ON unattended_operations(review_status,status);
+
 -- 무인 모드 자동 페널티가 같은 대여 신청에 반복 부과되지 않도록 위반 자체를 별도 장부에 남긴다.
 -- event_key는 "미수령/미반납 + 신청번호" 조합이라, 서버가 주기적으로 다시 검사해도 한 번만 생성된다.
 CREATE TABLE IF NOT EXISTS unattended_penalty_events (
@@ -386,6 +478,18 @@ CREATE TABLE IF NOT EXISTS unattended_penalty_events (
   occurred_at TEXT NOT NULL,
   penalty_id INTEGER,
   details TEXT
+);
+
+-- 무인 모드에서 대여자가 찍은 사진을 관리자가 확인했는지. kind: return(무인 반납·공구 반납) |
+-- pickup(무인 수령 확인) | tool(무인 공구 대여 신청). status: ok(확인함) | issue(문제 있음).
+CREATE TABLE IF NOT EXISTS photo_reviews (
+  kind TEXT NOT NULL,
+  photo_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  note TEXT,
+  reviewer TEXT,
+  reviewed_at TEXT,
+  PRIMARY KEY (kind, photo_id)
 );
 
 CREATE TABLE IF NOT EXISTS notices (
@@ -518,6 +622,46 @@ CREATE TABLE IF NOT EXISTS tablecloth_rental_logs (
 
 -- 테이블보 대여 장부. 시나리오 물품과 "흐름"은 같지만(신청 → 대여 확인 → 반납)
 -- 장부는 따로 둔다 — 대여/반납 화면에서 별도 항목으로 다뤄야 하기 때문이다.
+CREATE TABLE IF NOT EXISTS item_reservations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id TEXT NOT NULL,
+  borrower_name TEXT NOT NULL,
+  floor TEXT NOT NULL,
+  unit TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  variant_id INTEGER NOT NULL DEFAULT 0,
+  quantity INTEGER NOT NULL CHECK(quantity > 0),
+  starts_at_ms INTEGER NOT NULL,
+  created_at_ms INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'reserved',
+  request_no INTEGER,
+  client_id TEXT NOT NULL,
+  promotion_error TEXT,
+  request_mode TEXT,
+  request_reason TEXT,
+  UNIQUE(employee_id, client_id, item_id, variant_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reservation_active ON item_reservations(status, item_id, starts_at_ms);
+CREATE TABLE IF NOT EXISTS reservation_notice_views (
+  reservation_id INTEGER NOT NULL,
+  employee_id TEXT NOT NULL,
+  seen_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(reservation_id, employee_id)
+);
+
+-- 양도 성공 시 같은 트랜잭션에서 저장하는 관리자 알림 원본.
+CREATE TABLE IF NOT EXISTS transfer_notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  occurred_at TEXT NOT NULL,
+  from_employee_id TEXT NOT NULL,
+  from_name TEXT NOT NULL,
+  to_employee_id TEXT NOT NULL,
+  to_name TEXT NOT NULL,
+  floor TEXT NOT NULL DEFAULT '',
+  unit TEXT NOT NULL DEFAULT '',
+  items_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tablecloth_rentals (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   borrower_name TEXT,

@@ -4,16 +4,20 @@ import { ArrowLeft, Camera, CheckCircle2, IdCard, ImageOff, LockKeyhole, LogOut,
 import CameraCaptureModal from "./CameraCaptureModal";
 import { setAdminToken } from "../utils/adminAuth";
 import { fetchSeatMap, SeatFloor } from "../utils/borrowApi";
-import { BorrowedTool, fetchMyTools, ToolRequestReceipt } from "../utils/warehouseManualApi";
+import { BorrowedTool, fetchMyTools, setKioskSession, ToolRequestReceipt } from "../utils/warehouseManualApi";
 import { kioskPalette } from "../utils/kioskTheme";
+import { scenarioVariantText } from "../utils/scenarioVariant";
 import UnattendedToolBorrowForm from "./UnattendedToolBorrowForm";
 import UnattendedToolReturnForm from "./UnattendedToolReturnForm";
+import { kioskRequest, assertPhotoReceipt, KioskRequestError } from '../utils/unattendedTransport';
+import { PendingKioskPhoto, loadPendingKioskPhotos, memoryPendingKioskPhotos, unpersistedKioskPhotoCount, savePendingKioskPhoto, removePendingKioskPhoto } from '../utils/unattendedPhotoOutbox';
+import { useVersionWorkGuard } from '../utils/versionWorkGuard';
 
 type Item = {
   key: string; sheetType: "scenario" | "general"; rowIndex: number;
   borrowerName: string; employeeId: string; itemId: string; itemName: string;
-  quantity: number; location: string; image?: string; pickedUp: boolean;
-  variantId?: number | null; variantPending?: boolean;
+  quantity: number; location?: string; image?: string; pickedUp: boolean;
+  variantId?: number | null; variantPending?: boolean; variantName?: string; variantUnassigned?: boolean;
 };
 type Mode = "return" | "pickup";
 type Done =
@@ -53,18 +57,17 @@ function ItemThumb({ item, C, size = 76 }: { item: Item; C: any; size?: number }
 }
 
 const TOKEN_KEY = "wms_unattended_device";
-const makeClientId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+const makeClientId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+// 사번·SM 비밀번호로 로그인하면 서버가 내주는 표. 서버는 이 표의 사번으로만 반납·수령·공구를 처리한다.
+let kioskToken = "";
+function setKioskToken(token: string) { kioskToken = token; setKioskSession(token); }
 async function call(path: string, body?: unknown) {
-  const response = await fetch(`/api/unattended/${path}`, {
-    method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", "x-unattended-device": localStorage.getItem(TOKEN_KEY) || "" },
-    body: body ? JSON.stringify(body) : undefined,
-    cache: "no-store",
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.success === false) throw new Error(data.error || "요청을 처리하지 못했습니다.");
-  return data;
+  try { return await kioskRequest(path,body,{device:localStorage.getItem(TOKEN_KEY) || '',session:kioskToken},body ? 45000 : 10000); }
+  catch(error) {
+    if (error instanceof KioskRequestError && error.relogin) window.dispatchEvent(new CustomEvent('wms-kiosk-relogin',{detail:error.message}));
+    throw error;
+  }
 }
 
 export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToast }: {
@@ -72,6 +75,9 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   showToast: (message: string, type?: "info" | "ok" | "warn" | "error") => void;
 }) {
   const [employeeId, setEmployeeId] = useState("");
+  // SM 비밀번호. 로그인 요청에만 쓰고 바로 지운다. 화면 어디에도 남기지 않는다.
+  const [password, setPassword] = useState("");
+  const passwordRef = useRef<HTMLInputElement>(null);
   const [borrowerName, setBorrowerName] = useState("");
   const [demoMode, setDemoMode] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -109,7 +115,14 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   const [adminPassword, setAdminPassword] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminError, setAdminError] = useState("");
-  const attempt = useRef(makeClientId());
+  const [pendingPhotos,setPendingPhotos]=useState<PendingKioskPhoto[]>([]);
+  const [photoStorageError,setPhotoStorageError]=useState('');
+  const [photoReviewClosed,setPhotoReviewClosed]=useState(false);
+  const pendingPhotoRef=useRef<PendingKioskPhoto[]>([]);
+  const sendingPhoto=useRef<string|null>(null);
+  pendingPhotoRef.current=pendingPhotos;
+  const memoryOnlyPhotos=unpersistedKioskPhotoCount();
+  useVersionWorkGuard('unattended-photo-recovery',memoryOnlyPhotos>0 || (loggedIn && (pendingPhotos.length>0 || !!captureMode || damageCamera || processing)),'무인 촬영 결과 확인 중');
 
   const C = kioskPalette(isLightMode);
   const hasScenarioItems = items.length > 0;
@@ -161,7 +174,6 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   async function refreshAfterDone() {
     const session = sessionRef.current;
     setNextReady(false);
-    attempt.current = makeClientId();
     const list = await call("find-mine", { employeeId }).then((data) => (data.items || []) as Item[], () => [] as Item[]);
     await refreshMyTools();
     if (session !== sessionRef.current) return;
@@ -178,13 +190,17 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
     else { setToolScreen(null); chooseMode(next); }
   }
   function logout() {
+    // 서버의 로그인 표도 바로 지운다. 실패해도 화면은 처음으로 돌아간다(표는 15분 뒤 저절로 끝난다).
+    if (kioskToken) void call("logout", {}).catch(() => {});
+    setKioskToken(""); setPassword("");
     sessionRef.current += 1;
     setToolScreen(null); setMyTools([]); setToolsError("");
     setEmployeeId(""); setBorrowerName(""); setLoggedIn(false); setItems([]); setSelected({}); setActionSelected(false);
     setDemoMode(false);
     setDamaged({}); setDamageReason({}); setDamagePhoto(""); setDamageConfirm(false); setDamageStage("ask");
     setCaptureMode(null); setProcessing(false); setReturnConfirmCount(0); setLogoutSeconds(DONE_LOGOUT_SECONDS); setError(""); setDone(null);
-    setNextReady(false); setIdleLeft(null); attempt.current = makeClientId();
+    setNextReady(false); setIdleLeft(null);
+    setPendingPhotos([]); pendingPhotoRef.current=[]; setPhotoStorageError('');setPhotoReviewClosed(false);
   }
 
   useEffect(() => {
@@ -201,7 +217,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   useEffect(() => {
     // 사진을 저장하거나 카메라를 쓰는 동안은 세지 않는다. 화면을 누르거나 키를 치면 처음부터 다시 센다.
     let last = Date.now();
-    const busyNow = processing || damageCamera || !!captureMode;
+    const busyNow = processing || damageCamera || !!captureMode || (!!photoStorageError && pendingPhotos.length>0);
     const touch = () => { last = Date.now(); setIdleLeft(null); };
     const tick = window.setInterval(() => {
       if (busyNow) { last = Date.now(); return; }
@@ -212,20 +228,38 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
     }, 1000);
     ["pointerdown", "keydown"].forEach((event) => window.addEventListener(event, touch));
     return () => { window.clearInterval(tick); ["pointerdown", "keydown"].forEach((event) => window.removeEventListener(event, touch)); };
-  }, [processing, damageCamera, captureMode, loggedIn, done]);
+  }, [processing, damageCamera, captureMode, loggedIn, done, photoStorageError, pendingPhotos.length]);
   useEffect(() => {
     if (!damageConfirm || returnConfirmCount <= 0) return;
     const timer = window.setTimeout(() => setReturnConfirmCount((count) => Math.max(0, count - 1)), 1000);
     return () => window.clearTimeout(timer);
   }, [damageConfirm, returnConfirmCount]);
+  useEffect(() => {
+    const onRelogin = (event: Event) => { logout(); setError(String((event as CustomEvent).detail || "다시 로그인해주세요.")); };
+    window.addEventListener("wms-kiosk-relogin", onRelogin);
+    return () => window.removeEventListener("wms-kiosk-relogin", onRelogin);
+  }, []);
+  useEffect(()=>{
+    if(!memoryOnlyPhotos && (!loggedIn || (!pendingPhotos.length && !captureMode && !damageCamera) || done))return;
+    const warn=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue='';};
+    const retry=()=>{const photo=pendingPhotoRef.current.find(row=>row.employeeId===employeeId);if(photo)void sendPendingPhoto(photo);};
+    window.addEventListener('beforeunload',warn);window.addEventListener('online',retry);
+    return()=>{window.removeEventListener('beforeunload',warn);window.removeEventListener('online',retry);};
+  },[loggedIn,pendingPhotos.length,employeeId,done,captureMode,damageCamera,memoryOnlyPhotos]);
   async function login() {
     if (!/^\d{4}$/.test(employeeId)) { setError("4자리 사번을 입력해주세요."); return; }
     if (DEV_DEMO_ENABLED && employeeId === DEV_DEMO_EMPLOYEE_ID) {
       startDemo();
       return;
     }
+    if (!password) { setError("SM 비밀번호를 입력해주세요."); passwordRef.current?.focus(); return; }
     setBusy(true); setError("");
+    const loginSession=sessionRef.current;
     try {
+      // 사번만으로는 남의 이름으로 처리할 수 있으므로 SM 비밀번호로 본인을 확인한다.
+      const pw = password; setPassword("");
+      const auth = await call("login", { employeeId, password: pw });
+      setKioskToken(auth.token);
       // 공구 대여 내역은 별도 기록이다. 확인에 실패해도 시나리오 물품 처리는 막지 않는다.
       const toolsP = fetchMyTools(employeeId).then(
         (tools) => ({ tools, toolError: "" }),
@@ -234,13 +268,27 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
       const data = await call("find-mine", { employeeId });
       const list: Item[] = data.items || [];
       const { tools, toolError } = await toolsP;
+      if(loginSession!==sessionRef.current)return;
       setMyTools(tools); setToolsError(toolError);
       setBorrowerName(data.borrowerName || ""); setLoggedIn(true);
+      try {
+        const restored=await loadPendingKioskPhotos(employeeId);
+        if(loginSession!==sessionRef.current)return;
+        pendingPhotoRef.current=restored;setPendingPhotos(restored);setPhotoStorageError('');
+      } catch {
+        if(loginSession!==sessionRef.current)return;
+        const fallback=memoryPendingKioskPhotos(employeeId);pendingPhotoRef.current=fallback;setPendingPhotos(fallback);
+        setPhotoStorageError('이 PC의 사진 임시 보관함을 열지 못했습니다. 현재 창의 촬영본만 유지되므로 새로고침하지 말고 완료 화면까지 확인해주세요.');
+      }
       applyScenarioList(list);
       // 반납할 것이 먼저 보이고, 공구는 오른쪽 위 버튼으로 추가 대여한다. 처리할 시나리오 물품이 아예
       // 없으면 곧바로 공구 화면으로 간다(반납할 공구가 있으면 반납, 없으면 대여).
       setToolScreen(list.length ? null : tools.length ? "return" : "borrow");
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      // 로그인은 됐는데 목록을 못 받았으면 표를 버리고 처음부터 다시 하게 한다.
+      if (kioskToken) { void call("logout", {}).catch(() => {}); setKioskToken(""); }
+      setError(e.message); passwordRef.current?.focus();
+    }
     finally { setBusy(false); }
   }
 
@@ -260,16 +308,80 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
     damaged: !!damaged[item.key], reason: damageReason[item.key] || "", variantId: item.variantId,
   }));
 
-  async function finishReturn(returnPhoto: string) {
-    setProcessing(true); setError("");
+  async function finishReturn(photo: string) { await preserveAndSendPhoto('return',photo); }
+  async function preserveAndSendPhoto(kind:Mode,photo:string) {
+    const previous=pendingPhotoRef.current[0];
+    if(previous && (previous.employeeId!==employeeId || previous.kind!==kind))return;
+    if(!previous && !chosen.length)return;
+    const clientId=previous?.clientId || makeClientId();
+    const record:PendingKioskPhoto=previous ? {...previous,body:{...previous.body,photo}} : {clientId,employeeId,kind,capturedAt:new Date().toISOString(),labels:chosen.map(item=>item.itemName),
+      body:{clientId,items:payload(),photo,...(kind==='return' && hasDamage ? {damagePhoto} : {})}};
+    // 촬영 모달이 닫혀도 사진과 선택 스냅샷을 즉시 메모리에 보존한다.
+    pendingPhotoRef.current=[record];setPendingPhotos([record]);setDamageConfirm(false);setProcessing(true);
+    try{await savePendingKioskPhoto(record);setPhotoStorageError('');}
+    catch{setPhotoStorageError('PC 임시 저장에 실패했습니다. 현재 창에는 촬영본이 남아 있으므로 완료될 때까지 새로고침하거나 닫지 마세요.');}
+    await sendPendingPhoto(record);
+  }
+  async function sendPendingPhoto(record:PendingKioskPhoto) {
+    if(record.employeeId!==employeeId || !loggedIn)return;
+    const session=sessionRef.current, ticket=session+':'+record.clientId;
+    if(sendingPhoto.current===ticket)return;
+    sendingPhoto.current=ticket;setProcessing(true);setError('');setPhotoReviewClosed(false);
     try {
-      const data = await call("return", { clientId: attempt.current, items: payload(), photo: returnPhoto, ...(hasDamage ? { damagePhoto } : {}) });
-      const link = `${location.protocol}//${location.hostname}:3002${data.lookupPath}?employeeId=${encodeURIComponent(employeeId)}&returnBatch=${data.batchId}`;
-      const qr = await QRCode.toDataURL(link, { width: 360, margin: 2 });
-      setDone({ kind: "return", qr }); setDamageConfirm(false);
+      let receipt:any;
+      for(let retry=0;retry<2;retry++){
+        try {
+          // 응답만 사라졌으면 전송 대신 완료 영수증을 회수한다.
+          let status:any;
+          try{status=await call('operation-status?clientId='+encodeURIComponent(record.clientId));}
+          catch(e:any){if(e.relogin || e.status===401 || e.status===403)throw e;}
+          if(session!==sessionRef.current)return;
+          if(status?.reviewStatus==='reviewed'){
+            setPhotoReviewClosed(true);throw new KioskRequestError('관리자가 검토를 종료한 촬영 건입니다. 아래 보관 종료 버튼을 누른 뒤 최신 대여 목록을 확인해주세요.',409);
+          }
+          if(status?.status==='completed') receipt=assertPhotoReceipt(status.result,record);
+          else {
+            const result=await call(record.kind==='return'?'return':'confirm-pickup',record.body);
+            receipt=assertPhotoReceipt(result,record);
+          }
+          break;
+        }catch(e:any){
+          if(session!==sessionRef.current)return;
+          if(retry===1 || e.relogin || (e.status>=400 && e.status<500))throw e;
+          await new Promise(resolve=>setTimeout(resolve,700));
+        }
+      }
+      if(session!==sessionRef.current || !receipt)return;
+      try{await removePendingKioskPhoto(record.clientId);}catch{/* 서버 완료는 확인됨. 다음 로그인 때도 영수증 조회로 안전하게 정리한다. */}
+      if(session!==sessionRef.current)return;
+      pendingPhotoRef.current=pendingPhotoRef.current.filter(row=>row.clientId!==record.clientId);
+      setPendingPhotos(rows=>rows.filter(row=>row.clientId!==record.clientId));setPhotoStorageError('');
+      let qr:string|undefined;
+      if(record.kind==='return'){
+        const link=location.protocol+'//'+location.hostname+':'+(location.protocol==='https:'?'3445':'3002')+receipt.lookupPath+'?employeeId='+encodeURIComponent(record.employeeId)+'&returnBatch='+receipt.batchId;
+        try{qr=await QRCode.toDataURL(link,{width:360,margin:2});}catch{showToast('반납과 사진 저장은 완료됐습니다. 위치는 공용 QR로 확인해주세요.','warn');}
+      }
+      if(session!==sessionRef.current)return;
+      showToast(record.kind==='pickup'?'사진 저장과 대여 확인이 완료되었습니다.':'사진 저장과 반납이 완료되었습니다.','ok');
+      setDone(record.kind==='pickup'?{kind:'pickup'}:{kind:'return',qr});setDamageConfirm(false);
       void refreshAfterDone();
-    } catch (e: any) { setError(e.message); setDamageConfirm(false); }
-    finally { setProcessing(false); }
+    }catch(e:any){
+      if(session===sessionRef.current)setError(e.message || '처리가 완료되지 않았습니다. 촬영본으로 다시 확인해주세요.');
+    }finally{
+      if(sendingPhoto.current===ticket)sendingPhoto.current=null;
+      if(session===sessionRef.current)setProcessing(false);
+    }
+  }
+  async function clearReviewedPhoto(){
+    const record=pendingPhotoRef.current[0];if(!record || processing)return;
+    try{
+      const status=await call('operation-status?clientId='+encodeURIComponent(record.clientId));
+      if(status.reviewStatus!=='reviewed')throw Error('관리자 검토 종료가 확인되지 않았습니다.');
+      if(!window.confirm('관리자가 검토한 촬영의 PC 임시 보관을 종료할까요? 이 버튼 자체는 대여나 반납을 처리하지 않습니다.'))return;
+      await removePendingKioskPhoto(record.clientId);
+      pendingPhotoRef.current=pendingPhotoRef.current.filter(row=>row.clientId!==record.clientId);setPendingPhotos(rows=>rows.filter(row=>row.clientId!==record.clientId));
+      setPhotoReviewClosed(false);setPhotoStorageError('');setError('');void refreshAfterDone();
+    }catch(e:any){setError(e.message);}
   }
 
   function beginReturn() {
@@ -285,14 +397,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   }
 
   async function finishPickup(pickupPhoto: string) {
-    if (!chosen.length) return;
-    setProcessing(true); setError("");
-    try {
-      await call("confirm-pickup", { clientId: attempt.current, items: payload(), photo: pickupPhoto });
-      showToast("대여 확인 사진을 저장하고 처리를 완료했습니다.", "ok"); setDone({ kind: "pickup" });
-      void refreshAfterDone();
-    } catch (e: any) { setError(e.message); }
-    finally { setProcessing(false); }
+    await preserveAndSendPhoto('pickup',pickupPhoto);
   }
 
   async function loginAsAdmin(event: React.FormEvent) {
@@ -371,7 +476,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
     </div></div>{adminFooter}{adminLoginModal}</main>;
   }
 
-  const headSub = !loggedIn ? "사번 4자리로 시작하세요"
+  const headSub = !loggedIn ? "사번과 SM 비밀번호로 시작하세요"
     : toolScreen === "borrow" ? "사용할 층과 물품 이름을 적고 사진을 찍으세요"
     : toolScreen === "return" ? "반납할 공구를 고르고 사진을 찍으세요"
     : !actionSelected ? "할 일을 골라주세요"
@@ -394,15 +499,21 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
       <div style={{ padding: "46px clamp(28px,6vw,58px) 44px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
           <span style={{ width: 58, height: 58, borderRadius: 17, display: "grid", placeItems: "center", background: "rgba(37,224,189,.13)", color: C.accent, flexShrink: 0 }}><IdCard size={30} /></span>
-          <h2 style={{ margin: 0, fontSize: 31, fontWeight: 900 }}>사번을 입력하세요</h2>
+          <h2 style={{ margin: 0, fontSize: 31, fontWeight: 900 }}>사번과 SM 비밀번호를 입력하세요</h2>
         </div>
-        <p style={{ color: C.dim, fontSize: 18, lineHeight: 1.65, margin: "4px 0 28px 68px" }}>담당자가 부재중입니다. 대여·반납은 직접 처리해 주세요.</p>
+        <p style={{ color: C.dim, fontSize: 18, lineHeight: 1.65, margin: "4px 0 28px 68px" }}>담당자가 부재중입니다. 대여·반납은 직접 처리해 주세요. 본인 확인을 위해 Scenario Manager 비밀번호가 필요합니다.</p>
         <div style={formRow}>
           <div style={{ position: "relative", flex: 1, minWidth: 120 }}>
             <IdCard size={18} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
-            <input autoFocus aria-label="4자리 사번" placeholder="0000" inputMode="numeric" maxLength={4} value={employeeId} onChange={(e) => setEmployeeId(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(e) => e.key === "Enter" && login()} style={{ ...input(C), width: "100%", minHeight: 78, paddingLeft: 50, fontSize: 30, fontWeight: 900, letterSpacing: "0.2em" }} />
+            <input autoFocus aria-label="4자리 사번" placeholder="0000" inputMode="numeric" maxLength={4} value={employeeId} onChange={(e) => setEmployeeId(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(e) => { if (e.key !== "Enter") return; if (DEV_DEMO_ENABLED && employeeId === DEV_DEMO_EMPLOYEE_ID) login(); else if (employeeId.length === 4) passwordRef.current?.focus(); }} style={{ ...input(C), width: "100%", minHeight: 78, paddingLeft: 50, fontSize: 30, fontWeight: 900, letterSpacing: "0.2em" }} />
           </div>
-          <button className="wms-primary-action" disabled={busy || employeeId.length !== 4} onClick={login} style={{ ...primary, minHeight: 78, paddingInline: 38, fontSize: 21, opacity: busy || employeeId.length !== 4 ? 0.55 : 1 }}><Search size={25} /> {busy ? "찾는 중" : "다음"}</button>
+          <div style={{ position: "relative", flex: 1, minWidth: 160 }}>
+            <LockKeyhole size={18} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input ref={passwordRef} type="password" aria-label="SM 비밀번호" placeholder="SM 비밀번호" autoComplete="off" maxLength={512} value={password} disabled={busy}
+              onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()}
+              style={{ ...input(C), width: "100%", minHeight: 78, paddingLeft: 46, fontSize: 22, fontWeight: 800 }} />
+          </div>
+          <button className="wms-primary-action" disabled={busy || employeeId.length !== 4 || (!password && !(DEV_DEMO_ENABLED && employeeId === DEV_DEMO_EMPLOYEE_ID))} onClick={login} style={{ ...primary, minHeight: 78, paddingInline: 38, fontSize: 21, opacity: busy || employeeId.length !== 4 || (!password && !(DEV_DEMO_ENABLED && employeeId === DEV_DEMO_EMPLOYEE_ID)) ? 0.55 : 1 }}><Search size={25} /> {busy ? "확인 중" : "다음"}</button>
         </div>
         {DEV_DEMO_ENABLED ? <button type="button" className="wms-demo-entry" onClick={startDemo} style={{ ...ghost(C), width: "100%", minHeight: 58, justifyContent: "center", marginTop: 14, borderStyle: "dashed", color: C.accent, background: "rgba(37,224,189,.08)", fontSize: 17 }}><span style={{ fontSize: 21 }}>🧪</span> 테스트 사번 9999로 체험하기</button> : null}
         {error ? <p style={errorStyle}>{error}</p> : null}
@@ -443,7 +554,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
           const isChosen = (selected[item.key] || 0) > 0;
           return <label className="wms-item-card" key={item.key} style={{ position: "relative", display: "flex", alignItems: "center", gap: 17, border: `2px solid ${isChosen ? modeAccent : "transparent"}`, borderRadius: 22, padding: 16, minHeight: 124, cursor: "pointer", background: isChosen ? modeAccentSoft : C.surface, boxShadow: "none" }}>
             <input type="checkbox" checked={isChosen} onChange={(e) => setSelected((current) => ({ ...current, [item.key]: e.target.checked ? item.quantity : 0 }))} style={{ width: 36, height: 36, flexShrink: 0, accentColor: modeAccent }} />
-            <ItemThumb item={item} C={C} size={82} /><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.35 }}>{item.itemName}</div><div style={{ fontSize: 16, color: C.dim, marginTop: 7 }}>{item.itemId} · {item.location || "위치 미등록"}</div><div style={{ marginTop: 8, color: isChosen ? modeAccent : C.dim, fontSize: 14, fontWeight: 900 }}>{isChosen ? "✓ 실물 확인 완료" : "실물 확인 후 선택"}</div></div>{item.quantity > 1 ? <><input aria-label={`${item.itemName} 수량`} type="number" min={0} max={item.quantity} value={selected[item.key] || 0} onChange={(e) => setSelected((current) => ({ ...current, [item.key]: Math.min(item.quantity, Math.max(0, Number(e.target.value) || 0)) }))} style={{ ...input(C), flex: "none", width: 86, minHeight: 58, fontSize: 21, fontWeight: 850 }} /><span style={{ whiteSpace: "nowrap", fontSize: 19, fontWeight: 800 }}>/ {item.quantity}</span></> : <span style={{ whiteSpace: "nowrap", fontSize: 20, fontWeight: 850 }}>1개</span>}
+            <ItemThumb item={item} C={C} size={82} /><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 21, fontWeight: 900, lineHeight: 1.35 }}>{item.itemName}</div>{scenarioVariantText(item) ? <div style={{ fontSize: 16, fontWeight: 800, color: modeAccent, marginTop: 6 }}>종류: {scenarioVariantText(item)}</div> : null}<div style={{ fontSize: 16, color: C.dim, marginTop: 7 }}>{item.itemId}</div><div style={{ marginTop: 8, color: isChosen ? modeAccent : C.dim, fontSize: 14, fontWeight: 900 }}>{isChosen ? "✓ 실물 확인 완료" : "실물 확인 후 선택"}</div></div>{item.quantity > 1 ? <><input aria-label={`${item.itemName} 수량`} type="number" min={0} max={item.quantity} value={selected[item.key] || 0} onChange={(e) => setSelected((current) => ({ ...current, [item.key]: Math.min(item.quantity, Math.max(0, Number(e.target.value) || 0)) }))} style={{ ...input(C), flex: "none", width: 86, minHeight: 58, fontSize: 21, fontWeight: 850 }} /><span style={{ whiteSpace: "nowrap", fontSize: 19, fontWeight: 800 }}>/ {item.quantity}</span></> : <span style={{ whiteSpace: "nowrap", fontSize: 20, fontWeight: 850 }}>1개</span>}
           </label>;
         })}
       </div>}{visibleItems.length ? <div className="wms-action-dock" style={{ position: "sticky", bottom: 14, marginTop: 22, padding: 14, borderRadius: 22, background: C.panel, border: `1px solid ${C.border}`, boxShadow: "0 14px 40px rgba(15,23,42,.2)", zIndex: 5 }}><div style={{ textAlign: "center", color: chosen.length ? modeAccent : C.dim, fontSize: 16, fontWeight: 900, marginBottom: 10 }}>{chosen.length ? `${chosen.length}건 실물 확인 완료` : "확인한 물품을 하나 이상 선택해주세요"}</div><button className="wms-primary-action" disabled={!chosen.length || busy || processing} onClick={() => mode === "return" ? openReturnConfirm() : demoMode ? setDone({ kind: "pickup" }) : setCaptureMode("pickup")} style={{ ...primary, width: "100%", minHeight: 70, justifyContent: "center", fontSize: 21, opacity: !chosen.length ? .45 : 1, background: modeAccent }}>{processing ? "처리 중..." : mode === "return" ? "확인한 물품 반납하기" : demoMode ? "확인한 물품 테스트 완료" : "확인한 물품 사진 찍기"}</button></div> : null}{error ? <p style={errorStyle}>{error}</p> : null}</section>
@@ -460,7 +571,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
   </div>{adminFooter}
 
   <CameraCaptureModal open={damageCamera} onClose={() => setDamageCamera(false)} onCapture={(photo) => { setDamagePhoto(photo); setDamageCamera(false); setDamageConfirm(true); }} title="파손된 물품 촬영" isLightMode={isLightMode} />
-  <CameraCaptureModal open={captureMode !== null} onClose={() => setCaptureMode(null)} onCapture={(photo) => { const target = captureMode; setCaptureMode(null); if (target === "return") void finishReturn(photo); else if (target === "pickup") void finishPickup(photo); }} title={captureMode === "return" ? "반납 상태 확인 사진 촬영" : "대여 수령 확인 사진 촬영"} isLightMode={isLightMode} />
+  <CameraCaptureModal open={captureMode !== null} onClose={() => setCaptureMode(null)} onCapture={(photo) => { const target = captureMode; setCaptureMode(null); if (target === "return") void finishReturn(photo); else if (target === "pickup") void finishPickup(photo); }} title={captureMode === "return" ? "반납 상태 확인 사진 촬영" : "대여 수령 확인 사진 촬영"} confirmLabel={captureMode==='return'?'이 사진으로 반납 처리':'이 사진으로 대여 확인'} confirmationHint="아래 버튼을 누른 뒤 처리 완료 화면까지 확인해주세요." isLightMode={isLightMode} />
   {adminLoginModal}
   {damageConfirm ? <div style={overlay}><div style={{ ...panel(C), maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto", padding: "34px clamp(24px,5vw,44px)" }}>
     {damageStage === "ask" ? (
@@ -502,7 +613,7 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
         {error ? <p style={errorStyle}>{error}</p> : null}
       </div>
     ) : <>
-      <ShieldAlert size={40} color="#f59e0b" /><h2 style={{ fontWeight: 900 }}>어느 물품이 파손됐나요?</h2><p style={{ color: C.dim }}>파손된 물품만 선택하고 사유를 작성한 뒤, 파손된 부분이 보이도록 사진을 촬영해주세요.</p>{chosen.map((item) => <div key={item.key} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}><label style={{ display: "flex", gap: 10, alignItems: "center" }}><input type="checkbox" checked={!!damaged[item.key]} onChange={(e) => { setDamaged((current) => ({ ...current, [item.key]: e.target.checked })); setError(""); }} /><ItemThumb item={item} C={C} size={54} /><span style={{ flex: 1, fontWeight: 800 }}>{item.itemName} × {selected[item.key]}</span><span style={{ color: damaged[item.key] ? "#dc2626" : C.dim, fontWeight: 800 }}>{damaged[item.key] ? "파손" : "정상"}</span></label>{damaged[item.key] ? <textarea placeholder="파손 상태와 확인이 필요한 내용을 적어주세요" value={damageReason[item.key] || ""} onChange={(e) => setDamageReason((current) => ({ ...current, [item.key]: e.target.value }))} style={{ ...input(C), width: "100%", minHeight: 72, marginTop: 9, resize: "vertical" }} /> : null}</div>)}{hasDamage && !demoMode ? <button onClick={() => { setDamageConfirm(false); setDamageCamera(true); }} style={{ ...ghost(C), width: "100%", justifyContent: "center", marginTop: 14 }}><Camera size={17} /> {damagePhoto ? "파손 사진 다시 촬영" : "파손 사진 촬영"}</button> : null}<button disabled={processing || (!hasDamage && returnConfirmCount > 0)} onClick={beginReturn} style={{ ...primary, width: "100%", justifyContent: "center", marginTop: 14, background: hasDamage ? "#dc2626" : "#25e0bd", color: hasDamage ? "#fff" : "#0d1c18", opacity: !hasDamage && returnConfirmCount > 0 ? .55 : 1, cursor: !hasDamage && returnConfirmCount > 0 ? "not-allowed" : "pointer" }}>{demoMode ? "테스트 반납 완료하기" : hasDamage ? "파손 포함 · 반납 사진 촬영" : returnConfirmCount > 0 ? `파손 없음 · ${returnConfirmCount}초 후 촬영 가능` : "파손 없음 · 반납 사진 촬영"}</button><button disabled={processing} onClick={() => setDamageStage("ask")} style={{ ...ghost(C), width: "100%", justifyContent: "center", marginTop: 8 }}>다시 묻기</button>{error ? <p style={errorStyle}>{error}</p> : null}
+      <ShieldAlert size={40} color="#f59e0b" /><h2 style={{ fontWeight: 900 }}>어느 물품이 파손됐나요?</h2><p style={{ color: C.dim }}>파손된 물품만 선택하고 사유를 작성한 뒤, 파손된 부분이 보이도록 사진을 촬영해주세요.</p>{chosen.map((item) => <div key={item.key} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}><label style={{ display: "flex", gap: 10, alignItems: "center" }}><input type="checkbox" checked={!!damaged[item.key]} onChange={(e) => { setDamaged((current) => ({ ...current, [item.key]: e.target.checked })); setError(""); }} /><ItemThumb item={item} C={C} size={54} /><span style={{ flex: 1, fontWeight: 800 }}>{item.itemName} × {selected[item.key]}{scenarioVariantText(item) ? <small style={{ display: "block", marginTop: 4, color: C.dim }}>종류: {scenarioVariantText(item)}</small> : null}</span><span style={{ color: damaged[item.key] ? "#dc2626" : C.dim, fontWeight: 800 }}>{damaged[item.key] ? "파손" : "정상"}</span></label>{damaged[item.key] ? <textarea placeholder="파손 상태와 확인이 필요한 내용을 적어주세요" value={damageReason[item.key] || ""} onChange={(e) => setDamageReason((current) => ({ ...current, [item.key]: e.target.value }))} style={{ ...input(C), width: "100%", minHeight: 72, marginTop: 9, resize: "vertical" }} /> : null}</div>)}{hasDamage && !demoMode ? <button onClick={() => { setDamageConfirm(false); setDamageCamera(true); }} style={{ ...ghost(C), width: "100%", justifyContent: "center", marginTop: 14 }}><Camera size={17} /> {damagePhoto ? "파손 사진 다시 촬영" : "파손 사진 촬영"}</button> : null}<button disabled={processing || (!hasDamage && returnConfirmCount > 0)} onClick={beginReturn} style={{ ...primary, width: "100%", justifyContent: "center", marginTop: 14, background: hasDamage ? "#dc2626" : "#25e0bd", color: hasDamage ? "#fff" : "#0d1c18", opacity: !hasDamage && returnConfirmCount > 0 ? .55 : 1, cursor: !hasDamage && returnConfirmCount > 0 ? "not-allowed" : "pointer" }}>{demoMode ? "테스트 반납 완료하기" : hasDamage ? "파손 포함 · 반납 사진 촬영" : returnConfirmCount > 0 ? `파손 없음 · ${returnConfirmCount}초 후 촬영 가능` : "파손 없음 · 반납 사진 촬영"}</button><button disabled={processing} onClick={() => setDamageStage("ask")} style={{ ...ghost(C), width: "100%", justifyContent: "center", marginTop: 8 }}>다시 묻기</button>{error ? <p style={errorStyle}>{error}</p> : null}
     </>}
   </div></div> : null}
   {idleLeft !== null ? <div role="alertdialog" aria-live="assertive" aria-label="자동 로그아웃 안내" style={{ ...overlay, zIndex: 8000 }}><div style={{ ...panel(C), width: "min(480px,100%)", textAlign: "center", padding: "34px 30px" }}>
@@ -511,7 +622,20 @@ export default function UnattendedReturnPage({ onAdminExit, isLightMode, showToa
     <p style={{ color: C.dim, fontSize: 17, margin: "0 0 22px", lineHeight: 1.6 }}>계속하려면 화면을 눌러주세요. 로그아웃되면 작성 중인 내용은 지워집니다.</p>
     <button className="wms-primary-action" onClick={() => setIdleLeft(null)} style={{ ...primary, width: "100%", justifyContent: "center", minHeight: 64, fontSize: 19 }}>계속하기</button>
   </div></div> : null}
-  {processing ? <div style={{ ...overlay, zIndex: 6000 }}><div style={{ ...panel(C), width: "min(440px,100%)", textAlign: "center", padding: 30 }}><div style={{ fontSize: 54 }}>⏳</div><h2>촬영한 사진을 저장하고 있습니다</h2><p style={{ color: C.dim }}>창을 닫지 말고 처리가 끝날 때까지 잠시 기다려주세요.</p></div></div> : null}
+  {loggedIn && pendingPhotos.length && !captureMode ? <div style={{...overlay,zIndex:6500}}><section role="dialog" aria-modal="true" aria-label="촬영 결과 확인" style={{...panel(C),width:'min(640px,100%)',maxHeight:'92vh',overflowY:'auto',padding:26,textAlign:'center'}}>
+    <h2>{processing?'사진 저장·처리 결과를 확인 중입니다':'아직 처리 완료가 확인되지 않았습니다'}</h2>
+    <p style={{color:C.dim,lineHeight:1.7}}>촬영만으로 완료되지 않습니다. <b>완료 화면이 나올 때까지</b> 확인해주세요. 같은 촬영 건으로 재시도해도 중복 처리되지 않습니다.</p>
+    <img src={pendingPhotos[0].body.photo} alt="재전송을 위해 보관한 촬영본" style={{width:'100%',maxHeight:220,objectFit:'contain',borderRadius:12}}/>
+    <p style={{fontWeight:800,lineHeight:1.6}}>{pendingPhotos[0].kind==='pickup'?'대여 확인':'반납'} · {pendingPhotos[0].labels.join(', ')}</p>
+    {photoStorageError?<p role="alert" style={errorStyle}>{photoStorageError}</p>:<p style={{color:C.dim,fontSize:14}}>촬영본을 이 PC에 임시 보관했습니다. 다시 로그인해도 본인 사번의 미완료 촬영을 확인할 수 있습니다.</p>}
+    {error&&<p role="alert" style={errorStyle}>{error}</p>}
+    <button disabled={processing} style={{...primary,width:'100%',justifyContent:'center',opacity:processing ? .6 : 1}} onClick={()=>void sendPendingPhoto(pendingPhotos[0])}>{processing?'처리 확인 중…':'같은 촬영본으로 다시 확인'}</button>
+    {!photoReviewClosed&&<button disabled={processing} style={{...ghost(C),width:'100%',justifyContent:'center',marginTop:10}} onClick={()=>setCaptureMode(pendingPhotos[0].kind)}>선택 물품은 유지하고 다시 촬영</button>}
+    {photoReviewClosed&&<button disabled={processing} style={{...ghost(C),width:'100%',justifyContent:'center',marginTop:10}} onClick={()=>void clearReviewedPhoto()}>관리자 검토 확인 · 촬영 보관 종료</button>}
+    <button disabled={processing || !!photoStorageError} style={{...ghost(C),width:'100%',justifyContent:'center',marginTop:10}} onClick={logout}>임시 보관 후 로그아웃</button>
+    <button disabled={processing} style={{...ghost(C),fontSize:13,marginTop:10}} onClick={()=>setAdminLoginOpen(true)}>관리자 로그인</button>
+    <p style={{color:C.dim,fontSize:13,lineHeight:1.6}}>계속 실패하면 관리자에게 문의해주세요. 서버에 검증된 사진이 도착한 기술 오류는 관리자 확인 대상으로 남습니다.</p>
+  </section></div> : processing ? <div style={{ ...overlay, zIndex: 6000 }}><div style={{ ...panel(C), width: "min(440px,100%)", textAlign: "center", padding: 30 }}><div style={{ fontSize: 54 }}>⏳</div><h2>촬영한 사진을 저장하고 있습니다</h2><p style={{ color: C.dim }}>창을 닫지 말고 처리가 끝날 때까지 잠시 기다려주세요.</p></div></div> : null}
   </main>;
 }
 

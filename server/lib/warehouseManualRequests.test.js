@@ -104,31 +104,35 @@ test("무인 직접 입력 공구 신청 및 반납", async t => {
   });
 });
 
-test("HTTP 경로는 관리자 연결을 보호하고 사번 및 무인 모드를 검증", async () => {
+test("HTTP 경로는 무인 PC에서 로그인한 본인만 쓰고, 관리자 연결을 보호하며 무인 모드를 검증", async () => {
   reset();
+  // 공구 대여·반납은 등록된 무인 PC에서 사번·SM 비밀번호로 로그인한 사람만 한다(휴대폰 등은 거절).
+  const { digest, issueKioskSession } = await import("./unattendedKiosk.js");
+  run("INSERT INTO settings(key,value) VALUES ('unattended_device_hash',?)", [digest("kiosk-device")]);
+  const kiosk = { "x-unattended-device": "kiosk-device", "x-unattended-session": issueKioskSession("1111") };
   const { default: express } = await import("express");
   const { warehouseRequestsRouter } = await import("../routes/warehouseRequests.js");
   const app = express(); app.use(express.json()); app.use("/api", warehouseRequestsRouter);
   const server = app.listen(0, "127.0.0.1");
   await new Promise(resolve => server.once("listening", resolve));
   const base = `http://127.0.0.1:${server.address().port}/api/warehouse-requests`;
+  const get_ = (path) => fetch(base + path, { headers: kiosk });
   try {
-    assert.equal((await fetch(base)).status, 401);
-    assert.equal((await fetch(`${base}/1/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId: 1 }) })).status, 401);
+    assert.equal((await fetch(base)).status, 403);
+    assert.equal((await fetch(`${base}/1/resolve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itemId: 1 }) })).status, 403);
     await recordWarehouseManualRequest(payload(), save);
-    const response = await fetch(`${base}/mine?employeeId=1111`); assert.equal(response.status, 200);
+    assert.equal((await fetch(`${base}/mine?employeeId=1111`)).status, 403);   // 로그인 없이(휴대폰 등)는 거절
+    const response = await get_("/mine?employeeId=1111"); assert.equal(response.status, 200);
     assert.equal((await response.json()).items[0].qty, 2);
-    assert.equal((await fetch(`${base}/mine?employeeId=9999`)).status, 400);
+    assert.equal((await get_("/mine")).status, 200);                           // 사번을 안 보내도 로그인한 본인으로
+    assert.equal((await get_("/mine?employeeId=2222")).status, 401);           // 다른 사번은 거절
     const before = stock();
-    const search = await fetch(`${base}/search?employeeId=1111&q=망치`);
-    assert.equal(search.status, 200); assert.equal((await search.json()).items[0].name, "Hammer"); assert.equal(stock(), before);
-    assert.equal((await fetch(`${base}/search?employeeId=9999&q=망치`)).status, 400);
-    assert.equal((await fetch(`${base}/search?employeeId=1111&q=`)).status, 400);
-    for (let n = 0; n < 4; n++) assert.equal((await fetch(`${base}/search?employeeId=1111&q=망치`)).status, 200);
-    assert.equal((await fetch(`${base}/search?employeeId=1111&q=망치`)).status, 429);
+    const suggest = await get_("/suggest?employeeId=1111&q=망치");
+    assert.equal(suggest.status, 200); assert.equal((await suggest.json()).items[0].name, "Hammer"); assert.equal(stock(), before);
+    assert.deepEqual((await (await get_("/suggest?employeeId=1111&q=")).json()).items, []);
+    assert.equal((await get_("/search?employeeId=1111&q=망치")).status, 404);
     run("UPDATE settings SET value='0' WHERE key='unattended_enabled'");
-    assert.equal((await fetch(`${base}/mine?employeeId=1111`)).status, 400);
-    assert.equal((await fetch(`${base}/search?employeeId=1111&q=망치`)).status, 400);
-    assert.equal((await fetch(`${base}/return`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status, 400);
+    assert.equal((await get_("/mine?employeeId=1111")).status, 403);
+    assert.equal((await fetch(`${base}/return`, { method: "POST", headers: { "Content-Type": "application/json", ...kiosk }, body: "{}" })).status, 403);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

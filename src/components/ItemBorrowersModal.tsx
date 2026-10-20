@@ -1,8 +1,10 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { Users, X, RotateCcw } from "lucide-react";
-import { CurrentItemBorrower, fetchItemBorrowers } from "../utils/borrowApi";
+import { CurrentItemBorrower, fetchItemBorrowers, fetchReservationBorrowers } from "../utils/borrowApi";
+import { scenarioVariantText } from "../utils/scenarioVariant";
 
 export interface BorrowersTarget {
+  reservationId?: number;
   id: string;
   name: string;
   category: "scenario" | "tablecloth";
@@ -23,12 +25,12 @@ export default function ItemBorrowersModal({ target, scriptUrl, C, onClose }: {
     setLoading(true);
     setError("");
     setBorrowers([]);
-    const request = scriptUrl ? fetchItemBorrowers(scriptUrl, target.id, target.category, target.variantId) : Promise.reject(new Error("서버 연결 후 대여 현황을 확인할 수 있습니다."));
+    const request = scriptUrl ? target.reservationId ? fetchReservationBorrowers(scriptUrl, target.reservationId) : fetchItemBorrowers(scriptUrl, target.id, target.category, target.variantId) : Promise.reject(new Error("서버 연결 후 대여 현황을 확인할 수 있습니다."));
     request.then((rows) => { if (!cancelled) setBorrowers(rows); })
       .catch((err) => { if (!cancelled) setError(err.message || "대여 현황을 불러오지 못했습니다."); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [scriptUrl, target.id, target.category, target.variantId, retry]);
+  }, [scriptUrl, target.id, target.category, target.variantId, target.reservationId, retry]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
@@ -66,7 +68,12 @@ export default function ItemBorrowersModal({ target, scriptUrl, C, onClose }: {
               {borrowers.map((borrower, index) => <div key={index} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", background: C.cardSub, borderRadius: "12px", border: `1px solid ${C.border}` }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: "14px", fontWeight: 800, overflowWrap: "anywhere" }}>{borrower.borrowerName}</div>
-                  <div style={{ color: C.label, fontSize: "11.5px", marginTop: "4px" }}>{[borrower.pickedUp ? "대여 중" : "대여 확인 대기", borrower.variantName].filter(Boolean).join(" · ")}</div>
+                  {scenarioVariantText(borrower) ? <div style={{ color: C.accentText, fontSize: "12px", fontWeight: 700, marginTop: "4px", overflowWrap: "anywhere" }}>종류: {scenarioVariantText(borrower)}</div> : null}
+                  <div style={{ color: C.label, fontSize: "11.5px", marginTop: "4px" }}>{borrower.pickedUp ? "대여 중" : "대여 확인 대기"}</div>
+                  {target.reservationId ? <>
+                    <div style={{ color: C.accentText, fontSize: 12, marginTop: 5 }}>좌석: {[borrower.floor, borrower.unit].filter(Boolean).join(" · ") || "좌석 정보 없음"}</div>
+                    <div style={{ color: C.label, fontSize: 11, marginTop: 4 }}>{borrower.reservationNoticeSeen ? "예약 안내 확인 후 대여 신청" : "이 예약 안내를 확인한 기록 없음"}</div>
+                  </> : null}
                 </div>
                 <span style={{ fontSize: "14px", fontWeight: 800, color: C.accentText, whiteSpace: "nowrap" }}>{borrower.quantity}개</span>
               </div>)}

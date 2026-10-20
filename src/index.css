@@ -1,5 +1,26 @@
 @import "tailwindcss";
 
+/* 모달이 document.body로 열려도 본문과 같은 한글·영문 글꼴을 사용한다. */
+:root {
+  --wms-font-family: "Inter", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+body {
+  font-family: var(--wms-font-family);
+}
+button, input, select, textarea {
+  font-family: inherit;
+}
+
+/* Tailwind의 SVG block 기본값과 관계없이 아이콘과 안내를 함께 가운데 둔다. */
+.wms-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.wms-empty-state > svg {
+  flex-shrink: 0;
+}
+
 /* ── 흐름 단계 슬라이딩 전환 (모든 화면에서 항상 로드) ── */
 @keyframes wmsSlideInRight {
   from { opacity: 0.15; transform: translateX(90px); }

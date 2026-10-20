@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Camera, MonitorCheck, PackageCheck, RefreshCw, X, User, MapPin, Clock, Search } from "lucide-react";
-import { fetchPickupPhotos, fetchReturnPhotos, fetchUnattendedReturnPhotos, ReturnPhotoEntry, ReturnPhotoBatchItem } from "../utils/borrowApi";
+import { Camera, MonitorCheck, PackageCheck, RefreshCw, X, User, MapPin, Clock, Search, Wrench, CheckCircle2, AlertTriangle } from "lucide-react";
+import { fetchPhotoReviewCounts, fetchPickupPhotos, fetchReturnPhotos, fetchToolRequestPhotos, fetchUnattendedReturnPhotos, PhotoReviewKind, ReturnPhotoEntry, setPhotoReview } from "../utils/borrowApi";
+import { scenarioVariantText } from "../utils/scenarioVariant";
 
 interface Props {
   scriptUrl: string;
@@ -68,9 +69,20 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
   const [loadingMore, setLoadingMore] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [detail, setDetail] = useState<ReturnPhotoEntry | null>(null);
-  const [photoKind, setPhotoKind] = useState<"return" | "unattendedReturn" | "pickup">("return");
-  const kindLabel = photoKind === "return" ? "일반 반납" : photoKind === "unattendedReturn" ? "무인 반납" : "대여 확인";
-  const photoFetcher = photoKind === "return" ? fetchReturnPhotos : photoKind === "unattendedReturn" ? fetchUnattendedReturnPhotos : fetchPickupPhotos;
+  const [photoKind, setPhotoKind] = useState<"return" | "unattendedReturn" | "pickup" | "tool">("return");
+  const kindLabel = photoKind === "return" ? "일반 반납" : photoKind === "unattendedReturn" ? "무인 반납" : photoKind === "tool" ? "무인 공구 대여" : "대여 확인";
+  const photoFetcher = photoKind === "return" ? fetchReturnPhotos : photoKind === "unattendedReturn" ? fetchUnattendedReturnPhotos : photoKind === "tool" ? fetchToolRequestPhotos : fetchPickupPhotos;
+  // 무인 모드 사진(대여자가 직접 찍은 것)만 관리자가 하나씩 확인 표시를 한다.
+  const reviewKind: PhotoReviewKind | null = photoKind === "unattendedReturn" ? "return" : photoKind === "pickup" ? "pickup" : photoKind === "tool" ? "tool" : null;
+  const [uncheckedOnly, setUncheckedOnly] = useState(false);
+  const [reviewCounts, setReviewCounts] = useState<Record<PhotoReviewKind, number> | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [issueNote, setIssueNote] = useState("");
+  const loadCounts = useCallback(() => {
+    if (!connected || !scriptUrl) return;
+    fetchPhotoReviewCounts(scriptUrl).then(setReviewCounts).catch(() => {});
+  }, [connected, scriptUrl]);
+  useEffect(() => { loadCounts(); }, [loadCounts]);
 
   // 물품명으로 검색 — 입력을 멈춘 뒤 잠깐 기다렸다가 조회한다(타이핑마다 매번 부르지 않는다).
   const [searchInput, setSearchInput] = useState("");
@@ -84,7 +96,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
     if (!connected || !scriptUrl) { setLoaded(true); return; }
     setLoading(true);
     try {
-      const res = await photoFetcher(scriptUrl, { limit: PAGE_SIZE, offset: 0, itemSearch: search || undefined });
+      const res = await photoFetcher(scriptUrl, { limit: PAGE_SIZE, offset: 0, itemSearch: search || undefined, uncheckedOnly: !!reviewKind && uncheckedOnly });
       setItems(res.items);
       setHasMore(res.hasMore);
       setLoaded(true);
@@ -94,7 +106,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
     } finally {
       setLoading(false);
     }
-  }, [connected, scriptUrl, showToast, search, photoKind, kindLabel, photoFetcher]);
+  }, [connected, scriptUrl, showToast, search, photoKind, kindLabel, photoFetcher, reviewKind, uncheckedOnly]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setItems([]); setLoaded(false); setDetail(null); }, [photoKind]);
@@ -102,7 +114,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
   async function loadMore() {
     setLoadingMore(true);
     try {
-      const res = await photoFetcher(scriptUrl, { limit: PAGE_SIZE, offset: items.length, itemSearch: search || undefined });
+      const res = await photoFetcher(scriptUrl, { limit: PAGE_SIZE, offset: items.length, itemSearch: search || undefined, uncheckedOnly: !!reviewKind && uncheckedOnly });
       setItems((prev) => [...prev, ...res.items]);
       setHasMore(res.hasMore);
     } catch (e: any) {
@@ -111,6 +123,36 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
       setLoadingMore(false);
     }
   }
+
+  async function markReview(entry: ReturnPhotoEntry, status: "ok" | "issue" | "", note = "", advance = status === "ok") {
+    if (!reviewKind || reviewBusy) return;
+    setReviewBusy(true);
+    try {
+      const review = await setPhotoReview(scriptUrl, reviewKind, entry.id, status, note);
+      const updated = { ...entry, review };
+      setItems((prev) => prev.map((it) => (it.id === entry.id ? updated : it)));
+      setIssueNote(review?.note || "");
+      loadCounts();
+      if (status && advance) {
+        const idx = items.findIndex((it) => it.id === entry.id);
+        const next = items.slice(idx + 1).find((it) => !it.review) || items.slice(0, Math.max(0, idx)).find((it) => !it.review);
+        setDetail(next || null);
+        setIssueNote(next?.review?.note || "");
+        if (!next) showToast("확인하지 않은 사진을 모두 확인했습니다.", "ok");
+        else showToast("사진 확인을 저장했습니다.", "ok");
+      } else {
+        setDetail(updated);
+        showToast(status ? "사진 확인 상태와 메모를 저장했습니다." : "확인 표시를 지웠습니다.", "ok");
+      }
+    } catch (e: any) {
+      showToast(e.message || "확인 표시를 저장하지 못했습니다.", "error");
+    } finally { setReviewBusy(false); }
+  }
+  const reviewBadge = (entry: ReturnPhotoEntry) => !reviewKind ? null : entry.review?.status === "ok"
+    ? { text: "확인함", color: "#059669" } : entry.review?.status === "issue"
+    ? { text: "문제 있음", color: "#dc2626" } : { text: "확인 전", color: "#d97706" };
+  const countBadge = (kind: PhotoReviewKind) => reviewCounts && reviewCounts[kind] > 0
+    ? <span style={{ marginLeft: 2, minWidth: 18, padding: "1px 6px", borderRadius: 999, background: "#dc2626", color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center" }}>{reviewCounts[kind]}</span> : null;
 
   // 반납 처리 시각(occurredAt)의 날짜 단위로 구역을 나눠 보여준다 — 서버가 최신순으로
   // 내려주므로 로드된 순서를 그대로 유지하면 자연히 날짜별로 묶인다.
@@ -131,7 +173,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
         <Camera size={19} color={ACCENT} />
         <h2 style={{ fontSize: 18, fontWeight: 800, color: TEXT_MAIN, margin: 0, flex: 1 }}>대여 · 반납 사진</h2>
         <button
-          onClick={load}
+          onClick={() => { load(); loadCounts(); }}
           disabled={loading}
           style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10,
@@ -144,22 +186,30 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
         <style>{`@keyframes rpSpin { to { transform: rotate(360deg); } } .rp-spin { animation: rpSpin 0.8s linear infinite; }`}</style>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         <button onClick={() => setPhotoKind("return")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${photoKind === "return" ? ACCENT : BORDER_COLOR}`, background: photoKind === "return" ? (isLightMode ? "#eff6ff" : "rgba(37,99,235,.16)") : "transparent", color: photoKind === "return" ? ACCENT : TEXT_DIM, fontWeight: 800, cursor: "pointer" }}><Camera size={15} /> 일반 반납 사진</button>
-        <button onClick={() => setPhotoKind("unattendedReturn")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1.5px solid ${photoKind === "unattendedReturn" ? "#f59e0b" : BORDER_COLOR}`, background: photoKind === "unattendedReturn" ? (isLightMode ? "#fffbeb" : "rgba(245,158,11,.16)") : "transparent", color: photoKind === "unattendedReturn" ? "#d97706" : TEXT_DIM, fontWeight: 900, cursor: "pointer" }}><MonitorCheck size={16} /> 무인 반납 사진</button>
-        <button onClick={() => setPhotoKind("pickup")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${photoKind === "pickup" ? ACCENT : BORDER_COLOR}`, background: photoKind === "pickup" ? (isLightMode ? "#eff6ff" : "rgba(37,99,235,.16)") : "transparent", color: photoKind === "pickup" ? ACCENT : TEXT_DIM, fontWeight: 800, cursor: "pointer" }}><PackageCheck size={15} /> 대여 확인 사진</button>
+        <button onClick={() => setPhotoKind("unattendedReturn")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1.5px solid ${photoKind === "unattendedReturn" ? "#f59e0b" : BORDER_COLOR}`, background: photoKind === "unattendedReturn" ? (isLightMode ? "#fffbeb" : "rgba(245,158,11,.16)") : "transparent", color: photoKind === "unattendedReturn" ? "#d97706" : TEXT_DIM, fontWeight: 900, cursor: "pointer" }}><MonitorCheck size={16} /> 무인 반납 사진{countBadge("return")}</button>
+        <button onClick={() => setPhotoKind("pickup")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${photoKind === "pickup" ? ACCENT : BORDER_COLOR}`, background: photoKind === "pickup" ? (isLightMode ? "#eff6ff" : "rgba(37,99,235,.16)") : "transparent", color: photoKind === "pickup" ? ACCENT : TEXT_DIM, fontWeight: 800, cursor: "pointer" }}><PackageCheck size={15} /> 대여 확인 사진{countBadge("pickup")}</button>
+        <button onClick={() => setPhotoKind("tool")} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, border: `1px solid ${photoKind === "tool" ? ACCENT : BORDER_COLOR}`, background: photoKind === "tool" ? (isLightMode ? "#eff6ff" : "rgba(37,99,235,.16)") : "transparent", color: photoKind === "tool" ? ACCENT : TEXT_DIM, fontWeight: 800, cursor: "pointer" }}><Wrench size={15} /> 무인 공구 대여 사진{countBadge("tool")}</button>
       </div>
 
       <div style={{ fontSize: 12, color: TEXT_DIM, marginBottom: 14 }}>
-        {photoKind === "return" ? "관리자가 반납 처리하며 촬영한 증빙 사진입니다." : photoKind === "unattendedReturn" ? "무인 모드에서 반납자가 직접 촬영한 반납 증빙 사진입니다." : "무인 대여 확인 시 수령자가 직접 촬영한 증빙 사진입니다."} 날짜별로 나눠 보여주며, 촬영 후 7일이 지나면 자동으로 삭제됩니다.
+        {photoKind === "return" ? "관리자가 반납 처리하며 촬영한 증빙 사진입니다." : photoKind === "unattendedReturn" ? "무인 모드에서 반납자가 직접 촬영한 반납 증빙 사진입니다(공구 반납 포함)." : photoKind === "tool" ? "무인 PC에서 공구를 빌리며 대여자가 직접 촬영한 사진입니다." : "무인 대여 확인 시 수령자가 직접 촬영한 증빙 사진입니다."} 날짜별로 나눠 보여주며, 촬영 후 7일이 지나면 자동으로 삭제됩니다.
+        {reviewKind ? " 사진을 눌러 실물과 맞는지 보고 확인함 또는 문제 있음을 표시하세요." : ""}
       </div>
+      {reviewKind ? (
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12, fontSize: 12.5, fontWeight: 700, color: TEXT_MAIN, cursor: "pointer" }}>
+          <input type="checkbox" checked={uncheckedOnly} onChange={(e) => setUncheckedOnly(e.target.checked)} />
+          확인 안 한 사진만 보기{reviewCounts ? ` (${reviewCounts[reviewKind]}장)` : ""}
+        </label>
+      ) : null}
 
       <div style={{ position: "relative", marginBottom: 16 }}>
         <Search size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: TEXT_DIM }} />
         <input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder={`${kindLabel} 물품명으로 사진 검색`}
+          placeholder={`${kindLabel} 물품명 · 종류로 사진 검색`}
           style={{
             width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 36px", borderRadius: 10,
             border: `1px solid ${BORDER_COLOR}`, background: INPUT_BG, color: TEXT_MAIN, fontSize: 13, outline: "none",
@@ -182,7 +232,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
         </div>
       ) : items.length === 0 ? (
         <div style={{ textAlign: "center", padding: "60px 0", color: TEXT_DIM, fontSize: 13 }}>
-          {search ? `"${search}"이(가) 찍힌 ${kindLabel} 사진이 없습니다.` : `아직 촬영된 ${kindLabel} 사진이 없습니다.`}
+          {search ? `"${search}"이(가) 찍힌 ${kindLabel} 사진이 없습니다.` : reviewKind && uncheckedOnly ? `확인하지 않은 ${kindLabel} 사진이 없습니다.` : `아직 촬영된 ${kindLabel} 사진이 없습니다.`}
         </div>
       ) : (
         <>
@@ -195,15 +245,17 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
                 {g.list.map((it) => {
                   const headline = cardHeadline(it);
+                  const badge = reviewBadge(it);
                   return (
                     <div
                       key={it.id}
-                      onClick={() => setDetail(it)}
+                      onClick={() => { if (reviewBusy) return; setIssueNote(it.review?.note || ""); setDetail(it); }}
                       style={{
-                        borderRadius: 12, border: `1px solid ${BORDER_COLOR}`, background: PANEL_BG,
+                        position: "relative", borderRadius: 12, border: `1px solid ${badge && !it.review ? "#d9770666" : BORDER_COLOR}`, background: PANEL_BG,
                         overflow: "hidden", cursor: "pointer",
                       }}
                     >
+                      {badge ? <span style={{ position: "absolute", top: 7, left: 7, padding: "2px 8px", borderRadius: 999, background: badge.color, color: "#fff", fontSize: 10.5, fontWeight: 800 }}>{badge.text}</span> : null}
                       <img
                         src={it.thumb}
                         alt={headline.bottom || `${kindLabel} 사진`}
@@ -242,7 +294,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
 
       {detail ? (
         <div
-          onClick={() => setDetail(null)}
+          onClick={() => { if (!reviewBusy) setDetail(null); }}
           style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
         >
           <div
@@ -257,7 +309,11 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
                 <div style={{ fontSize: 14, fontWeight: 800, color: TEXT_MAIN }}>{detail.occurredAt}</div>
                 {detail.summary ? <div style={{ fontSize: 12, color: TEXT_DIM, marginTop: 2 }}>{detail.summary}</div> : null}
               </div>
-              <button onClick={() => setDetail(null)} style={{ background: CARD_SUB, border: "none", borderRadius: 8, color: TEXT_DIM, cursor: "pointer", padding: 7 }}>
+              {reviewKind ? (() => {
+                const badge = reviewBadge(detail)!;
+                return <span style={{ padding: "3px 10px", borderRadius: 999, background: `${badge.color}1a`, color: badge.color, fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>{badge.text}</span>;
+              })() : null}
+              <button disabled={reviewBusy} onClick={() => setDetail(null)} style={{ background: CARD_SUB, border: "none", borderRadius: 8, color: TEXT_DIM, cursor: "pointer", padding: 7 }}>
                 <X size={17} />
               </button>
             </div>
@@ -272,6 +328,26 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
               </div>
 
               <div style={{ flex: "1 1 280px", minWidth: 260 }}>
+                {reviewKind ? (
+                  <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, border: `1px solid ${BORDER_COLOR}`, background: CARD_SUB }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: TEXT_DIM, marginBottom: 8 }}>사진 확인</div>
+                    {detail.review ? (
+                      <div style={{ fontSize: 12, color: TEXT_MAIN, marginBottom: 8, lineHeight: 1.6 }}>
+                        <b style={{ color: detail.review.status === "ok" ? "#059669" : "#dc2626" }}>{detail.review.status === "ok" ? "확인함" : "문제 있음"}</b>
+                        {detail.review.reviewer ? ` · ${detail.review.reviewer}` : ""}{detail.review.reviewedAt ? ` · ${toMinutePrecision(detail.review.reviewedAt)}` : ""}
+                        {detail.review.note ? <div style={{ color: TEXT_DIM }}>메모: {detail.review.note}</div> : null}
+                      </div>
+                    ) : null}
+                    <textarea disabled={reviewBusy} aria-label="사진 확인 메모" value={issueNote} onChange={(e) => setIssueNote(e.target.value)} rows={2} maxLength={500} placeholder="사유를 적은 뒤 아래 저장 버튼을 눌러주세요 (선택)"
+                      style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", borderRadius: 8, border: `1px solid ${BORDER_COLOR}`, background: INPUT_BG, color: TEXT_MAIN, fontSize: 12.5, resize: "vertical", fontFamily: "inherit", marginBottom: 8 }} />
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button disabled={reviewBusy} onClick={() => markReview(detail, "ok", issueNote)} style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "9px 12px", borderRadius: 9, border: 0, background: "#059669", color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", opacity: reviewBusy ? 0.6 : 1 }}><CheckCircle2 size={14} /> 확인함</button>
+                      <button disabled={reviewBusy} onClick={() => markReview(detail, "issue", issueNote)} style={{ flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "9px 12px", borderRadius: 9, border: 0, background: "#dc2626", color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", opacity: reviewBusy ? 0.6 : 1 }}><AlertTriangle size={14} /> 문제 있음 · 저장</button>
+                      {detail.review ? <button disabled={reviewBusy} onClick={() => markReview(detail, detail.review!.status, issueNote, false)} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${BORDER_COLOR}`, background: INPUT_BG, color: ACCENT, fontWeight: 800, fontSize: 12, cursor: "pointer" }}>{reviewBusy ? "저장 중…" : "메모 저장"}</button> : null}
+                      {detail.review ? <button disabled={reviewBusy} onClick={() => markReview(detail, "")} style={{ padding: "9px 12px", borderRadius: 9, border: `1px solid ${BORDER_COLOR}`, background: "transparent", color: TEXT_DIM, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>표시 지우기</button> : null}
+                    </div>
+                  </div>
+                ) : null}
                 <div style={{ fontSize: 12, fontWeight: 800, color: TEXT_DIM, marginBottom: 8 }}>
                   처리된 물품 {detail.items.length > 0 ? `(${detail.items.length}종)` : ""}
                 </div>
@@ -300,6 +376,7 @@ export default function ReturnPhotosPage({ scriptUrl, connected, isLightMode, sh
                           </span>
                           <span style={{ fontSize: 12, fontWeight: 800, color: TEXT_MAIN, flexShrink: 0 }}>{line.qty}개</span>
                         </div>
+                        {scenarioVariantText(line) ? <div style={{ marginTop: 5, fontSize: 12, fontWeight: 700, color: ACCENT, overflowWrap: "anywhere" }}>종류: {scenarioVariantText(line)}</div> : null}
                         <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, fontSize: 11, color: TEXT_DIM, flexWrap: "wrap" }}>
                           <span style={{ display: "flex", alignItems: "center", gap: 3 }}><User size={11} /> {line.borrower || "대여자 미상"}</span>
                           {line.location ? <span style={{ display: "flex", alignItems: "center", gap: 3 }}><MapPin size={11} /> {line.location}</span> : null}

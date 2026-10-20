@@ -102,6 +102,7 @@ export default function NotificationBell({ isLightMode, onOpenSignups, onOpenCha
       <button
         onClick={() => setOpen((v) => !v)}
         title={total ? `알림 ${total}건` : "알림"}
+        aria-label={total ? `알림 ${total}건` : "알림"}
         style={{
           position: "relative", width: 34, height: 34, borderRadius: 6,
           border: `1px solid ${total ? "rgba(239,68,68,0.45)" : "var(--panel-border, #334155)"}`,

@@ -328,7 +328,9 @@ export default function DefectLogsPage({
         display: "flex",
         flexDirection: "column",
         flex: 1,
-        height: "calc(100vh - 64px)",
+        height: "100%",
+        minHeight: 0,
+        minWidth: 0,
         background: "var(--app-bg, #0f172a)",
         color: TEXT_MAIN,
         padding: "24px",
@@ -393,7 +395,7 @@ export default function DefectLogsPage({
           </button>
           <div className="dlp-sep" style={{ height: 24, width: 1, background: PANEL_BORDER }} />
           <div>
-            <h1 style={{ fontSize: "20px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+            <h1 style={{ fontSize: "18px", fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
               ⚠️ 실시간 불량로그 관리
             </h1>
             <p style={{ fontSize: "12px", color: TEXT_DIM, margin: "4px 0 0 0" }}>
@@ -405,7 +407,7 @@ export default function DefectLogsPage({
             style={{
               marginLeft: "auto", display: "flex", alignItems: "center", gap: "6px",
               padding: "9px 16px", borderRadius: "8px", cursor: "pointer",
-              border: `1px solid ${ACCENT}`, background: `${ACCENT}18`, color: "#a5b4fc",
+              border: `1px solid ${ACCENT}`, background: `${ACCENT}18`, color: isLightMode ? "#1d4ed8" : "#93c5fd",
               fontSize: "13px", fontWeight: 700,
             }}
           >
@@ -552,7 +554,7 @@ export default function DefectLogsPage({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "380px 1fr",
+          gridTemplateColumns: "minmax(280px, 380px) minmax(0, 1fr)",
           gap: "24px",
           alignItems: "flex-start",
         }}
@@ -783,6 +785,7 @@ export default function DefectLogsPage({
                   <option value="파손">💥 파손 (Damaged)</option>
                   <option value="오염">⚠️ 오염 (Contaminated)</option>
                   <option value="기능 오작동">⚙️ 기능 오작동 (Malfunctioning)</option>
+                  <option value="분실">🔍 분실 (Lost)</option>
                   <option value="기타">❓ 기타 (Others)</option>
                 </select>
               </div>
@@ -1078,7 +1081,7 @@ export default function DefectLogsPage({
             </h2>
 
             {/* Search/Filter Controls */}
-            <div className="dlp-list-filters" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div className="dlp-list-filters" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" }}>
               {/* Type selector */}
               <select
                 value={filterType}
@@ -1096,6 +1099,7 @@ export default function DefectLogsPage({
                 <option value="파손">파손</option>
                 <option value="오염">오염</option>
                 <option value="기능 오작동">기능 오작동</option>
+                <option value="분실">분실</option>
                 <option value="기타">기타</option>
               </select>
 

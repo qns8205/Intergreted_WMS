@@ -6,14 +6,19 @@ import { autoLayoutRacks, snap, formatTimestampLocal, parseLocation, hexToRgba, 
 // Subcomponents
 import AdminConnectionSettings from "./components/AdminConnectionSettings";
 import NotificationBell from "./components/NotificationBell";
+import AdminObjectReports from './components/ObjectReports';
 import DbViewerPage from "./components/DbViewerPage";
 import ScenarioChangesPage from "./components/ScenarioChangesPage";
 import WarehouseChangesPage from "./components/WarehouseChangesPage";
 import ReturnPhotosPage from "./components/ReturnPhotosPage";
 import ItemFormModal from "./components/ItemFormModal";
-import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap, withGasConcurrencyLimit, clearIdentity } from "./utils/borrowApi";
+import { fetchBorrowAppVersion, VERSION_OUTDATED_EVENT, publishAppVersion, fetchNotices, fetchNoticesForEditor, saveNotices, NoticeData, NOTICE_MAX, fetchBorrowLock, setBorrowLock, BorrowLock, UnitLock, unitLockKey, fetchSeatMap, withGasConcurrencyLimit, clearIdentity } from "./utils/borrowApi";
 import StockAdjustModal from "./components/StockAdjustModal";
 import AdminReturnPage from "./components/AdminReturnPage";
+import AdminReservationsPage from "./components/AdminReservationsPage";
+import TransferPage from "./components/TransferPage";
+import TransferNotificationsPage from "./components/TransferNotificationsPage";
+import { useTransferNotificationCount } from "./utils/transferNotifications";
 import AdminDirectBorrowModal from "./components/AdminDirectBorrowModal";
 import SeatMapAdminPage from "./components/SeatMapAdminPage";
 import SidePanel from "./components/SidePanel";
@@ -29,13 +34,18 @@ import RentalPage from "./components/RentalPage";
 import BorrowSystemPage from "./components/BorrowSystemPage";
 import BrowsePage from "./components/BrowsePage";
 import BorrowerLoginPage, { BorrowerSession } from "./components/BorrowerLoginPage";
+import { NOTICE_POPUP_SHOWN_KEY } from "./components/NoticePopup";
+import NoticeEditor from "./components/NoticeEditor";
 import UnattendedModeSettings from "./components/UnattendedModeSettings";
 import UnattendedReturnPage from "./components/UnattendedReturnPage";
 import { getVersionWorkItems, VERSION_WORK_CHANGED_EVENT, VersionWorkItem } from "./utils/versionWorkGuard";
 import { adminHeaders, getAdminToken, logoutAdmin } from "./utils/adminAuth";
+import { borrowerAuthSession, logoutBorrower } from "./utils/borrowerAuth";
+import { rentalBadge, useAdminRentalNotifications } from "./utils/adminRentalNotifications";
 
 // Icons
 import {
+  ArrowRightLeft,
   RotateCcw,
   Search,
   Plus,
@@ -63,7 +73,7 @@ import {
   Rocket,
   Database,
   History,
-  Camera, Layers, Menu, HandHelping, Users,} from "lucide-react";
+  Camera, Layers, Menu, HandHelping, Users, CalendarClock,} from "lucide-react";
 
 
 const DEMO_DEFECT_LOGS: DefectLog[] = [
@@ -131,7 +141,7 @@ const DEMO_ROBOT_OBJECTS = [
 // 입력·업로드·처리 작업이 있는 관리자 화면은 메뉴 이동 때 언마운트하지 않는다.
 // 한 번 연 화면을 DOM에 유지하고 표시만 바꾸면, 진행 중인 네트워크 요청과 화면 상태가
 // 그대로 살아 있어 다른 서브메뉴를 잠깐 확인하고 돌아와도 작업을 이어갈 수 있다.
-const PERSISTENT_ADMIN_VIEWS = ["scenario", "tablecloth", "adminReturn", "adminBorrow"] as const;
+const PERSISTENT_ADMIN_VIEWS = ["scenario", "tablecloth", "adminReturn", "adminBorrow", "adminReservations"] as const;
 type PersistentAdminView = typeof PERSISTENT_ADMIN_VIEWS[number];
 function isPersistentAdminView(view: string): view is PersistentAdminView {
   return (PERSISTENT_ADMIN_VIEWS as readonly string[]).includes(view);
@@ -179,8 +189,8 @@ function safeSetLocalStorage(key: string, value: string) {
 export default function App() {
   // 1. 상태 선언
   // 열람 화면에 어느 단계로 들어갈지 (SID 열람 등)
-  const [browseInitialStep, setBrowseInitialStep] = useState<"sid" | "sidBorrow" | null>(null);
-  const [currentView, setCurrentView] = useState<"gate" | "borrowerLogin" | "seatChange" | "landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "monitor" | "defect" | "rent" | "scenario" | "seatmap" | "adminReturn" | "adminBorrow" | "connectionSettings" | "rentalSettings" | "dbViewer" | "scenarioChanges" | "toolChanges" | "returnPhotos" | "tablecloth" | "unattended">("landing");
+  const [browseInitialStep, setBrowseInitialStep] = useState<"sid" | "sidBorrow" | "reservation" | null>(null);
+  const [currentView, setCurrentView] = useState<"gate" | "borrowerLogin" | "seatChange" | "landing" | "login" | "rental" | "borrow" | "return" | "browse" | "mylookup" | "transfer" | "monitor" | "defect" | "objectReports" | "rent" | "scenario" | "seatmap" | "adminReturn" | "adminBorrow" | "adminReservations" | "transferNotifications" | "connectionSettings" | "rentalSettings" | "dbViewer" | "scenarioChanges" | "toolChanges" | "returnPhotos" | "tablecloth" | "unattended">("landing");
   // 무인 화면에서는 브라우저 뒤로가기도 일반 모드 이탈 수단이 되면 안 된다.
   // 하단 관리자 로그인이 성공한 순간에만 이 잠금을 해제한다.
   const unattendedLockedRef = useRef(typeof window !== "undefined" && window.location.hash.split("/")[1] === "unattended");
@@ -214,9 +224,11 @@ export default function App() {
   async function openNoticeModal() {
     setNoticeModalOpen(true);
     try {
-      const list = await fetchNotices(scriptUrl);
-      setNoticeDrafts(list.length ? list : [{ title: "", text: "" }]);
+      const list = await fetchNoticesForEditor(scriptUrl);
+      setNoticeOriginal(list);
+      setNoticeDrafts(list.length ? list.map((n, i) => ({ title: n.title, text: n.text, _origin: i })) : [{ title: "", text: "" }]);
     } catch (e) {
+      setNoticeOriginal([]);
       setNoticeDrafts([{ title: "", text: "" }]);
     }
   }
@@ -248,6 +260,7 @@ export default function App() {
   // SID 대여로 담았다면 그 번호. 대여 화면이 방식과 SID를 다시 묻지 않는다.
   const [borrowSid, setBorrowSid] = useState("");
   const [borrowAdditionalItems, setBorrowAdditionalItems] = useState<any[]>([]);
+  const [borrowReservationItems, setBorrowReservationItems] = useState<any[] | null>(null);
   // 해시 라우터는 한 번만 등록되므로, 그 안에서 최신의 대여 임시 상태를 읽기 위한 ref다.
   // 이 상태가 없는 #/borrow/* 주소는 예전 단계 URL이므로 절대 열어서는 안 된다.
   const borrowFlowRef = useRef({ identity: borrowIdentity, kind: borrowKind });
@@ -262,6 +275,7 @@ export default function App() {
    * 아무 동작 없이 4시간이 지나면 자동으로 풀린다. */
   const BORROWER_KEY = "wms_borrower_session";
   const IDLE_LIMIT_MS = 4 * 60 * 60 * 1000;
+  const [borrowerAuthReady, setBorrowerAuthReady] = useState(false);
   const [borrower, setBorrower] = useState<BorrowerSession | null>(() => {
     try {
       const raw = sessionStorage.getItem(BORROWER_KEY);
@@ -277,9 +291,28 @@ export default function App() {
   const touchBorrower = useCallback((session: BorrowerSession | null) => {
     try {
       if (session) sessionStorage.setItem(BORROWER_KEY, JSON.stringify({ session, at: Date.now() }));
-      else sessionStorage.removeItem(BORROWER_KEY);
+      else {
+        sessionStorage.removeItem(BORROWER_KEY);
+        // 로그아웃·자동 로그아웃 어느 경로든 여기를 지난다. 다음 로그인에서 공지 팝업이 다시 뜨도록 확인 기록을 지운다.
+        sessionStorage.removeItem(NOTICE_POPUP_SHOWN_KEY);
+      }
     } catch { /* 저장 실패는 무시 — 그 창에서만 로그인 상태가 유지되지 않는다 */ }
   }, []);
+  useEffect(() => {
+    let cancelled = false;
+    borrowerAuthSession().then((auth) => {
+      if (cancelled || !auth.required) return;
+      setBorrower((current) => {
+        if (!current || !auth.user || current.employeeId !== auth.user.employeeId) {
+          touchBorrower(null);
+          return null;
+        }
+        return { ...current, ...auth.user, smAuthenticated: true };
+      });
+    }).catch(() => { if (!cancelled) { setBorrower(null); touchBorrower(null); } })
+      .finally(() => { if (!cancelled) setBorrowerAuthReady(true); });
+    return () => { cancelled = true; };
+  }, [touchBorrower]);
 
   const [users, setUsers] = useState<WmsUser[]>(() => {
     try {
@@ -437,18 +470,27 @@ export default function App() {
         setCurrentView("browse");
       } else if (path === "mylookup") {
         setCurrentView("mylookup");
+      } else if (path === "transfer") {
+        setCurrentView("transfer");
       } else if (path === "monitor") {
         setCurrentView("monitor");
       } else if (path === "rent") {
         setCurrentView("rent");
       } else if (path === "defect") {
         setCurrentView("defect");
+      } else if (path === "objectReports") {
+        setCurrentView("objectReports");
       } else if (path === "register") {
         setCurrentView("monitor");
       } else if (path === "adminReturn") {
         setCurrentView("adminReturn");
       } else if (path === "adminBorrow") {
         setCurrentView("adminBorrow");
+      } else if (path === "transferNotifications") {
+        setCurrentView("transferNotifications");
+        setAdminSection("rental");
+      } else if (path === "adminReservations") {
+        setCurrentView("adminReservations");
       } else if (path === "scenario" || path === "scenariotab") {
         setCurrentView("scenario");
       } else if (path === "seatmap") {
@@ -478,10 +520,12 @@ export default function App() {
       // 이 로직을 타면 원래 보여야 할 "물품 관리 / 대여 & 반납 관리" 선택 화면이 사라진다.
       const isDirectSectionLink = hash.split("/")[2] === "direct";
       if (isDirectSectionLink) {
-        if (path === "monitor" || path === "toolChanges" || path === "scenario" || path === "defect" || path === "returnPhotos" || path === "tablecloth") {
+        if (path === "monitor" || path === "toolChanges" || path === "scenario" || path === "defect" || path === "objectReports" || path === "returnPhotos" || path === "tablecloth") {
           setAdminSection("items");
-        } else if (path === "adminReturn" || path === "adminBorrow" || path === "rent" || path === "seatmap") {
+        } else if (path === "adminReturn" || path === "adminBorrow" || path === "adminReservations" || path === "rent" || path === "seatmap") {
           setAdminSection("rental");
+        } else if (["connectionSettings", "rentalSettings", "dbViewer", "scenarioChanges"].includes(path)) {
+          setAdminSection("settings");
         }
       }
     };
@@ -517,6 +561,9 @@ export default function App() {
   // 로컬 GAS 호환 디스패처(server/routes/gas.js)를 가리키는 고정 경로다.
   const [scriptUrl, setScriptUrl] = useState("/api/gas");
   const [connected, setConnected] = useState(true);
+  const adminRentalCounts = useAdminRentalNotifications(isAdmin && connected && !!scriptUrl, scriptUrl, currentView);
+  const pendingTransfers = useTransferNotificationCount(isAdmin);
+  const pendingObjectReports = adminRentalCounts.objectReports || 0;
 
   // 대여 잠금 (관리자 전용) — 반납은 계속 가능
   const [borrowLock, setBorrowLockState] = useState<BorrowLock>({ locked: false });
@@ -612,6 +659,8 @@ export default function App() {
   // 랜딩 공지 작성 (관리자 전용)
   const [noticeModalOpen, setNoticeModalOpen] = useState(false);
   const [noticeDrafts, setNoticeDrafts] = useState<NoticeData[]>([]);
+  // 서버에 저장돼 있는 공지(팝업 노출 상태 포함). 편집기가 각 공지의 상태와 수정 여부를 판단하는 기준이다.
+  const [noticeOriginal, setNoticeOriginal] = useState<NoticeData[]>([]);
   const [noticeSaving, setNoticeSaving] = useState(false);
 
   // 구버전 감지: 처음 접속했을 때의 서버 버전을 기억해두고, 2분마다 서버의 현재 버전과 비교한다.
@@ -831,6 +880,7 @@ export default function App() {
         if (!raw || Date.now() - at > IDLE_LIMIT_MS) {
           setBorrower(null);
           touchBorrower(null);
+            void logoutBorrower();
           clearIdentity();
           showToast("4시간 동안 사용이 없어 자동으로 로그아웃되었습니다.", "info");
         }
@@ -2001,7 +2051,7 @@ export default function App() {
     return <UnattendedReturnPage isLightMode={isLightMode} showToast={showToast} onAdminExit={(user) => { unattendedLockedRef.current = false; setCurrentUser(user); safeSetLocalStorage("wms_current_user", JSON.stringify(user)); setIsAdmin(true); safeSetLocalStorage("wms_is_admin", "true"); setAdminSection(null); window.location.hash = "#/landing"; setCurrentView("landing"); refreshUnattendedStatus(); showToast(`${user.name || user.id} 관리자님, 무인 모드를 끄고 일반 모드로 전환했습니다.`, "ok"); }} />;
   }
 
-  if (!isAdmin && !borrower && currentView !== "login" && currentView !== "borrowerLogin") {
+  if (!isAdmin && (!borrower || !borrowerAuthReady) && currentView !== "login" && currentView !== "borrowerLogin") {
     const card = (title: string, desc: string, onClick: () => void, accent: string) => (
       <div
         onClick={onClick}
@@ -2037,7 +2087,7 @@ export default function App() {
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, width: "100%", maxWidth: 640 }}>
           {unattendedReady ? card("무인 대여 · 반납", "등록된 관리자 PC에서 사번으로 대여·반납을 일괄 처리합니다.", () => { unattendedLockedRef.current = true; window.location.hash = "#/unattended"; setCurrentView("unattended"); }, "#f59e0b") : null}
-          {card("대여자 로그인", "이름·사번·좌석을 입력합니다. 대여·반납과 조회에 쓰입니다.", () => setCurrentView("borrowerLogin"), "#2563eb")}
+          {card("대여자 로그인", "사번·비밀번호와 본인 좌석을 함께 입력합니다.", () => setCurrentView("borrowerLogin"), "#2563eb")}
           {card("관리자 로그인", "관리자 ID와 비밀번호로 들어갑니다. 재고·로그·설정을 다룹니다.", () => {
             setLoginId(""); setLoginPassword(""); setLoginError(""); setCurrentView("login");
           }, "#10b981")}
@@ -2082,6 +2132,7 @@ export default function App() {
         borrower={borrower}
         onChangeSeat={() => setCurrentView("seatChange")}
         onLogout={() => {
+          void logoutBorrower();
           setBorrower(null);
           touchBorrower(null);
           // 이 브라우저에 남은 이름·사번·좌석과 장바구니까지 지운다 — 공용 PC에서
@@ -2100,6 +2151,13 @@ export default function App() {
             setBrowseInitialStep(null);
             window.location.hash = "#/browse";
             setCurrentView("browse");
+          } else if (view === "reservation") {
+            setBrowseInitialStep("reservation");
+            window.location.hash = "#/browse/reservation";
+            setCurrentView("browse");
+          } else if (view === "transfer") {
+            window.location.hash = "#/transfer";
+            setCurrentView("transfer");
           } else if (view === "mylookup") {
             // 이전에 SID 열람을 봤다면 주소가 #/browse/sid 로 남아 있으므로 먼저 정리한다
             setBrowseInitialStep(null);
@@ -2213,10 +2271,24 @@ export default function App() {
         initialIdentity={borrowIdentity}
         initialKind={borrowKind}
         initialSeat={borrowSeat}
+        initialItems={borrowReservationItems}
         initialSid={borrowSid}
         initialAdditionalItems={borrowAdditionalItems}
         onGoPickItems={(target) => { setBorrowKind(null); setBrowseInitialStep(target === "sid" ? "sidBorrow" : null); window.location.hash = target === "sid" ? "#/browse/sid" : "#/browse"; setCurrentView("browse"); }}
         onInventoryChanged={handleRefresh}
+      />
+    );
+  }
+
+  if (currentView === "transfer" && borrower) {
+    return (
+      <TransferPage
+        scriptUrl={scriptUrl}
+        connected={connected}
+        isLightMode={isLightMode}
+        session={borrower}
+        onBack={() => { window.location.hash = "#/landing"; setCurrentView("landing"); }}
+        onOpenMyLookup={() => { setBrowseInitialStep(null); window.location.hash = "#/mylookup"; setCurrentView("mylookup"); }}
       />
     );
   }
@@ -2248,7 +2320,8 @@ export default function App() {
           setBorrowKind("tablecloth");
           setCurrentView("return");
         }}
-        onGoBorrow={({ identity, kind, seat, sid, additionalItems }) => {
+        onGoBorrow={({ identity, kind, seat, sid, additionalItems, items }) => {
+          setBorrowReservationItems(items?.some((item) => item.reservationId) ? items : null);
           setBorrowIdentity(identity);
           setBorrowKind(kind);
           setBorrowSeat(seat || null);
@@ -2277,7 +2350,7 @@ export default function App() {
         style={{
           width: "100%", minHeight: "100vh",
           background: hubBg, color: hubText,
-          fontFamily: "'Inter', sans-serif",
+          fontFamily: "var(--wms-font-family)",
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           padding: "24px", gap: "26px",
         }}
@@ -2525,87 +2598,16 @@ export default function App() {
       onClick={() => !noticeSaving && setNoticeModalOpen(false)}
       style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(520px, 100%)", background: isLightMode ? "#ffffff" : "#151d30",
-          border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, borderRadius: "16px", padding: "22px",
-          color: isLightMode ? "#111827" : "#f1f5f9",
-        }}
-      >
-        <div style={{ fontSize: "15px", fontWeight: 800, marginBottom: "6px" }}>📢 공지 작성</div>
-        <div style={{ fontSize: "12px", color: isLightMode ? "#64748b" : "#94a3b8", marginBottom: "14px", lineHeight: 1.6 }}>
-          첫 화면(랜딩)에 <b>제목만</b> 표시되고, 제목을 누르면 전체 내용이 뜹니다. 최대 {NOTICE_MAX}건까지 등록할 수 있습니다.
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-          {noticeDrafts.map((n, idx) => (
-            <div key={idx} style={{ border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, borderRadius: "12px", padding: "12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                <span style={{ fontSize: "11.5px", fontWeight: 800, color: isLightMode ? "#1d4ed8" : "#93c5fd" }}>공지 {idx + 1}</span>
-                <button
-                  onClick={() => setNoticeDrafts((prev) => prev.filter((_, i) => i !== idx))}
-                  style={{ marginLeft: "auto", background: "transparent", border: "none", cursor: "pointer", fontSize: "11.5px", fontWeight: 700, color: "#dc2626" }}
-                >
-                  삭제
-                </button>
-              </div>
-              <input
-                value={n.title || ""}
-                onChange={(e) => setNoticeDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, title: e.target.value } : x)))}
-                placeholder="제목 — 예) 유닛별 전수조사 (31일 금 09:05~16:00)"
-                style={{
-                  width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: "9px", fontSize: "13px", fontWeight: 700, marginBottom: "8px",
-                  border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
-                  background: isLightMode ? "#f8fafc" : "#0f172a",
-                  color: isLightMode ? "#111827" : "#f1f5f9", outline: "none",
-                }}
-              />
-              <textarea
-                value={n.text || ""}
-                onChange={(e) => setNoticeDrafts((prev) => prev.map((x, i) => (i === idx ? { ...x, text: e.target.value } : x)))}
-                placeholder="본문 — 줄바꿈은 그대로 표시됩니다."
-                style={{
-                  width: "100%", minHeight: "110px", resize: "vertical", boxSizing: "border-box",
-                  padding: "12px", borderRadius: "9px", fontSize: "13px", lineHeight: 1.6,
-                  border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`,
-                  background: isLightMode ? "#f8fafc" : "#0f172a",
-                  color: isLightMode ? "#111827" : "#f1f5f9", outline: "none",
-                }}
-              />
-            </div>
-          ))}
-        </div>
-
-        {noticeDrafts.length < NOTICE_MAX ? (
-          <button
-            onClick={() => setNoticeDrafts((prev) => [...prev, { title: "", text: "" }])}
-            style={{
-              width: "100%", marginTop: "10px", padding: "11px", borderRadius: "10px", cursor: "pointer",
-              fontSize: "12.5px", fontWeight: 700,
-              border: `1px dashed ${isLightMode ? "#cbd5e1" : "#334155"}`, background: "transparent",
-              color: isLightMode ? "#475569" : "#94a3b8",
-            }}
-          >
-            + 공지 추가 ({noticeDrafts.length} / {NOTICE_MAX})
-          </button>
-        ) : null}
-        <div style={{ display: "flex", gap: "10px", marginTop: "14px" }}>
-          <button
-            onClick={() => setNoticeModalOpen(false)}
-            disabled={noticeSaving}
-            style={{ flex: 1, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "13.5px", fontWeight: 700, border: `1px solid ${isLightMode ? "#e2e8f0" : "#26324a"}`, background: "transparent", color: isLightMode ? "#475569" : "#94a3b8" }}
-          >
-            취소
-          </button>
-          <button
-            onClick={submitNotice}
-            disabled={noticeSaving}
-            style={{ flex: 2, padding: "12px", borderRadius: "10px", cursor: "pointer", fontSize: "14px", fontWeight: 800, border: "none", background: "#2563eb", color: "#fff", opacity: noticeSaving ? 0.7 : 1 }}
-          >
-            {noticeSaving ? "저장 중..." : "공지 저장"}
-          </button>
-        </div>
+      <div onClick={(e) => e.stopPropagation()} style={{ display: "contents" }}>
+        <NoticeEditor
+          isLightMode={isLightMode}
+          original={noticeOriginal}
+          drafts={noticeDrafts}
+          onChange={setNoticeDrafts}
+          saving={noticeSaving}
+          onCancel={() => setNoticeModalOpen(false)}
+          onSave={submitNotice}
+        />
       </div>
     </div>
   ) : null;
@@ -2618,7 +2620,7 @@ export default function App() {
         height: "100vh",
         background: "var(--app-bg, #0f172a)",
         color: "var(--text-main, #f1f5f9)",
-        fontFamily: "'Inter', sans-serif",
+        fontFamily: "var(--wms-font-family)",
         display: "flex",
         flexDirection: "row",
         overflow: "hidden",
@@ -2884,12 +2886,15 @@ export default function App() {
                 { view: "scenario", icon: <Boxes size={16} />, label: "시나리오 물품" },
                 { view: "monitor", icon: <Package size={16} />, label: "COS 물품" },
                 { view: "tablecloth", icon: <Layers size={16} />, label: "테이블보" },
+                { view: "objectReports", icon: <AlertTriangle size={16} />, label: "변형·파손 관리" },
                 { view: "defect", icon: <AlertTriangle size={16} />, label: "불량로그" },
                 { view: "returnPhotos", icon: <Camera size={16} />, label: "대여 · 반납 사진" },
               ],
               rental: [
                 { view: "adminReturn", icon: <Undo2 size={16} />, label: "대여 및 반납" },
                 { view: "adminBorrow", icon: <HandHelping size={16} />, label: "대여 신청" },
+                { view: "adminReservations", icon: <CalendarClock size={16} />, label: "예약 대여" },
+                { view: "transferNotifications", icon: <ArrowRightLeft size={16} />, label: "양도 알림" },
                 { view: "rent", icon: <ClipboardList size={16} />, label: "반납 로그" },
                 { view: "seatmap", icon: <LayoutGrid size={16} />, label: "좌석 배치도" },
               ],
@@ -2904,14 +2909,16 @@ export default function App() {
             const topLevelBtn = (key: "items" | "rental" | "settings") => {
               const meta = SECTION_META[key];
               const active = adminSection === key;
+              const badge = (key === "rental" || key === "items") && (!active || sidebarCollapsed) ? (key === "items" ? String(adminRentalCounts.photoReviews + pendingObjectReports || "") : [rentalBadge(adminRentalCounts, key), pendingTransfers ? String(pendingTransfers) : ""].filter(Boolean).join("+")) : "";
+              const badgeLabel = key === "items" ? `사진 확인 ${adminRentalCounts.photoReviews}건 · 변형 및 파손 ${pendingObjectReports}건` : `대여 확인 ${adminRentalCounts.pickup}건 + 예약 대여 ${adminRentalCounts.reservations}건 · 미확인 양도 ${pendingTransfers}건`;
               return (
                 <a
                   key={key}
                   href={`#/${meta.view}/direct`}
                   onClick={(e) => { e.preventDefault(); setAdminSection(key); setCurrentView(meta.view); if (isMobile) setMobileNavOpen(false); }}
-                  title={sidebarCollapsed ? meta.label : undefined}
+                  title={badge ? `${meta.label} · ${badgeLabel}` : sidebarCollapsed ? meta.label : undefined}
                   style={{
-                    textDecoration: "none",
+                    textDecoration: "none", position: "relative",
                     width: "100%", padding: sidebarCollapsed ? "10px 0" : "10px 12px", borderRadius: 8,
                     display: "flex", alignItems: "center", gap: sidebarCollapsed ? 0 : 10, cursor: "pointer",
                     justifyContent: sidebarCollapsed ? "center" : "flex-start",
@@ -2923,6 +2930,7 @@ export default function App() {
                 >
                   {meta.icon}
                   {!sidebarCollapsed && <span>{meta.label}</span>}
+                  {badge && <span aria-label={badgeLabel} style={{ marginLeft: sidebarCollapsed ? 0 : "auto", position: sidebarCollapsed ? "absolute" : undefined, right: sidebarCollapsed ? -3 : undefined, top: sidebarCollapsed ? -3 : undefined, padding: "2px 6px", borderRadius: 10, background: key === "items" ? "#dc2626" : "#2563eb", color: "#fff", fontSize: 11, fontWeight: 800, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{badge}</span>}
                 </a>
               );
             };
@@ -2935,7 +2943,7 @@ export default function App() {
                 onClick={(e) => { e.preventDefault(); setCurrentView(view as any); if (isMobile) setMobileNavOpen(false); }}
                 title={sidebarCollapsed ? label : undefined}
                 style={{
-                  textDecoration: "none",
+                  textDecoration: "none", position: "relative",
                   width: "100%",
                   padding: sidebarCollapsed ? "8px 0" : "8px 12px 8px 30px",
                   borderRadius: 8,
@@ -2953,6 +2961,8 @@ export default function App() {
               >
                 {icon}
                 {!sidebarCollapsed && <span>{label}</span>}
+                {view === "transferNotifications" && pendingTransfers > 0 && <span aria-label={`미확인 양도 ${pendingTransfers}건`} style={{ marginLeft: sidebarCollapsed ? 0 : "auto", position: sidebarCollapsed ? "absolute" : undefined, top: sidebarCollapsed ? -3 : undefined, right: sidebarCollapsed ? -3 : undefined, minWidth: 20, padding: "2px 6px", borderRadius: 10, background: "#dc2626", color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center" }}>{pendingTransfers > 99 ? "99+" : pendingTransfers}</span>}
+                {rentalBadge(adminRentalCounts, view) && <span aria-label={`${label}${view === "returnPhotos" ? " 확인 대기" : ""} ${rentalBadge(adminRentalCounts, view)}건`} style={{ marginLeft: sidebarCollapsed ? 0 : "auto", position: sidebarCollapsed ? "absolute" : undefined, right: sidebarCollapsed ? -3 : undefined, top: sidebarCollapsed ? -3 : undefined, minWidth: 20, padding: "2px 6px", borderRadius: 10, background: view === "returnPhotos" ? "#dc2626" : "#2563eb", color: "#fff", fontSize: 11, fontWeight: 800, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{rentalBadge(adminRentalCounts, view)}</span>}
               </a>
             );
 
@@ -3059,7 +3069,7 @@ export default function App() {
             </button>
           ) : null}
           <span style={{ fontSize: isMobile ? 14 : 16, fontWeight: 800, color: "var(--text-main, #f1f5f9)", letterSpacing: "-0.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {currentView === "monitor" ? "📦 COS 물품" : currentView === "adminReturn" ? "↩️ 대여 및 반납" : currentView === "adminBorrow" ? "🤝 대여 신청" : currentView === "rent" ? "📋 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : currentView === "connectionSettings" ? "🔌 연결 설정" : currentView === "rentalSettings" ? "⚙️ 대여/반납 설정" : currentView === "dbViewer" ? "🗄️ DB 설정" : currentView === "scenarioChanges" ? "🕘 물품 상태 변경 이력" : currentView === "toolChanges" ? "🕘 COS 물품 변동 내역" : currentView === "tablecloth" ? "🧵 테이블보 관리" : currentView === "returnPhotos" ? "📸 대여 · 반납 사진" : "⚠️ 불량로그 기록"}
+            {currentView === "objectReports" ? "변형 요청 및 파손 신고" : currentView === "monitor" ? "📦 COS 물품" : currentView === "adminReturn" ? "↩️ 대여 및 반납" : currentView === "adminBorrow" ? "🤝 대여 신청" : currentView === "transferNotifications" ? "🤝 양도 알림" : currentView === "adminReservations" ? "🕘 예약 대여" : currentView === "rent" ? "📋 반납 로그" : currentView === "scenario" ? "🧩 시나리오 물품 관리" : currentView === "seatmap" ? "🪑 좌석 배치도 관리" : currentView === "connectionSettings" ? "👥 계정 설정" : currentView === "rentalSettings" ? "⚙️ 대여/반납 설정" : currentView === "dbViewer" ? "🗄️ DB 설정" : currentView === "scenarioChanges" ? "🕘 물품 상태 변경 이력" : currentView === "toolChanges" ? "🕘 COS 물품 변동 내역" : currentView === "tablecloth" ? "🧵 테이블보 관리" : currentView === "returnPhotos" ? "📸 대여 · 반납 사진" : "⚠️ 불량로그 기록"}
           </span>
           <span
             style={{
@@ -3245,6 +3255,11 @@ export default function App() {
             />
           </div>
         ) : null}
+        {isAdmin && (mountedAdminViews.has("adminReservations") || currentView === "adminReservations") ? (
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: currentView === "adminReservations" ? "flex" : "none", overflow: "hidden" }}>
+            <AdminReservationsPage scriptUrl={scriptUrl} connected={connected} isLightMode={isLightMode} showToast={showToast} isMobile={isMobile} isActive={currentView === "adminReservations"} />
+          </div>
+        ) : null}
         {isAdmin && (mountedAdminViews.has("adminBorrow") || currentView === "adminBorrow") ? (
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: currentView === "adminBorrow" ? "block" : "none", background: "var(--canvas-bg, #020617)" }}>
             <AdminDirectBorrowModal
@@ -3303,6 +3318,10 @@ export default function App() {
               onBack={() => setCurrentView("monitor")}
             />
           </div>
+        ) : currentView === "transferNotifications" ? (
+          isAdmin ? <TransferNotificationsPage isLightMode={isLightMode} isMobile={isMobile} /> : <div>양도 알림은 관리자만 확인할 수 있습니다.</div>
+        ) : currentView === "objectReports" && isAdmin ? (
+          <AdminObjectReports scriptUrl={scriptUrl} isLightMode={isLightMode} isMobile={isMobile}/>
         ) : currentView === "defect" ? (
           <DefectLogsPage
             defectLogs={defectLogs}
@@ -3313,6 +3332,8 @@ export default function App() {
             scriptUrl={scriptUrl}
             connected={connected}
           />
+        ) : currentView === "adminReservations" && !isAdmin ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>예약 대여 관리는 관리자만 사용할 수 있습니다.</div>
         ) : currentView === "adminReturn" && !isAdmin ? (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim, #94a3b8)" }}>
             관리자만 접근할 수 있습니다.

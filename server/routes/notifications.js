@@ -11,6 +11,32 @@ import { nowKst } from "../lib/time.js";
  */
 export const notificationsRouter = Router();
 
+// 양도는 별도 메뉴에서 조회한다. 한 관리자라도 확인했으면 모두에게 확인 완료로 표시한다.
+// 기존 확인 기록도 함께 적용하며, 누가 확인했는지와 원본 양도 이력은 그대로 보관한다.
+const readTransfersSql = `SELECT notif_key FROM admin_notification_reads WHERE notif_key LIKE 'transfer:%'`;
+const unreadTransfersSql = `SELECT COUNT(*) AS n FROM transfer_notifications t
+  WHERE 'transfer:'||t.id NOT IN (${readTransfersSql})`;
+notificationsRouter.get('/admin/transfer-notifications/count', requireAdmin, (req,res) => {
+  res.json({success:true, unread:Number(all(unreadTransfersSql)[0].n)});
+});
+notificationsRouter.get('/admin/transfer-notifications', requireAdmin, (req,res) => {
+  const before = Number(req.query.before) || Number.MAX_SAFE_INTEGER;
+  const rows = all(`SELECT t.*, ('transfer:'||t.id IN (${readTransfersSql})) AS is_read
+    FROM transfer_notifications t WHERE t.id < ? ORDER BY t.id DESC LIMIT 101`,[before]);
+  const entries = rows.slice(0,100).map(r => ({id:r.id,timestamp:r.occurred_at,
+    fromName:r.from_name,fromEmployeeId:r.from_employee_id,toName:r.to_name,toEmployeeId:r.to_employee_id,
+    floor:r.floor,unit:r.unit,items:JSON.parse(r.items_json),read:!!r.is_read}));
+  res.json({success:true,entries,nextBefore:rows.length>100?entries.at(-1).id:null});
+});
+notificationsRouter.post('/admin/transfer-notifications/read', requireAdmin, (req,res) => {
+  const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids)].filter(id => Number.isSafeInteger(id) && id>0).slice(0,100) : [];
+  transaction(() => {
+    for (const id of ids) run(`INSERT OR IGNORE INTO admin_notification_reads (admin_id,notif_key,read_at)
+      SELECT ?,'transfer:'||id,? FROM transfer_notifications WHERE id=?`,[req.admin.id,nowKst(),id]);
+  });
+  res.json({success:true});
+});
+
 // 이 시각 이후의 변경부터 알림으로 쌓는다.
 const CHANGE_NOTIFY_SINCE = "2026-09-24 01:00:00";
 // 불량 알림 기능을 켠 시점 이전의 누적 로그가 한꺼번에 미확인 알림으로 뜨지 않게 한다.

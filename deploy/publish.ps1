@@ -4,7 +4,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $deployKey = Join-Path $env:USERPROFILE ".ssh\wms_deploy"
 $server = "configds@192.168.100.152"
 $remoteRoot = "/home/configds/wms"
-$serviceUrl = "http://192.168.100.152:3000"
+$serviceUrl = "https://cos-management.duckdns.org"
 
 if (-not (Test-Path -LiteralPath $deployKey)) {
   throw "WMS 배포 키를 찾을 수 없습니다: $deployKey"

@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew WMS TLS certificate using Duck DNS DNS-01
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=configds
+ExecStart=/bin/bash /home/configds/wms/deploy/renew-https.sh
+UMask=0077

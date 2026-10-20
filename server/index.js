@@ -1,10 +1,13 @@
 import express from "express";
+import https from "node:https";
+import fs from "node:fs";
 import compression from "compression";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import "./db.js";
 import { adminRouter } from "./routes/admin.js";
-import { gasRouter } from "./routes/gas.js";
+import { gasRouter, recordBorrow, getActiveItemTypeCount } from "./routes/gas.js";
+import { createPlannerBridgeRouter } from "./routes/plannerBridge.js";
 import { scenarioSyncRouter } from "./routes/scenarioSync.js";
 import { cameraRouter } from "./routes/camera.js";
 import { requestLookupRouter } from "./routes/requestLookup.js";
@@ -13,18 +16,23 @@ import { unattendedRouter } from "./routes/unattended.js";
 import { signupRouter } from "./routes/signup.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { warehouseRequestsRouter } from "./routes/warehouseRequests.js";
-import { scenarioAiSearchRouter } from "./routes/scenarioAiSearch.js";
+import { borrowerAuthRouter } from "./routes/borrowerAuth.js";
+import { httpsConfig } from "./lib/httpsConfig.js";
+import { consumeHttpsSocket } from "./lib/systemdSocket.js";
 import { uploadsDir } from "./lib/images.js";
 import { cleanupOldReturnPhotos } from "./lib/returnPhotoRetention.js";
 import { cancelUnclaimedPickups } from "./lib/pickupTimeout.js";
+import { startReservationPromotion } from "./lib/reservationPromotion.js";
 import { startSmSync } from "./lib/smSync.js";
 import { applyUnattendedOverduePenalties } from "./lib/unattendedPenalties.js";
-import { warmAllAiSearch, toolAiConfigured } from "./lib/warehouseSearchService.js";
+import { applyRentalOverduePenalties } from "./lib/rentalOverduePenalties.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT) || 3001;
 // 카메라 스트림 전용 포트. 앱과 오리진을 갈라 놓기 위한 것이라 앱 포트와 반드시 달라야 한다.
 const cameraPort = Number(process.env.WMS_CAMERA_PORT) || 3002;
+const activatedHttpsFd = consumeHttpsSocket();
+if (activatedHttpsFd !== null && !httpsConfig.enabled) throw Error("443 소켓에는 HTTPS 설정이 필요합니다.");
 
 const app = express();
 
@@ -37,6 +45,7 @@ app.use(compression());
 app.use(express.json({ limit: "20mb" }));
 
 const api = express.Router();
+api.use(borrowerAuthRouter);
 // 예전 REST 경로(/bootstrap, /inventory, /rentals, /sectors, /defect-logs, /uploads/image)는
 // 화면이 모두 /api/gas로 옮겨가 쓰지 않는데 로그인 없이 쓰기까지 열려 있어 뺐다.
 // adminRouter보다 먼저 마운트해야 한다 — adminRouter의 GET /scenarios/:sid 가
@@ -46,12 +55,21 @@ api.use(unattendedRouter);
 api.use(signupRouter);
 api.use(notificationsRouter);
 api.use(warehouseRequestsRouter);
-api.use(scenarioAiSearchRouter);
+// 촬영 플래너(별도 앱)용 서버 간 연결. 키(PLANNER_BRIDGE_KEY 또는 server/data/planner-bridge.key)가 없으면 닫혀 있다.
+api.use(createPlannerBridgeRouter({ recordBorrow, getActiveItemTypeCount }));
 api.use(adminRouter);
 api.use(gasRouter);
 api.use(cameraRouter);
 api.use(labelPrinterRouter);
 app.use("/api", api);
+if (httpsConfig.enabled) {
+  app.get("/https-info", (_req, res) => res.json({ origin: httpsConfig.origin }));
+  // 주소에 포함된 Host를 사용하지 않아 열린 리다이렉트나 잘못된 HTTPS 호스트를 막는다.
+  app.use((req, res, next) => {
+    if (req.socket.encrypted || req.path.startsWith("/uploads") || req.path.startsWith("/api")) return next();
+    res.redirect(302, httpsConfig.origin.replace(/\/$/, "") + req.originalUrl);
+  });
+}
 
 app.use("/uploads", express.static(uploadsDir, { maxAge: "365d", immutable: true }));
 
@@ -78,11 +96,7 @@ app.use((err, req, res, next) => {
 });
 
 cleanupOldReturnPhotos();
-if (toolAiConfigured) {
-  const warm = () => warmAllAiSearch().catch(err => console.warn("[ai-search] AI index unavailable:", err.message));
-  setTimeout(warm, 5000).unref();
-  setInterval(warm, 5 * 60 * 1000).unref();
-}
+startReservationPromotion(recordBorrow);
 setInterval(cleanupOldReturnPhotos, 6 * 60 * 60 * 1000); // 6시간마다 오래된 반납 사진 정리
 // 신청만 하고 안 가져간 대여를 되돌려 재고를 풀어준다. 1분마다 훑으므로 실제 취소 시각은
 // 설정한 제한시간 + 최대 1분이 된다.
@@ -98,6 +112,12 @@ const checkUnattendedPenalties = () => {
 };
 setInterval(checkUnattendedPenalties, 10 * 60 * 1000);
 setTimeout(checkUnattendedPenalties, 15 * 1000);
+const checkRentalOverdue = () => {
+  try { applyRentalOverduePenalties(); }
+  catch (err) { console.error('[rental-overdue] 자동 차감 확인 실패',err); }
+};
+setInterval(checkRentalOverdue, 60 * 1000);
+setTimeout(checkRentalOverdue, 15 * 1000);
 
 // 재고 동기화 — Scenario Manager와 수량·대여 상태를 맞춘다(관리자 로그인 세션으로 처리).
 startSmSync();
@@ -135,6 +155,35 @@ function tuneForFlakyNat(server) {
 tuneForFlakyNat(app.listen(port, () => {
   console.log(`WMS server listening on http://localhost:${port}`);
 }));
+const tlsOptions = httpsConfig.enabled ? {
+  cert: fs.readFileSync(httpsConfig.certFile), key: fs.readFileSync(httpsConfig.keyFile), minVersion: "TLSv1.2",
+} : null;
+if (tlsOptions) {
+  const servers = [];
+  const mainTls = https.createServer(tlsOptions, app);
+  servers.push(mainTls);
+  tuneForFlakyNat(mainTls.listen(httpsConfig.port || 3443, () => console.log("WMS HTTPS ready")));
+  // systemd가 LAN 전용 443 소켓을 열고 일반 사용자(configds)인 앱에 전달한다.
+  // 원래 TLS와 클라이언트 IP를 그대로 사용한다. 기존 :3443 접속도 계속 지원한다.
+  if (activatedHttpsFd !== null) {
+    const standardTls = https.createServer(tlsOptions, app);
+    servers.push(standardTls);
+    tuneForFlakyNat(standardTls.listen({ fd: activatedHttpsFd }, () => console.log("WMS standard HTTPS ready")));
+  }
+  // 발급/갱신 스크립트가 파일을 교체하면 다음 확인에서 인증서를 교체한다. 사용자 세션은 유지한다.
+  let certModified = fs.statSync(httpsConfig.certFile).mtimeMs;
+  setInterval(() => {
+    try {
+      const modified = fs.statSync(httpsConfig.certFile).mtimeMs;
+      if (modified !== certModified) {
+        const context = { cert: fs.readFileSync(httpsConfig.certFile), key: fs.readFileSync(httpsConfig.keyFile), minVersion: "TLSv1.2" };
+        for (const server of servers) server.setSecureContext(context);
+        certModified = modified;
+      }
+    } catch { console.warn("WMS TLS 갱신 파일을 확인할 수 없습니다."); }
+  }, 60000).unref();
+  app.locals.tlsServers = servers;
+}
 
 // 카메라 스트림만 따로 듣는 두 번째 서버.
 //
@@ -148,12 +197,23 @@ tuneForFlakyNat(app.listen(port, () => {
 // 새 포트를 모르기 때문이고, 그쪽으로 붙어도 최소한 지금까지처럼은 동작해야 한다.
 if (cameraPort !== port) {
   const cameraApp = express();
+  if (httpsConfig.enabled) {
+    cameraApp.use((req, res, next) => {
+      if (req.socket.encrypted || !req.path.startsWith("/pickup/")) return next();
+      res.redirect(302, httpsConfig.qrOrigin.replace(/\/$/, "") + req.originalUrl);
+    });
+  }
   // 메인 앱(:3000)과 분리된 QR 전용 조회 화면. 긴 경로를 아는 QR 사용자만 접근하고,
   // 사진도 같은 :3002 오리진에서 읽게 해 메인 앱 화면이나 API를 노출하지 않는다.
   cameraApp.use(requestLookupRouter);
   cameraApp.use("/uploads", express.static(uploadsDir, { maxAge: "1h" }));
   cameraApp.use("/api", cameraRouter);
   cameraApp.use(cameraRouter); // /api 접두사 없이도 받는다
+  if (tlsOptions) {
+    const qrTls = https.createServer(tlsOptions, cameraApp);
+    app.locals.tlsServers.push(qrTls);
+    tuneForFlakyNat(qrTls.listen(httpsConfig.qrPort || 3445, () => console.log("WMS QR HTTPS ready")));
+  }
   tuneForFlakyNat(cameraApp.listen(cameraPort, () => {
     console.log(`WMS camera stream listening on http://localhost:${cameraPort}`);
   }));

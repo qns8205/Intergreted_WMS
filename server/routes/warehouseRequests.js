@@ -1,14 +1,28 @@
 import { Router } from "express";
-import { requireAdmin } from "../lib/auth.js";
+import { requireAdmin, adminFromRequest } from "../lib/auth.js";
+import { kioskUserFromRequest } from "../lib/unattendedKiosk.js";
 import { recordWarehouseManualRequest, pendingWarehouseManualRequests, resolveWarehouseManualRequest, outstandingWarehouseTools, returnWarehouseTools } from "../lib/warehouseManualRequests.js";
 import { unattendedEnabled } from "../lib/unattendedPenalties.js";
 import { registeredUser } from "../lib/registeredUsers.js";
-import { searchWarehouseTools, suggestWarehouseTools } from "../lib/warehouseSearchService.js";
+import { suggestWarehouseTools } from "../lib/warehouseToolSuggestions.js";
 
 export const warehouseRequestsRouter = Router();
-const searchLimits = new Map();
+warehouseRequestsRouter.use("/warehouse-requests", (req, res, next) => {
+  const admin = adminFromRequest(req);
+  try {
+    // 공구 대여·반납은 무인 PC(무인 모드인 관리자 PC)에서만 한다. 휴대폰 등 다른 곳에서는 받지 않는다.
+    // 무인 PC에서 사번·SM 비밀번호로 로그인한 사람이면 그 사번으로만 처리한다.
+    if (admin) return next();
+    const kiosk = kioskUserFromRequest(req);
+    if (!kiosk) return res.status(403).json({ success: false, error: "공구 대여·반납은 무인 PC에서 사번과 SM 비밀번호로 로그인한 뒤에만 할 수 있습니다." });
+    const values = req.method === "GET" ? req.query : (req.body || {});
+    if (values.employeeId && String(values.employeeId).trim() !== kiosk.employeeId) throw Error("다른 사번으로 요청할 수 없습니다.");
+    values.employeeId = kiosk.employeeId;
+    next();
+  } catch (error) { res.status(401).json({ success: false, error: error.message }); }
+});
 const suggestLimits = new Map();
-// 타자를 칠 때마다 부르므로 AI 검색보다 넉넉하게 둔다.
+// 타자를 칠 때마다 호출하는 일반 이름·키워드 후보 조회.
 warehouseRequestsRouter.get("/warehouse-requests/suggest", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   try {
@@ -23,22 +37,6 @@ warehouseRequestsRouter.get("/warehouse-requests/suggest", (req, res) => {
     if (++limit.count > 60) return res.status(429).json({ success: false, error: "잠시 후 다시 입력해주세요." });
     suggestLimits.set(key, limit);
     res.json({ success: true, items: suggestWarehouseTools(query) });
-  } catch (error) { res.status(400).json({ success: false, error: error.message }); }
-});
-warehouseRequestsRouter.get("/warehouse-requests/search", async (req, res) => {
-  res.setHeader("Cache-Control", "no-store");
-  try {
-    if (!unattendedEnabled()) throw Error("현재 무인 모드가 아닙니다.");
-    const user = registeredUser(req.query.employeeId);
-    if (!user) throw Error("등록된 사번을 확인해주세요.");
-    const query = String(req.query.q || "").trim();
-    if (!query || query.length > 150) throw Error("찾을 공구 이름을 150자 이내로 입력해주세요.");
-    const now = Date.now(), key = `${req.ip}:${user.employee_id}`;
-    for (const [k, value] of searchLimits) if (now - value.start > 10000) searchLimits.delete(k);
-    const limit = searchLimits.get(key) || { start: now, count: 0 };
-    if (++limit.count > 5) return res.status(429).json({ success: false, error: "잠시 후 AI 검색을 다시 눌러주세요." });
-    searchLimits.set(key, limit);
-    res.json({ success: true, ...await searchWarehouseTools(query) });
   } catch (error) { res.status(400).json({ success: false, error: error.message }); }
 });
 warehouseRequestsRouter.get("/warehouse-requests/mine", (req, res) => {

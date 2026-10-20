@@ -23,5 +23,3 @@ export function scenarioRegularScore(item: { id: string; name: string; rootSlot:
   if (words.length > 1 && words.every(word => [name, id, location].some(part => part && part.includes(word)))) return 40;
   return null;
 }
-export const scenarioAiResultActive = (mode: "normal" | "ai", resultQuery: string | undefined, query: string, hasResult: boolean) =>
-  mode === "ai" && hasResult && resultQuery === query.trim();

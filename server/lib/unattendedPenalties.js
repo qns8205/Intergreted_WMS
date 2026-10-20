@@ -3,6 +3,9 @@ import { employeeIdForRentalRow } from "./registeredUsers.js";
 import { padSlot, parseItemLabel } from "./borrowUtils.js";
 import { nowKst, parseKstMs } from "./time.js";
 import { linksFor } from "./penaltyLinks.js";
+import { recoveryHoldChecker } from "./unattendedOperationRecovery.js";
+import { rentalTermsForRow } from './rentalTerms.js';
+import { rentalTimeMs, kstTimestamp, addRentalTimeMs, RENTAL_HOURS } from '../../shared/rentalTerms.js';
 
 const FALLBACK_MAX_TYPES = 15;
 const PENALTY_DAYS = 7;
@@ -23,7 +26,7 @@ function configuredMax() {
 function activePenalty(name) {
   const now = nowKst();
   return get(
-    "SELECT * FROM penalties WHERE LOWER(TRIM(name))=LOWER(TRIM(?)) AND (expires_at IS NULL OR expires_at='' OR expires_at>?) ORDER BY id DESC LIMIT 1",
+    "SELECT * FROM penalties WHERE deduction_types=0 AND LOWER(TRIM(name))=LOWER(TRIM(?)) AND (expires_at IS NULL OR expires_at='' OR expires_at>?) ORDER BY id DESC LIMIT 1",
     [name, now],
   );
 }
@@ -83,6 +86,7 @@ function cutoffKst(hours) {
 function longTermRule() {
   const requestIds = new Set(all("SELECT id FROM scenario_items WHERE request IS NOT NULL").map((r) => r.id));
   return (row) => row.type_limit_exempt === "Y"
+    || row.category === '촬영 계획'
     || requestIds.has(padSlot(row.sheet_type === "scenario" ? parseItemLabel(row.item_label).id : row.item_id));
 }
 
@@ -91,10 +95,11 @@ export function applyUnattendedOverduePenalties() {
   if (!unattendedEnabled()) return { penalized: 0 };
   const cutoff = cutoffKst(24);
   const keptLongTerm = longTermRule();
+  const held = recoveryHoldChecker('return');
   const rows = [
     ...all("SELECT *, 'scenario' AS sheet_type FROM sid_rentals WHERE picked_up_at IS NOT NULL AND picked_up_at<? AND status='active' AND (returned IS NULL OR returned!='O')", [cutoff]),
     ...all("SELECT *, 'general' AS sheet_type FROM general_rentals WHERE picked_up_at IS NOT NULL AND picked_up_at<? AND status='active' AND (returned IS NULL OR returned!='O')", [cutoff]),
-  ].filter((row) => !keptLongTerm(row));
+  ].filter((row) => !get('SELECT 1 FROM rental_requests WHERE id=? AND rental_mode IS NOT NULL',[row.request_no || 0]) && !keptLongTerm(row) && !held(row,row.sheet_type,parseKstMs(row.picked_up_at)+24*60*60*1000));
   const groups = new Map();
   for (const row of rows) {
     const key = row.request_no ? `return:request:${row.request_no}` : `return:${row.sheet_type}:${row.id}`;
@@ -110,6 +115,7 @@ export function applyUnattendedOverduePenalties() {
 }
 
 const EVENT_RULES = {
+  rental_return_overdue_4h: {label:'일반 대여 4시간 초과 미반납',hours:4},
   pickup_unconfirmed_4h: { label: "4시간 내 대여 확인 미처리", hours: 4 },
   return_unconfirmed_24h: { label: "대여 후 24시간 내 반납 미처리", hours: 24 },
 };
@@ -153,7 +159,11 @@ export function penaltyDetails(penaltyId) {
   if (!penalty) return null;
   const keptLongTerm = longTermRule();
   const now = Date.now();
-  const events = all("SELECT * FROM unattended_penalty_events WHERE penalty_id=? ORDER BY id", [penalty.id]).map((event) => {
+  const sourceEvents = all("SELECT * FROM unattended_penalty_events WHERE penalty_id=? ORDER BY id", [penalty.id]);
+  for (const event of all('SELECT e.*,q.employee_id,q.borrower_name FROM rental_overdue_events e JOIN rental_requests q ON q.id=e.request_no WHERE e.penalty_id=?',[penalty.id])) {
+    sourceEvents.push({...event,event_type:'rental_return_overdue_4h',source_at:kstTimestamp(addRentalTimeMs(rentalTimeMs(event.deadline_at),-RENTAL_HOURS*3600000))});
+  }
+  const events = sourceEvents.map((event) => {
     const rule = EVENT_RULES[event.event_type] || { label: event.event_type, hours: 0 };
     const isPickup = event.event_type === "pickup_unconfirmed_4h";
     const items = rowsForEvent(event).map((row) => {
@@ -164,15 +174,18 @@ export function penaltyDetails(penaltyId) {
       const appliedAt = row.applied_at || row.borrow_date || "";
       const pickedUpAt = row.picked_up_at || "";
       const returnedAt = row.returned === "O" ? row.return_date || "" : "";
-      const exempt = !isPickup && keptLongTerm(row);
+      const exempt = !isPickup && (event.event_type==='rental_return_overdue_4h' ? rentalTermsForRow(row)?.mode !== 'general' : keptLongTerm(row));
       // 대여 확인은 신청 후 4시간, 반납은 대여 확인 후 24시간이 기한이다.
       const startMs = parseKstMs(isPickup ? appliedAt : pickedUpAt);
-      const deadlineMs = Number.isFinite(startMs) ? startMs + rule.hours * 3600_000 : NaN;
+      const deadlineMs = event.event_type==='rental_return_overdue_4h'
+        ? rentalTimeMs(rentalTermsForRow(row)?.deadlineAt)
+        : Number.isFinite(startMs) ? startMs + rule.hours * 3600_000 : NaN;
       const doneMs = parseKstMs(isPickup ? pickedUpAt : returnedAt);
       const endMs = Number.isFinite(doneMs) ? doneMs : now;
       const missed = !exempt && Number.isFinite(deadlineMs) && endMs > deadlineMs;
+      const variantName = row.variant_id ? get("SELECT name FROM scenario_item_variants WHERE id=?", [Number(row.variant_id)])?.name || "" : "";
       return {
-        sheetType: row.sheet_type, rowId: row.id, itemId, name, qty: Number(parsed.quantity) || 1,
+        sheetType: row.sheet_type, rowId: row.id, itemId, name, variantName, qty: Number(parsed.quantity) || 1,
         appliedAt, pickedUpAt, returnedAt, state: returnState(row), exempt,
         deadlineAt: kstAt(deadlineMs), missed, overMinutes: missed ? Math.round((endMs - deadlineMs) / 60000) : 0,
       };
@@ -188,4 +201,22 @@ export function penaltyDetails(penaltyId) {
   });
   // 관리자가 원인으로 직접 연결한 대여·반납 기록(자동 페널티에도 붙일 수 있다).
   return { penalty, events, links: linksFor(penalty.id) };
+}
+
+/**
+ * 페널티가 어떤 물품 때문인지 한 줄 요약. 예) "Serving Table ×2, PCB(Red) 외 3종"
+ * 자동 페널티는 기한을 넘긴 물품만, 관리자가 준 페널티는 원인으로 연결한 물품을 쓴다.
+ * 연결된 기록이 없는(사유 글만 있는) 페널티는 빈 문자열이다.
+ */
+export function penaltyItemsText(penaltyId, max = 4) {
+  const details = penaltyDetails(penaltyId);
+  if (!details) return "";
+  const labels = [];
+  const add = (name, variant, qty) => {
+    const label = `${String(name || "").trim()}${variant ? `(${variant})` : ""}${Number(qty) > 1 ? ` ×${Number(qty)}` : ""}`;
+    if (label.trim() && !labels.includes(label)) labels.push(label);
+  };
+  for (const event of details.events) for (const item of event.items) if (item.missed) add(item.name, item.variantName, item.qty);
+  for (const link of details.links || []) add(link.itemName, link.variantName, link.qty);
+  return labels.length > max ? `${labels.slice(0, max).join(", ")} 외 ${labels.length - max}종` : labels.join(", ");
 }

@@ -47,6 +47,21 @@ export function cleanupOldReturnPhotos() {
     run("DELETE FROM unattended_pickup_photos WHERE id=?", [row.id]);
   }
   const deleted = stale.length + pickupStale.length;
+  // 새 무인 사진은 처리 증빙과 공유한다. 완료·관리자 검토 종료 건만 정리하며 오류 대기는 보존한다.
+  const reviewed=all(`SELECT id FROM unattended_operations WHERE (status='completed' OR review_status='reviewed')
+    AND COALESCE(reviewed_at,updated_at)<? AND (image_path IS NOT NULL OR damage_image_path IS NOT NULL)`,[cutoff]);
+  for(const row of reviewed){
+    if(!Number.isSafeInteger(row.id)||row.id<=0)continue;
+    for(const scope of ['unattended_operations','unattended_operation_damage']){
+      const dir=path.join(uploadsDir,scope,String(row.id));
+      try{
+        if(fs.lstatSync(dir).isSymbolicLink())continue;
+        for(const file of fs.readdirSync(dir)) if(/^(original|thumb)-[0-9]+\.webp$/.test(file))fs.unlinkSync(path.join(dir,file));
+        fs.rmdirSync(dir);
+      }catch{/* 다른 파일이 있으면 보존. 다음 회차 또는 관리자 확인 때 정리한다. */}
+    }
+    run('UPDATE unattended_operations SET image_path=NULL,damage_image_path=NULL WHERE id=?',[row.id]);
+  }
   if (deleted) console.log(`[photo-retention] 반납 ${stale.length}건 · 대여 확인 ${pickupStale.length}건 삭제 (${RETENTION_DAYS}일 경과)`);
   return { deleted };
 }

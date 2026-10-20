@@ -27,6 +27,7 @@ function ensureColumn(table, column, type) {
 ensureColumn("scenario_items", "personal_owner", "TEXT");
 // 불량 로그를 등록한 관리자. breaker(파손자)와 별개다. 알림에서 본인이 등록한 건을 빼는 데 쓴다.
 ensureColumn("defect_logs", "reported_by", "TEXT");
+ensureColumn("unattended_damage_pending", "source_rental_row_id", "INTEGER");
 // 명부에 어떻게 들어왔는지. 'signup'(가입 신청 승인)은 명부 파일을 다시 불러와도 비활성화하지 않는다.
 ensureColumn("registered_users", "source", "TEXT");
 // 같은 사번의 대기 중 신청은 하나만 둔다.
@@ -63,6 +64,27 @@ for (const t of ["sid_rentals", "general_rentals"]) {
 }
 ensureColumn("rental_requests", "request_code", "TEXT");
 ensureColumn("rental_requests", "employee_id", "TEXT");
+for (const table of ['rental_requests','item_reservations']) {
+  ensureColumn(table, 'rental_mode', 'TEXT');
+  ensureColumn(table, 'rental_reason', 'TEXT');
+  ensureColumn(table, 'rental_due_date', 'TEXT');
+}
+ensureColumn('penalties', 'deduction_types', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('rental_requests','rental_general_since','TEXT');
+ensureColumn('rental_requests','rental_review_reason','TEXT');
+ensureColumn('rental_requests','rental_reviewed_by','TEXT');
+db.exec(`CREATE TABLE IF NOT EXISTS rental_terms_reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, request_no INTEGER NOT NULL UNIQUE,
+  previous_mode TEXT NOT NULL, previous_reason TEXT, previous_due_date TEXT,
+  review_reason TEXT NOT NULL, reviewed_by TEXT NOT NULL, reviewed_at TEXT NOT NULL
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS rental_overdue_events (
+  request_no INTEGER PRIMARY KEY, penalty_id INTEGER NOT NULL,
+  deadline_at TEXT NOT NULL, occurred_at TEXT NOT NULL
+)`);
+ensureColumn("item_reservations", "promotion_error", "TEXT");
+ensureColumn("item_reservations", "request_mode", "TEXT");
+ensureColumn("item_reservations", "request_reason", "TEXT");
 ensureColumn("warehouse_rental_logs", "employee_id", "TEXT");
 // request_code는 예전 데이터 호환용으로만 남긴다. 새 번호는 더 이상 발급하지 않는다.
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_rental_requests_code ON rental_requests(request_code)");
@@ -165,6 +187,15 @@ ensureColumn("tablecloth_items", "link", "TEXT");
 // ConfigDS 직원 사번. cfgw 인원은 대여할 때 사번을 직접 입력하지만 ConfigDS 인원은
 // 이름만 받으므로, 사번이 필요한 곳(Scenario Manager 연동 등)에서 쓰려면 명부에 적어둬야 한다.
 ensureColumn("staff_accounts", "employee_id", "TEXT");
+// 취소(물건이 나가지 않고 닫힌 대여)를 누가 했는지. auto(4시간 미수령 자동 취소 — 대여자가 안 가져감) |
+// admin(관리자가 대여 확인 전 반납 처리) | self(대여자 본인이 대여 확인 전 반납). 이 열이 생기기 전의
+// 수동 취소는 누가 했는지 기록이 없어 비워 둔다. cancel_actor는 처리한 관리자 또는 대여자 이름.
+for (const table of ["sid_rentals", "general_rentals"]) {
+  ensureColumn(table, "cancel_by", "TEXT");
+  ensureColumn(table, "cancel_actor", "TEXT");
+  // 자동 취소는 목적 칸 표시로 알아볼 수 있으므로 지난 기록도 채운다.
+  db.exec(`UPDATE ${table} SET cancel_by = 'auto' WHERE return_source = 'cancel' AND cancel_by IS NULL AND purpose LIKE '%[미수령 자동 취소]%'`);
+}
 
 // 분류표가 비어 있을 때만 기본 목록을 깔아 준다. 화면에서 지운 분류가 재시작마다 되살아나면
 // 안 되므로, "한 줄이라도 있으면" 손대지 않는다.

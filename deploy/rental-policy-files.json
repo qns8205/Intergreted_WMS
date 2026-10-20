@@ -1,0 +1,17 @@
+{
+  "files": [
+    "server/db.js",
+    "server/index.js",
+    "server/lib/rentalTypeLimitPolicy.js",
+    "server/lib/unattendedPenalties.js",
+    "server/lib/objectReports.js",
+    "server/lib/itemReservations.js",
+    "server/lib/reservationPromotion.js",
+    "server/routes/gas.js",
+    "server/routes/plannerBridge.js",
+    "server/routes/requestLookup.js",
+    "shared/rentalTerms.js",
+    "server/lib/rentalTerms.js",
+    "server/lib/rentalOverduePenalties.js"
+  ]
+}

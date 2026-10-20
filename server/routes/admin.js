@@ -9,7 +9,7 @@ import { verifyAdminLogin, requireAdmin, issueAdminSession, revokeAdminSession }
 import { importXlsx } from "../lib/xlsxImport.js";
 import { padSlot, normalizeSid } from "../lib/borrowUtils.js";
 import { attachSession, status as smSyncStatus } from "../lib/smSync.js";
-import { penaltyDetails } from "../lib/unattendedPenalties.js";
+import { penaltyDetails, penaltyItemsText } from "../lib/unattendedPenalties.js";
 import { rentalCandidates, saveLinks, deleteLinks } from "../lib/penaltyLinks.js";
 import { parsePenaltyInput } from "../lib/penaltyInput.js";
 import XLSX from "xlsx";
@@ -164,7 +164,8 @@ adminRouter.put("/settings", requireAdmin, (req, res) => {
 // ── Penalties ────────────────────────────────────────────────
 
 adminRouter.get("/penalties", (req, res) => {
-  res.json({ success: true, penalties: all("SELECT p.*, (SELECT COUNT(*) FROM penalty_links WHERE penalty_id = p.id) AS link_count FROM penalties p ORDER BY p.id DESC") });
+  const penalties = all("SELECT p.*, (SELECT COUNT(*) FROM penalty_links WHERE penalty_id = p.id) AS link_count FROM penalties p ORDER BY p.id DESC");
+  res.json({ success: true, penalties: penalties.map((p) => ({ ...p, items: penaltyItemsText(p.id) })) });
 });
 
 // 대여 기록이 담기므로 목록과 달리 관리자만 본다.

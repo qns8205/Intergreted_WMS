@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "borrowerSmAuth": true,
+  "origin": "https://cos-management.duckdns.org",
+  "qrOrigin": "https://cos-management.duckdns.org:3445",
+  "port": 3443,
+  "qrPort": 3445,
+  "certFile": "/home/configds/.local/share/wms-tls/wms.crt",
+  "keyFile": "/home/configds/.local/share/wms-tls/wms.key"
+}

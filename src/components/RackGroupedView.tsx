@@ -788,7 +788,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, scrip
       />
 
       {inventory.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
+        <div className="wms-empty-state" style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
           <RotateCcw size={28} className="rgv-spin" style={{ color: C.border, margin: "0 auto 8px", display: "block" }} />
           <div>COS 물품을 불러오는 중입니다.</div>
         </div>
@@ -832,7 +832,7 @@ export default function RackGroupedView({ inventory, isLightMode, isAdmin, scrip
 
           <div style={{ minWidth: 0 }}>
             {visibleGroups.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
+              <div className="wms-empty-state" style={{ textAlign: "center", padding: "64px 0", color: C.label }}>
                 <Package size={36} style={{ color: C.border, margin: "0 auto 8px", display: "block" }} />
                 <div>{search.trim() ? "검색 결과가 없습니다." : showArchived ? "보관함이 비어 있습니다." : "표시할 COS 물품이 없습니다."}</div>
               </div>

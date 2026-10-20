@@ -1,7 +1,10 @@
-import { all, run, transaction } from "../db.js";
-import { parseItemLabel, restoreRentalStock } from "./borrowUtils.js";
-import { nowKst } from "./time.js";
+import { all, transaction } from "../db.js";
+import { parseItemLabel } from "./borrowUtils.js";
+import { nowKst, parseKstMs } from "./time.js";
+import { recoveryHoldChecker } from "./unattendedOperationRecovery.js";
 import { registerUnattendedViolation, unattendedEnabled } from "./unattendedPenalties.js";
+import { cancelUnclaimedRental } from "./pickupCancellation.js";
+import { expireReservations } from "./reservationExpiry.js";
 
 // 신청 후 이 시간 안에 "대여 확인"(실물 픽업)이 안 되면 안 가져간 것으로 보고 되돌린다.
 const configuredTimeout = Number(process.env.WMS_PICKUP_TIMEOUT_MIN);
@@ -31,6 +34,7 @@ function cutoffKst(minutes) {
  * 이미 확인된 건은 실물이 나갔다는 뜻이라 절대 건드리지 않는다.
  */
 export function cancelUnclaimedPickups() {
+  const expiredReservations = expireReservations();
   const isUnattended = unattendedEnabled();
   const timeoutMin = getPickupTimeoutMinutes();
   const cutoff = cutoffKst(timeoutMin);
@@ -43,13 +47,16 @@ export function cancelUnclaimedPickups() {
         WHERE picked_up_at IS NULL
           AND status = 'active'
           AND (returned IS NULL OR returned != 'O')
-          AND applied_at IS NOT NULL AND applied_at <= ?`,
+          AND applied_at IS NOT NULL AND applied_at <= ?
+          AND NOT EXISTS (SELECT 1 FROM item_reservations r WHERE r.status='fulfilled'
+            AND r.request_no = ${table}.request_no)`,
       [cutoff]
     );
 
-  const sid = pick("sid_rentals");
-  const gen = pick("general_rentals");
-  if (!sid.length && !gen.length) return { cancelled: 0 };
+  const held = recoveryHoldChecker('pickup');
+  const sid = pick("sid_rentals").filter(row=>!held(row,'scenario',parseKstMs(row.applied_at)+4*60*60*1000));
+  const gen = pick("general_rentals").filter(row=>!held(row,'general',parseKstMs(row.applied_at)+4*60*60*1000));
+  if (!sid.length && !gen.length) return { cancelled: expiredReservations.cancelled };
 
   transaction(() => {
     if (isUnattended) {
@@ -65,27 +72,14 @@ export function cancelUnclaimedPickups() {
     for (const row of sid) {
       const parsed = parseItemLabel(row.item_label);
       if (!parsed.id && !parsed.name) continue; // 물품이 안 붙은 빈 SID 줄은 그냥 닫는다
-      restoreRentalStock(row, parsed.id, parsed.quantity || 1);
-      closeRow("sid_rentals", row, now);
-      cancelled.push({ name: parsed.name || row.item_label, qty: parsed.quantity || 1, who: row.borrower_name });
+      if (cancelUnclaimedRental("sid_rentals", row, now)) cancelled.push({ name: parsed.name || row.item_label, qty: parsed.quantity || 1, who: row.borrower_name });
     }
     for (const row of gen) {
-      restoreRentalStock(row, row.item_id, row.qty || 1);
-      closeRow("general_rentals", row, now);
-      cancelled.push({ name: row.item_label, qty: row.qty || 1, who: row.borrower_name });
+      if (cancelUnclaimedRental("general_rentals", row, now)) cancelled.push({ name: row.item_label, qty: row.qty || 1, who: row.borrower_name });
     }
   });
 
   console.log(`[pickup-timeout] 미수령 ${cancelled.length}건 자동 취소 (${timeoutMin}분 경과, 기준 ${cutoff})`);
 
-  return { cancelled: cancelled.length };
-}
-
-function closeRow(table, row, now) {
-  // 원래 목적을 지우지 않고 뒤에 사유만 덧붙인다 — 나중에 왜 닫혔는지 알 수 있어야 한다.
-  const purpose = `${row.purpose || ""}${row.purpose ? " " : ""}[미수령 자동 취소]`;
-  run(
-    `UPDATE ${table} SET returned = 'O', return_date = ?, status = 'archived', purpose = ?, return_source = 'cancel' WHERE id = ?`,
-    [now, purpose, row.id]
-  );
+  return { cancelled: cancelled.length + expiredReservations.cancelled };
 }

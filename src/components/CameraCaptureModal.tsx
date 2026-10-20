@@ -24,6 +24,8 @@ export default function CameraCaptureModal({
   title = "카메라로 촬영",
   isLightMode = false,
   highRes = true,
+  confirmLabel = '이 사진 사용',
+  confirmationHint,
 }: {
   open: boolean;
   onCapture: (dataUrl: string) => void;
@@ -33,6 +35,8 @@ export default function CameraCaptureModal({
   /** 사진으로 남길 화면이라 고해상도(1600x1200)로 받는다. 서버가 재인코딩 없이
    *  카메라 원본을 그대로 흘려보내므로 CPU는 오히려 기본 모드보다 싸고, 대역폭만 올라간다. */
   highRes?: boolean;
+  confirmLabel?: string;
+  confirmationHint?: string;
 }) {
   const [streamUrl, setStreamUrl] = useState("");
   const [ready, setReady] = useState(false);
@@ -222,7 +226,7 @@ export default function CameraCaptureModal({
     setCapturing(true);
     setError("");
     try {
-      const r = await fetch(await cameraUrl(`/api/camera/snapshot?t=${Date.now()}`));
+      const r = await fetch(await cameraUrl(`/api/camera/snapshot?t=${Date.now()}`),{signal:AbortSignal.timeout(10000)});
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "촬영에 실패했습니다.");
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
@@ -244,7 +248,7 @@ export default function CameraCaptureModal({
         URL.revokeObjectURL(url);
       }
     } catch (e: any) {
-      setError(e?.message || "촬영에 실패했습니다.");
+      setError(e?.name==='TimeoutError' || e?.name==='AbortError' ? '카메라에서 사진을 받는 시간이 초과되었습니다. 아직 촬영·처리가 완료되지 않았습니다. 다시 촬영해주세요.' : e?.message || "촬영에 실패했습니다.");
     } finally {
       setCapturing(false);
     }
@@ -433,7 +437,7 @@ export default function CameraCaptureModal({
         ) : (
           <>
             <div style={{ fontSize: "11.5px", color: C.label, marginTop: "10px", textAlign: "center" }}>
-              이 사진으로 괜찮은지 확인해주세요.
+              {confirmationHint || '이 사진으로 괜찮은지 확인해주세요.'}
             </div>
             <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
               <button
@@ -446,7 +450,7 @@ export default function CameraCaptureModal({
                 onClick={confirmCapture}
                 style={{ flex: 2, padding: "12px", borderRadius: "10px", border: "none", background: C.accent, color: "#fff", fontSize: "13px", fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
               >
-                <Camera size={15} /> 이 사진 사용
+                <Camera size={15} /> {confirmLabel}
               </button>
             </div>
           </>
