@@ -197,8 +197,9 @@ export function recentVariantUses() {
   return map;
 }
 
-/** 종류 목록에서 그 물품의 직전 대여·반납 종류에 previousUse({ kind, at })를 붙인다. 원본 목록은 건드리지 않는다. */
-export function markPreviousVariant(variants, uses) {
+/** 종류 목록에서 그 물품의 직전 대여·반납 종류에 previousUse({ kind, at })를 붙인다. 원본 목록은 건드리지 않는다.
+ *  SID 대여는 시나리오가 정한 물품을 그대로 쓰므로 붙이지 않는다(물품 목록 조회에만 쓴다). */
+function markPreviousVariant(variants, uses) {
   const prev = uses?.[0];
   if (!prev) return variants;
   return variants.map((v) => (v.id === prev.variantId ? { ...v, previousUse: { kind: prev.kind, at: prev.at } } : v));

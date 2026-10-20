@@ -574,9 +574,10 @@ export default function BrowsePage({
   }
 
   /** 담은 줄의 종류가 그 물품의 직전 대여·반납 종류와 같으면 그 기록을 돌려준다.
-   *  같은 물품은 괜찮지만, 같은 종류가 연달아 나가면 촬영 다양성 규칙에 어긋나기 쉬워 보라색으로 알린다. */
+   *  같은 물품은 괜찮지만, 같은 종류가 연달아 나가면 촬영 다양성 규칙에 어긋나기 쉬워 보라색으로 알린다.
+   *  SID 대여는 시나리오가 정한 물품을 쓰므로 제외한다. */
   function cartLinePreviousUse(line: { id: string; variantId?: number }) {
-    if (!line.variantId) return undefined;
+    if (!line.variantId || sidBorrowId) return undefined;
     const it = sciItems.find((o) => padSlot(String(o.id)) === padSlot(String(line.id)));
     return (it?.variants || []).find((v) => v.id === line.variantId)?.previousUse;
   }
@@ -2191,7 +2192,8 @@ export default function BrowsePage({
                   .filter((c) => c.id === variantPick.id && c.variantId === v.id)
                   .reduce((n, c) => n + c.quantity, 0);
                 const out = v.stock <= 0;
-                const repeat = !out && !!v.previousUse;
+                // SID 대여는 시나리오가 정한 물품을 쓰므로 직전 종류를 따지지 않는다.
+                const repeat = !out && !sidBorrowId && !!v.previousUse;
                 return (
                   <button
                     key={v.id}

@@ -56,7 +56,7 @@ import {
   padSlot, normalizeSid, parseSidParts, parseItemLabel, scenarioItemLabel,
   objectMap, updateInventory, updateTableclothInventory, tableclothRentalId, lookupConfigDsContact, resolveBorrowerContact,
   expectedEmailFor, matchesBorrowerIdentity, sameBorrowerIdentity,
-  variantMap, withVariants, recentVariantUses, markPreviousVariant, updateVariantInventory, syncItemStockFromVariants,
+  variantMap, withVariants, recentVariantUses, updateVariantInventory, syncItemStockFromVariants,
   legacyOutstanding, creditVariantStock, restoreRentalStock,
 } from "../lib/borrowUtils.js";
 
@@ -400,7 +400,6 @@ function getScenarioDefinition({ query }) {
     result.highLevelKo = rows[0].instruction_ko || "";
     const objMap = objectMap();
     const vMap = variantMap();
-    const uses = recentVariantUses();
     for (const r of rows) {
       if (!r.object_id) continue;
       const obj = objMap[r.object_id];
@@ -408,8 +407,7 @@ function getScenarioDefinition({ query }) {
         id: r.object_id, name: r.object_name || obj?.name || "", quantity: r.quantity || 1,
         rootSlot: obj?.rootSlot || "", category: obj?.category || "", subcategory: obj?.subcategory || "",
         image: obj?.image || "", stock: obj?.stock || 0, rented: obj?.rented || 0,
-        // 종류가 있으면 신청 화면에서 종류를 고르게 한다. 직전 대여·반납 종류는 보라색으로 알려준다.
-        variants: markPreviousVariant(vMap[r.object_id] || [], uses[r.object_id]),
+        variants: vMap[r.object_id] || [], // 종류가 있으면 신청 화면에서 종류를 고르게 한다
       });
     }
   } else {
