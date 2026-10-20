@@ -43,3 +43,13 @@ test("같은 물품의 직전 대여·반납과 종류가 같으면 표시하고
   assert.equal(row(3).previousVariant.variantName, "큰 것");
   assert.equal(row(3).previousVariant.kind, "대여");
 });
+
+test("대여 신청 화면의 물품 목록에도 직전 대여·반납 종류에 previousUse를 붙인다", async () => {
+  const res = await (await fetch(`${origin}/api/gas?action=getObjectItems`)).json();
+  const variants = (id) => res.items.find((it) => it.id === id).variants;
+  // 상자: 가장 최근 기록은 오늘 '큰 것' 대여 — 그 종류만 표시된다.
+  assert.deepEqual(variants("000001").map((v) => [v.name, v.previousUse?.kind ?? null]), [["작은 것", null], ["큰 것", "대여"]]);
+  assert.equal(variants("000001")[1].previousUse.at, "2026-10-20 09:00:00");
+  // 공: 오늘 11시 '파랑' 대여가 가장 최근이다.
+  assert.deepEqual(variants("000002").map((v) => [v.name, !!v.previousUse]), [["빨강", false], ["파랑", true]]);
+});

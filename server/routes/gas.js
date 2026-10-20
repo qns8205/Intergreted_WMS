@@ -56,7 +56,7 @@ import {
   padSlot, normalizeSid, parseSidParts, parseItemLabel, scenarioItemLabel,
   objectMap, updateInventory, updateTableclothInventory, tableclothRentalId, lookupConfigDsContact, resolveBorrowerContact,
   expectedEmailFor, matchesBorrowerIdentity, sameBorrowerIdentity,
-  variantMap, withVariants, updateVariantInventory, syncItemStockFromVariants,
+  variantMap, withVariants, recentVariantUses, markPreviousVariant, updateVariantInventory, syncItemStockFromVariants,
   legacyOutstanding, creditVariantStock, restoreRentalStock,
 } from "../lib/borrowUtils.js";
 
@@ -400,6 +400,7 @@ function getScenarioDefinition({ query }) {
     result.highLevelKo = rows[0].instruction_ko || "";
     const objMap = objectMap();
     const vMap = variantMap();
+    const uses = recentVariantUses();
     for (const r of rows) {
       if (!r.object_id) continue;
       const obj = objMap[r.object_id];
@@ -407,7 +408,8 @@ function getScenarioDefinition({ query }) {
         id: r.object_id, name: r.object_name || obj?.name || "", quantity: r.quantity || 1,
         rootSlot: obj?.rootSlot || "", category: obj?.category || "", subcategory: obj?.subcategory || "",
         image: obj?.image || "", stock: obj?.stock || 0, rented: obj?.rented || 0,
-        variants: vMap[r.object_id] || [], // 종류가 있으면 신청 화면에서 종류를 고르게 한다
+        // 종류가 있으면 신청 화면에서 종류를 고르게 한다. 직전 대여·반납 종류는 보라색으로 알려준다.
+        variants: markPreviousVariant(vMap[r.object_id] || [], uses[r.object_id]),
       });
     }
   } else {
@@ -444,22 +446,10 @@ function buildUnreturnedRows() {
   // 같은 물품의 직전 대여·반납이 어떤 종류였는지. 같은 종류가 연달아 나가지 않게
   // 대여 확인·반납 화면에서 보라색으로 알려준다. 물품마다 최근 기록 몇 건만 들고 있다가,
   // 지금 줄 자신은 빼고 (이미 수령한 줄이면 그 수령보다 앞선 기록 중에서) 가장 최근 것을 고른다.
-  const recentVariant = new Map();
-  const remember = (itemId, row, sheet) => {
-    if (!itemId || !row.variant_id) return;
-    const returned = row.returned === "O" && row.return_source !== "cancel";
-    const at = returned ? row.return_date : row.picked_up_at;
-    if (!at) return;
-    const list = recentVariant.get(itemId) || [];
-    list.push({ key: `${sheet}:${row.id}`, variantId: row.variant_id, at: String(at), kind: returned ? "반납" : "대여" });
-    list.sort((a, b) => b.at.localeCompare(a.at));
-    recentVariant.set(itemId, list.slice(0, 8));
-  };
-  for (const row of all("SELECT id,item_label,variant_id,returned,return_date,return_source,picked_up_at FROM sid_rentals WHERE variant_id IS NOT NULL")) remember(padSlot(parseItemLabel(row.item_label).id || ""), row, "scenario");
-  for (const row of all("SELECT id,item_id,variant_id,returned,return_date,return_source,picked_up_at FROM general_rentals WHERE variant_id IS NOT NULL")) remember(padSlot(row.item_id || ""), row, "general");
+  const recentVariant = recentVariantUses();
   const previousVariantOf = (itemId, sheet, row) => {
     const before = row.picked_up_at ? String(row.picked_up_at) : null;
-    const prev = (recentVariant.get(padSlot(itemId || "")) || []).find((e) => e.key !== `${sheet}:${row.id}` && (!before || e.at < before));
+    const prev = (recentVariant[padSlot(itemId || "")] || []).find((e) => e.key !== `${sheet}:${row.id}` && (!before || e.at < before));
     if (!prev) return {};
     const name = (vMap[padSlot(itemId)] || []).find((v) => v.id === prev.variantId)?.name || "";
     return {

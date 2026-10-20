@@ -32,6 +32,7 @@ import BorrowerSeatSuggestions from "./BorrowerSeatSuggestions";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { parseBulkIds, planBulkAdd } from "../utils/bulkIdCart";
 import { scenarioRegularScore } from "../utils/scenarioRegularSearch";
+import { previousVariantColors, previousVariantLabel, previousVariantTitle } from "../utils/scenarioVariant";
 
 type Affiliation = "cfgw" | "configds" | "other";
 // 무인 모드에서는 목록 선택 대신 직접 입력·촬영으로 공구를 신청한다.
@@ -129,6 +130,8 @@ export default function BrowsePage({
     warnSoft: "rgba(245, 158, 11, 0.12)",
     error: isLightMode ? "#dc2626" : "#f87171",
     errorSoft: "rgba(239, 68, 68, 0.12)",
+    // 직전 대여·반납과 같은 종류 표시 — 관리자 대여 확인·반납 화면과 같은 보라색
+    ...previousVariantColors(isLightMode),
   };
 
   const [step, setStep] = useState<Step>(() => {
@@ -568,6 +571,14 @@ export default function BrowsePage({
     // 종류를 고른 줄은 그 종류의 사진이 있으면 그것을 먼저 쓴다 — 무엇을 담았는지가 더 분명하다.
     const variant = line.variantId ? (it?.variants || []).find((v: any) => v.id === line.variantId) : null;
     return (variant as any)?.image || it?.image || "";
+  }
+
+  /** 담은 줄의 종류가 그 물품의 직전 대여·반납 종류와 같으면 그 기록을 돌려준다.
+   *  같은 물품은 괜찮지만, 같은 종류가 연달아 나가면 촬영 다양성 규칙에 어긋나기 쉬워 보라색으로 알린다. */
+  function cartLinePreviousUse(line: { id: string; variantId?: number }) {
+    if (!line.variantId) return undefined;
+    const it = sciItems.find((o) => padSlot(String(o.id)) === padSlot(String(line.id)));
+    return (it?.variants || []).find((v) => v.id === line.variantId)?.previousUse;
   }
 
   /** 분류 key를 사람이 읽는 이름으로. 분류표가 아직 안 왔거나 지워진 key면 key를 그대로 보인다. */
@@ -1216,15 +1227,16 @@ export default function BrowsePage({
                 lines.map((c: any, i: number) => {
                   const img = cartLineImage(kind, c);
                   const label = `${c.name}${c.variantName ? ` · ${c.variantName}` : ""}`;
+                  const prevUse = kind === "scenario" ? cartLinePreviousUse(c) : undefined;
                   return (
                     <div
                       key={i}
-                      title={`${label}${c.quantity > 1 ? ` ×${c.quantity}` : ""}`}
+                      title={`${label}${c.quantity > 1 ? ` ×${c.quantity}` : ""}${prevUse ? ` · ${previousVariantLabel(prevUse.kind)}` : ""}`}
                       style={{
                         position: "relative",
                         flexShrink: 0, display: "flex", alignItems: "center", gap: "7px",
                         borderRadius: "10px", padding: "5px 22px 5px 5px",
-                        background: C.accentSoft, border: `1px solid ${C.border}`,
+                        background: prevUse ? C.repeatSoft : C.accentSoft, border: `1px solid ${prevUse ? C.repeat : C.border}`,
                       }}
                     >
                       {/* 한 줄만 빼고 싶을 때 창을 열지 않아도 되게 한다. */}
@@ -1946,6 +1958,7 @@ export default function BrowsePage({
                     C={C}
                     name={item.name}
                     variant={item.variantName}
+                    previousUse={cartLinePreviousUse(item)}
                     sub={`ID: ${item.id}`}
                     qty={item.quantity}
                     onMinus={() => chgSci(idx, -1)}
@@ -2178,9 +2191,11 @@ export default function BrowsePage({
                   .filter((c) => c.id === variantPick.id && c.variantId === v.id)
                   .reduce((n, c) => n + c.quantity, 0);
                 const out = v.stock <= 0;
+                const repeat = !out && !!v.previousUse;
                 return (
                   <button
                     key={v.id}
+                    title={repeat ? previousVariantTitle(v.previousUse!) : undefined}
                     onClick={() => {
                       if (out) { setBorrowersTarget({ id: variantPick.id, name: `${variantPick.name} · ${v.name}`, category: "scenario", variantId: v.id }); return; }
                       if ((variantPick.askQty || 1) > 1) addSciQty(variantPick, { variantId: v.id, variantName: v.name }, variantPick.askQty || 1, v.stock);
@@ -2189,7 +2204,8 @@ export default function BrowsePage({
                     }}
                     style={{
                       display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px",
-                      borderRadius: "11px", border: `1.5px solid ${C.border}`, background: C.cardSub,
+                      borderRadius: "11px", border: `1.5px solid ${repeat ? C.repeat : C.border}`, background: repeat ? C.repeatSoft : C.cardSub,
+                      boxShadow: repeat ? `inset 4px 0 0 ${C.repeat}` : undefined,
                       color: out ? C.label : C.text, cursor: "pointer",
                       fontSize: "13px", fontWeight: 700, textAlign: "left", opacity: out ? 0.55 : 1,
                     }}
@@ -2208,6 +2224,7 @@ export default function BrowsePage({
                         {out ? "재고 없음" : `재고 ${v.stock}개`}
                       </span>
                       {out ? <span style={{ display: "block", fontSize: "11px", lineHeight: 1.5, color: C.label, fontWeight: 500, marginTop: "3px" }}>눌러서 현재 대여자를 확인하세요</span> : null}
+                      {repeat ? <span style={{ display: "inline-block", marginTop: "4px" }}><PreviousVariantBadge C={C} use={v.previousUse!} /></span> : null}
                     </span>
                   </button>
                 );
@@ -2359,6 +2376,18 @@ function GridCard({ C, inCart, out, image, onImage, onCard, title, idText, badge
   );
 }
 
+/** 직전 대여·반납과 같은 종류라는 보라색 배지. 가능하면 다른 종류를 고르도록 이유를 title에 남긴다. */
+function PreviousVariantBadge({ C, use }: { C: any; use: { kind: "대여" | "반납"; at: string } }) {
+  return (
+    <span
+      title={previousVariantTitle(use)}
+      style={{ flexShrink: 0, fontSize: "10px", fontWeight: 800, lineHeight: 1.5, padding: "1px 7px", borderRadius: "999px", color: "#fff", background: C.repeat, whiteSpace: "nowrap" }}
+    >
+      {previousVariantLabel(use.kind)}
+    </span>
+  );
+}
+
 function VariantChip({ C, text }: any) {
   return (
     <span style={{
@@ -2370,14 +2399,15 @@ function VariantChip({ C, text }: any) {
   );
 }
 
-function CartRow({ C, name, variant, sub, qty, onMinus, onPlus, onRemove }: any) {
+function CartRow({ C, name, variant, previousUse, sub, qty, onMinus, onPlus, onRemove }: any) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: C.cardSub, border: `1px solid ${C.border}`, borderRadius: "10px", marginBottom: "8px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "10px 12px", background: previousUse ? C.repeatSoft : C.cardSub, border: `1px solid ${previousUse ? C.repeat : C.border}`, boxShadow: previousUse ? `inset 3px 0 0 ${C.repeat}` : undefined, borderRadius: "10px", marginBottom: "8px" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "5px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "5px", minWidth: 0, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 700, fontSize: "13px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
           {/* 종류는 물품명이 아니라 선택한 옵션이라, 칩으로 따로 떼어 보여준다 */}
           {variant ? <VariantChip C={C} text={variant} /> : null}
+          {previousUse ? <PreviousVariantBadge C={C} use={previousUse} /> : null}
         </div>
         <div style={{ fontSize: "11px", color: C.label }}>{sub}</div>
       </div>

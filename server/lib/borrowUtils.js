@@ -175,11 +175,41 @@ export function variantMap() {
   return map;
 }
 
+/**
+ * 물품마다 종류가 정해진 최근 대여(수령)·반납 기록을 최신순으로 몇 건씩 모은다.
+ * { [itemId]: [{ key: "scenario:12", variantId, at, kind: "대여" | "반납" }] }
+ * 같은 종류가 연달아 나가지 않게 대여 확인·반납 화면과 대여 신청 화면에서 보라색으로 알려주는 데 쓴다.
+ */
+export function recentVariantUses() {
+  const map = {};
+  const remember = (itemId, row, sheet) => {
+    if (!itemId || !row.variant_id) return;
+    const returned = row.returned === "O" && row.return_source !== "cancel";
+    const at = returned ? row.return_date : row.picked_up_at;
+    if (!at) return;
+    const list = (map[itemId] ||= []);
+    list.push({ key: `${sheet}:${row.id}`, variantId: row.variant_id, at: String(at), kind: returned ? "반납" : "대여" });
+    list.sort((a, b) => b.at.localeCompare(a.at));
+    if (list.length > 8) list.length = 8;
+  };
+  for (const row of all("SELECT id,item_label,variant_id,returned,return_date,return_source,picked_up_at FROM sid_rentals WHERE variant_id IS NOT NULL")) remember(padSlot(parseItemLabel(row.item_label).id || ""), row, "scenario");
+  for (const row of all("SELECT id,item_id,variant_id,returned,return_date,return_source,picked_up_at FROM general_rentals WHERE variant_id IS NOT NULL")) remember(padSlot(row.item_id || ""), row, "general");
+  return map;
+}
+
+/** 종류 목록에서 그 물품의 직전 대여·반납 종류에 previousUse({ kind, at })를 붙인다. 원본 목록은 건드리지 않는다. */
+export function markPreviousVariant(variants, uses) {
+  const prev = uses?.[0];
+  if (!prev) return variants;
+  return variants.map((v) => (v.id === prev.variantId ? { ...v, previousUse: { kind: prev.kind, at: prev.at } } : v));
+}
+
 /** 목록 조회용: toScenarioObject 결과 배열에 variants와 미확인 수량을 붙여준다. */
 export function withVariants(objs) {
   const map = variantMap();
+  const uses = recentVariantUses();
   for (const o of objs) {
-    o.variants = map[o.id] || [];
+    o.variants = markPreviousVariant(map[o.id] || [], uses[o.id]);
     // 미확인 = 종류를 아직 모르는 물량. 선반에 있는 건 unassignedStock,
     // 나가 있는 건 unassignedRented(종류 도입 전 대여분).
     o.unassignedStock = o.variants.length ? Number(o.unassignedStock) || 0 : 0;

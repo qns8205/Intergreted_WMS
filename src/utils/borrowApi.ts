@@ -21,6 +21,8 @@ export interface ItemVariant {
   depthMm?: number;
   heightMm?: number;
   shape?: "box" | "cylinder" | "pyramid";
+  /** 이 물품의 직전 대여·반납이 이 종류였다 — 대여 신청 화면에서 보라색으로 알려 다른 종류를 고르게 한다. */
+  previousUse?: { kind: "대여" | "반납"; at: string };
 }
 
 export interface ObjectItem {

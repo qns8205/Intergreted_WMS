@@ -21,7 +21,7 @@ import {
 } from "../utils/borrowApi";
 import { getGoogleDriveImageUrl, getThumbImageUrl } from "../utils/drive";
 import { smartMatch } from "../utils/search";
-import { scenarioVariantText } from "../utils/scenarioVariant";
+import { previousVariantColors, previousVariantLabel, previousVariantTitle, scenarioVariantText } from "../utils/scenarioVariant";
 import HazardConfirmModal, { collectHazardItems } from "./HazardConfirmModal";
 import { useVersionWorkGuard } from "../utils/versionWorkGuard";
 import { useNoticeCountdown } from "../utils/useNoticeCountdown";
@@ -153,6 +153,8 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
     warnSoft: "rgba(245, 158, 11, 0.12)",
     error: isLightMode ? "#dc2626" : "#f87171",
     errorSoft: "rgba(239, 68, 68, 0.12)",
+    // 직전 대여·반납과 같은 종류 표시 — 관리자 대여 확인·반납 화면과 같은 보라색
+    ...previousVariantColors(isLightMode),
   };
 
   /* ---------- 공용 상태 ---------- */
@@ -2101,13 +2103,16 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                   const q = Number(alloc[v.id]) || 0;
                   const canAdd = Math.min(need - used, Math.max(0, v.stock - q)) > 0;
                   const out = v.stock <= 0;
+                  const repeat = !out && !!v.previousUse;
                   return (
                     <div
                       key={v.id}
+                      title={repeat ? previousVariantTitle(v.previousUse) : undefined}
                       style={{
                         display: "flex", alignItems: "center", gap: "12px", padding: "10px 12px",
-                        borderRadius: "11px", border: `1.5px solid ${q > 0 ? C.accent : C.border}`,
-                        background: C.cardSub, opacity: out ? 0.55 : 1,
+                        borderRadius: "11px", border: `1.5px solid ${q > 0 ? C.accent : repeat ? C.repeat : C.border}`,
+                        background: repeat ? C.repeatSoft : C.cardSub, opacity: out ? 0.55 : 1,
+                        boxShadow: repeat ? `inset 4px 0 0 ${C.repeat}` : undefined,
                       }}
                     >
                       {/* 종류별 사진 — 누르면 크게 열린다 */}
@@ -2125,6 +2130,7 @@ export default function BorrowSystemPage({ scriptUrl, connected, isLightMode, on
                         <span style={{ display: "block", fontSize: "11.5px", color: C.label, fontWeight: 600, marginTop: "2px" }}>
                           {out ? "재고 없음" : `재고 ${v.stock}개`}
                         </span>
+                        {repeat ? <PreviousVariantBadge C={C} use={v.previousUse} /> : null}
                         {/* 종류마다 크기가 다른 물품이 있다(대·중·소 같은). 그 종류에 따로 적힌 치수가
                             있으면 그것을, 없으면 물품 자체의 치수를 본다 — 고르기 전에 크기를 알 수 있게. */}
                         {hasDims(v) || hasDims(item) ? (
@@ -2978,10 +2984,12 @@ function ItemPicker({
               {(variantPick.variants || []).map((v: any) => {
                 const taken = list.filter((x) => x.id === variantPick.id && x.variantId === v.id).reduce((n, x) => n + (x.quantity || 0), 0);
                 const out = v.stock <= 0;
+                const repeat = !out && !!v.previousUse;
                 return (
                   <button
                     key={v.id}
                     disabled={out}
+                    title={repeat ? previousVariantTitle(v.previousUse) : undefined}
                     onClick={() => {
                       const over = addLine(variantPick, { variantId: v.id, variantName: v.name }, v.stock);
                       if (over) { showToast(`'${v.name}' 종류의 재고(${v.stock}개)를 초과할 수 없습니다.`, "warn"); return; }
@@ -2989,8 +2997,9 @@ function ItemPicker({
                     }}
                     style={{
                       display: "flex", alignItems: "center", gap: "12px",
-                      padding: "10px 12px", borderRadius: "11px", border: `1.5px solid ${C.border}`,
-                      background: C.cardSub, color: out ? C.label : C.text, cursor: out ? "not-allowed" : "pointer",
+                      padding: "10px 12px", borderRadius: "11px", border: `1.5px solid ${repeat ? C.repeat : C.border}`,
+                      background: repeat ? C.repeatSoft : C.cardSub, color: out ? C.label : C.text, cursor: out ? "not-allowed" : "pointer",
+                      boxShadow: repeat ? `inset 4px 0 0 ${C.repeat}` : undefined,
                       fontSize: "13px", fontWeight: 700, textAlign: "left", opacity: out ? 0.55 : 1,
                     }}
                   >
@@ -3009,6 +3018,7 @@ function ItemPicker({
                       <span style={{ display: "block", fontSize: "11.5px", color: C.label, fontWeight: 600, marginTop: "2px" }}>
                         {out ? "재고 없음" : `재고 ${v.stock}개`}
                       </span>
+                      {repeat ? <PreviousVariantBadge C={C} use={v.previousUse} /> : null}
                     </span>
                   </button>
                 );
@@ -3301,5 +3311,14 @@ function ReturnItemCard({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** 직전 대여·반납과 같은 종류라는 보라색 배지. */
+function PreviousVariantBadge({ C, use }: { C: any; use: { kind: "대여" | "반납"; at: string } }) {
+  return (
+    <span style={{ display: "inline-block", marginTop: "4px", fontSize: "10px", fontWeight: 800, lineHeight: 1.5, padding: "1px 7px", borderRadius: "999px", color: "#fff", background: C.repeat, whiteSpace: "nowrap" }}>
+      {previousVariantLabel(use.kind)}
+    </span>
   );
 }

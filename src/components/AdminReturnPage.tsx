@@ -32,6 +32,7 @@ import RegisteredUserPicker from "./RegisteredUserPicker";
 import RentalTermsFields, { RentalMode } from "./RentalTermsFields";
 import PlannerRentalPreview from "./PlannerRentalPreview";
 import { plannerCollectionNames, plannerContexts, plannerReturnQuantity } from "../utils/plannerRentalDisplay";
+import { previousVariantLabel } from "../utils/scenarioVariant";
 
 // 목록 줄 칩: 대여 방식 + 기한/면제 여부까지 보이게 한다 (사유는 아래 줄에 따로)
 function rentalTermsChip(terms: any): string {
@@ -2357,7 +2358,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                                             title={`이 물품의 직전 ${it.previousVariant.kind}(${it.previousVariant.at})도 ${it.previousVariant.variantName || "같은 종류"}였습니다. 시나리오 다양성을 위해 가능하면 다른 종류로 바꿔주세요.`}
                                             style={{ flexShrink: 0, fontSize: "10px", fontWeight: 800, borderRadius: "999px", padding: "2px 7px", color: "#fff", background: C.repeat }}
                                           >
-                                            직전 {it.previousVariant.kind}와 같은 종류
+                                            {previousVariantLabel(it.previousVariant.kind)}
                                           </span>
                                         ) : null}
                                       </div>
@@ -2812,7 +2813,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                         <button
                           key={v.id}
                           disabled={short}
-                          title={repeat ? `직전 ${ln.previous!.kind}(${ln.previous!.at})와 같은 종류입니다. 가능하면 다른 종류를 골라주세요.` : undefined}
+                          title={repeat ? `${previousVariantLabel(ln.previous!.kind)}입니다(${ln.previous!.at}). 가능하면 다른 종류를 골라주세요.` : undefined}
                           onClick={() => setVariantPrompt((p) => (p ? { ...p, choice: { ...p.choice, [ln.key]: v.id } } : p))}
                           style={{
                             padding: "8px 12px", borderRadius: "9px", cursor: short ? "not-allowed" : "pointer",
@@ -2823,7 +2824,7 @@ export default function AdminReturnPage({ scriptUrl, connected, isLightMode, sho
                           }}
                         >
                           {v.name} <span style={{ fontWeight: 600, color: repeat ? C.repeat : C.label }}>(재고 {v.stock})</span>
-                          {repeat ? <span style={{ display: "block", fontSize: "10.5px", fontWeight: 800, marginTop: 2 }}>직전 {ln.previous!.kind}와 같은 종류</span> : null}
+                          {repeat ? <span style={{ display: "block", fontSize: "10.5px", fontWeight: 800, marginTop: 2 }}>{previousVariantLabel(ln.previous!.kind)}</span> : null}
                         </button>
                       );
                     })}
